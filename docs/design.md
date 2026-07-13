@@ -28,8 +28,9 @@ must not import scripts or outputs from the other.
   stratified cross-validation. The held-out test split is evaluated once.
 - Every concept must have both labels in every required split; the production
   config additionally enforces at least 2,000 total examples per concept.
-- Alignment claims report a random matched-norm control and stability across
-  seeds or bootstrap samples.
+- Alignment artifacts report seeded, matched-norm orthogonal random controls.
+  Stability claims additionally require independent probe seeds or bootstrap
+  samples; the random nulls are not a substitute for probe stability.
 - A PCA basis is called "minimal" only relative to an explicit cumulative-energy
   threshold. Exact matrix rank and effective rank are reported separately.
 

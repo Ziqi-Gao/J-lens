@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify pinned GoEmotions Parquet files and emit binary concept tasks."""
+"""Verify pinned GoEmotions Parquet files and emit shared experiment inputs."""
 
 from __future__ import annotations
 

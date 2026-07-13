@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -7,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 import yaml
 
@@ -329,6 +331,137 @@ def test_capture_forwards_add_special_tokens(
     assert json.loads(capsys.readouterr().out)["output"] == str(output)
 
 
+def _write_probe_directory(
+    path: Path, *, model_revision: str = "model-commit"
+) -> dict[str, Any]:
+    activation = {
+        "artifact_hash": "activation-sha256",
+        "coordinate": "resid_post",
+        "representation": "last_non_padding_token",
+        "add_special_tokens": True,
+        "manifest": {
+            "model_id": "org/model",
+            "model_revision": model_revision,
+            "tokenizer_id": "org/tokenizer",
+            "tokenizer_revision": "tokenizer-commit",
+            "dataset_source": "builtin",
+            "dataset_revision": None,
+            "notes": {"force_bos": None},
+        },
+    }
+    concept = path / "layer_00" / "concept_abstract%3Atest"
+    concept.mkdir(parents=True)
+    np.save(concept / "probe_vector.npy", np.ones(4), allow_pickle=False)
+    vector_sha256 = hashlib.sha256(
+        (concept / "probe_vector.npy").read_bytes()
+    ).hexdigest()
+    (concept / "metrics.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "layer": 0,
+                "concept_id": "abstract:test",
+                "artifact_hash": "activation-sha256",
+                "activation": activation,
+                "probe": {
+                    "coordinate": "resid_post",
+                    "dimension": 4,
+                    "vector_file": "probe_vector.npy",
+                    "vector_sha256": vector_sha256,
+                },
+            }
+        )
+    )
+    (path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "activation_artifact_hash": "activation-sha256",
+                "activation": activation,
+            }
+        )
+    )
+    return activation
+
+
+def test_staged_probe_loading_enforces_end_to_end_identity(tmp_path: Path) -> None:
+    probe_path = tmp_path / "probes"
+    _write_probe_directory(probe_path)
+    expected = {
+        "model_id": "org/model",
+        "model_revision": "model-commit",
+        "tokenizer_id": "org/tokenizer",
+        "tokenizer_revision": "tokenizer-commit",
+        "dataset_source": "builtin",
+        "dataset_revision": None,
+        "force_bos": None,
+        "coordinate": "resid_post",
+        "representation": "last_non_padding_token",
+        "add_special_tokens": True,
+    }
+
+    vectors = cli._load_probe_vectors(
+        probe_path, 0, expected_identity=expected
+    )
+    assert set(vectors) == {"abstract:test"}
+    with pytest.raises(ValueError, match="model_revision"):
+        cli._load_probe_vectors(
+            probe_path,
+            0,
+            expected_identity=expected | {"model_revision": "other-commit"},
+        )
+
+
+def test_staged_probe_loading_rejects_missing_provenance(tmp_path: Path) -> None:
+    probe_path = tmp_path / "probes"
+    _write_probe_directory(probe_path)
+    (probe_path / "manifest.json").unlink()
+
+    with pytest.raises(ValueError, match=r"manifest\.json"):
+        cli._load_probe_vectors(
+            probe_path, 0, expected_identity={"coordinate": "resid_post"}
+        )
+
+
+def test_lens_artifact_provenance_hashes_local_content(tmp_path: Path) -> None:
+    from jlens_workspace.config import ExperimentConfig
+
+    lens_path = tmp_path / "lens.pt"
+    lens_path.write_bytes(b"exact lens bytes")
+    raw = _base_config(tmp_path)
+    raw["lens"]["path_or_repo"] = str(lens_path)
+    config = ExperimentConfig.model_validate(raw)
+
+    provenance = cli._lens_artifact_provenance(config, None)
+    assert provenance["source"] == "local"
+    assert provenance["path"] == str(lens_path)
+    assert len(provenance["sha256"]) == 64
+    assert provenance["identity_status"] == "content_hashed"
+
+
+def test_lens_artifact_provenance_pins_hub_revision(tmp_path: Path) -> None:
+    from jlens_workspace.config import ExperimentConfig
+
+    raw = _base_config(tmp_path)
+    raw["lens"] = {
+        "source": "huggingface",
+        "path_or_repo": "org/lenses",
+        "filename": "lens.pt",
+        "revision": "lens-commit",
+        "layers": [0],
+        "target_layer": 1,
+    }
+    config = ExperimentConfig.model_validate(raw)
+
+    provenance = cli._lens_artifact_provenance(config, None)
+    assert provenance == {
+        "source": "huggingface",
+        "repository": "org/lenses",
+        "filename": "lens.pt",
+        "revision": "lens-commit",
+        "identity_status": "revision_pinned",
+    }
+
+
 def test_huggingface_lens_uses_explicit_revision_and_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -478,6 +611,18 @@ def test_fit_lens_loads_exact_prompt_count_and_saves_metadata(
     assert Path(captured["fit_kwargs"]["checkpoint_path"]).name == "fitted.pt.checkpoint"
     assert captured["save_args"] == (managed, destination)
     assert captured["save_kwargs"]["dtype"] == "float32"
+
+
+def test_fit_prompt_offset_selects_a_disjoint_block(tmp_path: Path) -> None:
+    prompts = tmp_path / "prompts.jsonl"
+    prompts.write_text(
+        "".join(json.dumps({"text": f"prompt {index}"}) + "\n" for index in range(6))
+    )
+
+    assert cli._load_fit_prompts(prompts, 2, offset=0) == ["prompt 0", "prompt 1"]
+    assert cli._load_fit_prompts(prompts, 2, offset=2) == ["prompt 2", "prompt 3"]
+    with pytest.raises(ValueError, match="offset=5"):
+        cli._load_fit_prompts(prompts, 2, offset=5)
 
 
 def test_matrix_run_maps_all_numerical_options(

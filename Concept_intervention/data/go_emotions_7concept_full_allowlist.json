@@ -12,7 +12,7 @@
   "selection": {
     "mode": "all_one_vs_rest",
     "include_multilabel": true,
-    "lens_fit_prompt_count": 1000,
+    "lens_fit_prompt_count": 3000,
     "lens_fit_min_words": 24
   },
   "concepts": [

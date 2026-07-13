@@ -251,6 +251,19 @@ def test_workflow_rejects_labels_rows_mismatch(tmp_path: Path) -> None:
         run_concept_probe_workflow(artifact, tmp_path / "output")
 
 
+def test_workflow_rejects_any_representation_other_than_last_token(
+    tmp_path: Path,
+) -> None:
+    artifact = _synthetic_activation_artifact(tmp_path)
+    metadata_path = artifact / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["representation"] = "mean_pooling"
+    atomic_write_json(metadata_path, metadata)
+
+    with pytest.raises(ConceptWorkflowError, match="last_non_padding_token"):
+        run_concept_probe_workflow(artifact, tmp_path / "output")
+
+
 def test_workflow_rejects_group_crossing_splits(tmp_path: Path) -> None:
     artifact = _synthetic_activation_artifact(tmp_path)
     rows = [
@@ -295,3 +308,8 @@ def test_workflow_fits_columns_from_shared_source_artifact(tmp_path: Path) -> No
         assert payload["counts"]["train"]["label_1"] == 4
         assert payload["validation"]["average_precision"] == pytest.approx(1.0)
         assert payload["test"]["roc_auc"] == pytest.approx(1.0)
+
+    manifest = json.loads((result.output_dir / "manifest.json").read_text())
+    assert manifest["activation_artifact_hash"] == result.artifact_hash
+    assert manifest["activation"]["coordinate"] == "resid_post"
+    assert manifest["activation"]["representation"] == "last_non_padding_token"

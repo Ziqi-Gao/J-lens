@@ -118,13 +118,18 @@ not a leakage path. This prevents discarding valid probe rows merely to fit the
 model-wide Jacobian map.
 
 ```bash
-.venv/bin/python Concept_intervention/scripts/prepare_go_emotions.py \
+.venv/bin/python scripts/prepare_go_emotions.py \
   --allowlist Concept_intervention/data/go_emotions_7concept_full_allowlist.json \
   --train artifacts/source_data/go_emotions_simplified_add492243ff905527e67aeb8b80c082af02207c3/train.parquet \
   --validation artifacts/source_data/go_emotions_simplified_add492243ff905527e67aeb8b80c082af02207c3/validation.parquet \
   --test artifacts/source_data/go_emotions_simplified_add492243ff905527e67aeb8b80c082af02207c3/test.parquet \
   --output artifacts/data/go_emotions_7concept_full_ovr_v1 --seed 42
 ```
+
+The pinned full allowlist emits 3,000 deterministically ordered fit prompts.
+Production configs use 1,000 at a time. Set `lens.fit_prompt_offset` to `0`,
+`1000`, or `2000` and use a distinct lens/output path to run three disjoint
+prompt-sample replications without changing the probe examples.
 
 The previous fixed 1,000-positive/1,000-negative, single-label dataset remains
 available only as a balanced control and is not the formal probing corpus.

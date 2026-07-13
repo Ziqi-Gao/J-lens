@@ -41,8 +41,6 @@ quality checks, and stability over seeds or prompt samples.
 - [`configs/qwen35_4b.yaml`](configs/qwen35_4b.yaml) is the formal GoEmotions
   configuration. It pins the Qwen model/tokenizer, seven binary concepts,
   layers, BOS policy, probe search, and a local float32 J-lens refit.
-- [`configs/qwen35_4b_smoke.yaml`](configs/qwen35_4b_smoke.yaml) retains the
-  96-row built-in dataset for pipeline checks only.
 - [`data/go_emotions_7concept_full_allowlist.json`](data/go_emotions_7concept_full_allowlist.json)
   pins the official GoEmotions revision and Parquet hashes. The formal dataset
   retains every unique, split-safe source row, including multilabel rows, and
@@ -50,8 +48,9 @@ quality checks, and stability over seeds or prompt samples.
   [`data/go_emotions_7concept_allowlist.json`](data/go_emotions_7concept_allowlist.json)
   defines a 2,000-example-per-concept balanced control only.
 - [`data/builtin_abstract_concepts.jsonl`](data/builtin_abstract_concepts.jsonl)
-  is a human-written 96-row English smoke/research seed for honesty, justice,
-  compassion, uncertainty, creativity, and power.
+  is a human-written 96-row offline test fixture for honesty, justice,
+  compassion, uncertainty, creativity, and power. No Qwen GPU experiment
+  config points to it.
 - [`data/axbench_abstract_allowlist.json`](data/axbench_abstract_allowlist.json)
   is deliberately unverified and fails before remote loading. See the
   [data guide](docs/data.md) before enabling any remote concept.
@@ -126,9 +125,9 @@ steering evidence.
 ## Outputs
 
 The default Qwen config writes beneath
-`artifacts/concept_intervention/qwen35_4b_go_emotions_7concept_full_ovr_v1/`.
+`artifacts/concept_intervention/qwen35_4b_go_emotions_7concept_full_ovr_v2/`.
 The locally refitted lens is written separately to
-`artifacts/lenses/qwen35_4b_go_emotions_7concept_full_fp32.pt`. Expected stages
+`artifacts/lenses/qwen35_4b_go_emotions_7concept_full_block0_fp32.pt`. Expected stages
 include:
 
 - `manifest.json` and `run.json`: immutable pins, config hash, package versions,
@@ -137,8 +136,9 @@ include:
   `layer_XX.npy`, an `[N,7]` binary label matrix, concept columns, row metadata,
   and capture provenance;
 - `probes/`: float64 probe vectors in original `resid_post` coordinates plus
-  CV/validation/test metrics;
-- `alignment/`: signed cosine-ranked token IDs/tokens for semantic inspection;
+  CV/validation/test metrics and an activation-identity manifest;
+- `alignment/`: signed cosine-ranked token IDs/tokens, matched-norm orthogonal
+  random controls, and exact probe/lens identities for semantic inspection;
 - `interventions/`: prompts, generations, strengths, target/off-target scores,
   and matched controls when the intervention stage is run.
 

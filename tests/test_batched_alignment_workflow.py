@@ -54,3 +54,42 @@ def test_batched_nearest_only_does_not_fit_sparse_components(tmp_path) -> None:
     assert results["concept"]["decomposition"] is None
     assert not (output / "concept" / "j_component.npy").exists()
     assert len(results["concept"]["top_positive"]) == 1
+
+
+def test_batched_alignment_reports_deterministic_matched_random_controls(
+    tmp_path,
+) -> None:
+    operator = TokenFrameOperator(
+        torch.eye(3, dtype=torch.float64),
+        build_effective_unembedding(torch.eye(3, dtype=torch.float64)),
+        block_size=2,
+        compute_device="cpu",
+        compute_dtype=torch.float64,
+    )
+    kwargs = {
+        "probe_vectors": {"concept": np.array([1.0, 0.2, -0.1])},
+        "operator": operator,
+        "top_k": 1,
+        "decompose": False,
+        "random_control_seeds": (7, 11, 19),
+    }
+    first = run_batched_probe_j_alignment(
+        **kwargs, output_dir=tmp_path / "first"
+    )["concept"]
+    second = run_batched_probe_j_alignment(
+        **kwargs, output_dir=tmp_path / "second"
+    )["concept"]
+
+    assert first["random_controls"] == second["random_controls"]
+    assert len(first["random_controls"]) == 3
+    assert first["random_control_summary"]["n_controls"] == 3
+    assert 0.0 < first["random_control_summary"]["empirical_p_value"] <= 1.0
+    assert all(
+        abs(control["cosine_with_probe"]) < 1e-12
+        for control in first["random_controls"]
+    )
+    root = __import__("json").loads(
+        (tmp_path / "first" / "alignment.json").read_text()
+    )
+    assert root["vocabulary_passes"] == 1
+    assert root["random_control_seeds"] == [7, 11, 19]

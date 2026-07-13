@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from jlens_workspace.config import ExperimentConfig, MatrixConfig, ProbeConfig
+from jlens_workspace.config import (
+    AlignmentConfig,
+    ExperimentConfig,
+    MatrixConfig,
+    ProbeConfig,
+)
 
 
 def test_probe_rejects_invalid_penalty_strength() -> None:
@@ -14,6 +19,21 @@ def test_probe_rejects_invalid_penalty_strength() -> None:
 def test_matrix_accumulation_is_always_float64() -> None:
     with pytest.raises(ValidationError):
         MatrixConfig(accumulation_dtype="float32")
+
+
+def test_alignment_control_seeds_are_unique() -> None:
+    with pytest.raises(ValidationError, match="random_control_seeds"):
+        AlignmentConfig(random_control_seeds=[7, 7])
+    with pytest.raises(ValidationError, match="non-negative"):
+        AlignmentConfig(random_control_seeds=[-1])
+
+
+def test_matrix_rank_sweep_contains_primary_tolerance() -> None:
+    with pytest.raises(ValidationError, match="rank_relative_tolerance"):
+        MatrixConfig(
+            rank_relative_tolerance=1e-7,
+            rank_relative_tolerances=[1e-5, 1e-6],
+        )
 
 
 def test_config_rejects_unknown_fields() -> None:

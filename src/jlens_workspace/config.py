@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Literal
 
@@ -53,6 +54,7 @@ class LensConfig(StrictModel):
     fit_output_path: str | None = None
     fit_checkpoint_path: str | None = None
     n_fit_prompts: int = Field(default=128, ge=1)
+    fit_prompt_offset: int = Field(default=0, ge=0)
     target_layer: int | None = None
     dim_batch: int = Field(default=128, ge=1)
     max_seq_len: int = Field(default=128, ge=8)
@@ -68,6 +70,8 @@ class LensConfig(StrictModel):
             raise ValueError("path_or_repo is required for a local or Hugging Face lens")
         if self.source == "huggingface" and not self.filename:
             raise ValueError("filename is required for a Hugging Face lens")
+        if self.source == "huggingface" and not self.revision:
+            raise ValueError("revision is required for a Hugging Face lens")
         if self.source == "fit" and not self.fit_prompts_path:
             raise ValueError("fit_prompts_path is required when source='fit'")
         if self.source == "fit" and self.target_layer is None:
@@ -120,6 +124,19 @@ class AlignmentConfig(StrictModel):
     sparse_components: int = Field(default=16, ge=1)
     candidate_pool_size: int = Field(default=512, ge=1)
     require_nonnegative: bool = True
+    random_control_seeds: list[int] = Field(
+        default_factory=lambda: [101, 202, 303, 404, 505]
+    )
+
+    @model_validator(mode="after")
+    def validate_control_seeds(self) -> AlignmentConfig:
+        if any(seed < 0 for seed in self.random_control_seeds):
+            raise ValueError("random_control_seeds must be non-negative")
+        if len(set(self.random_control_seeds)) != len(self.random_control_seeds):
+            raise ValueError("random_control_seeds must be unique")
+        if not self.require_nonnegative:
+            raise ValueError("only non-negative sparse J decomposition is supported")
+        return self
 
 
 class InterventionConfig(StrictModel):
@@ -147,6 +164,9 @@ class MatrixConfig(StrictModel):
     accumulation_dtype: Literal["float64"] = "float64"
     energy_thresholds: list[float] = Field(default_factory=lambda: [0.9, 0.95, 0.99])
     rank_relative_tolerance: float = Field(default=1e-7, gt=0)
+    rank_relative_tolerances: list[float] = Field(
+        default_factory=lambda: [1e-5, 1e-6, 1e-7, 1e-8]
+    )
     device: str = "cpu"
     cpu_fallback: bool = True
 
@@ -154,6 +174,22 @@ class MatrixConfig(StrictModel):
     def validate_thresholds(self) -> MatrixConfig:
         if any(not 0 < threshold <= 1 for threshold in self.energy_thresholds):
             raise ValueError("energy_thresholds must lie in (0, 1]")
+        if (
+            not self.rank_relative_tolerances
+            or any(
+                not math.isfinite(value) or value <= 0
+                for value in self.rank_relative_tolerances
+            )
+            or len(set(self.rank_relative_tolerances))
+            != len(self.rank_relative_tolerances)
+        ):
+            raise ValueError(
+                "rank_relative_tolerances must contain unique positive values"
+            )
+        if self.rank_relative_tolerance not in self.rank_relative_tolerances:
+            raise ValueError(
+                "rank_relative_tolerances must include rank_relative_tolerance"
+            )
         return self
 
 

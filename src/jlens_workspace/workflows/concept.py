@@ -405,6 +405,11 @@ def _load_activation_artifact(path: str | Path) -> _ActivationArtifact:
         raise ConceptWorkflowError("metadata.schema_version must equal 1 or 2")
     if metadata.get("coordinate") != "resid_post":
         raise ConceptWorkflowError("activation coordinate must be 'resid_post'")
+    if metadata.get("representation") != "last_non_padding_token":
+        raise ConceptWorkflowError(
+            "activation representation must be 'last_non_padding_token'; "
+            "pooling artifacts are not valid probe inputs"
+        )
 
     discovered_layers = _discover_layers(source)
     declared_layers = _metadata_layers(metadata)
@@ -664,6 +669,13 @@ def run_concept_probe_workflow(
     available_concepts = artifact.concept_names
     selected_concepts = _choose_concepts(available_concepts, concept_ids)
     destination = _prepare_output_dir(artifact.path, output_dir, overwrite=overwrite)
+    activation_provenance = {
+        "artifact_hash": artifact.artifact_hash,
+        "coordinate": artifact.metadata["coordinate"],
+        "representation": artifact.metadata["representation"],
+        "add_special_tokens": artifact.metadata.get("add_special_tokens"),
+        "manifest": artifact.metadata.get("manifest"),
+    }
 
     outputs: list[ConceptProbeOutput] = []
     for layer in selected_layers:
@@ -723,12 +735,14 @@ def run_concept_probe_workflow(
             vector_path = concept_directory / "probe_vector.npy"
             metrics_path = concept_directory / "metrics.json"
             _atomic_save_npy(vector_path, np.asarray(final.coef_raw, dtype=np.float64))
+            vector_sha256 = sha256_file(vector_path)
             payload = {
                 "schema_version": 1,
                 "layer": layer,
                 "concept_id": concept_id,
                 "concept_name": available_concepts[concept_id],
                 "artifact_hash": artifact.artifact_hash,
+                "activation": activation_provenance,
                 "chosen_C": diagnostic.chosen_C,
                 "cv_strategy": diagnostic.cv_strategy,
                 "cv_splits": cv_splits,
@@ -750,6 +764,7 @@ def run_concept_probe_workflow(
                 },
                 "probe": {
                     "vector_file": vector_path.name,
+                    "vector_sha256": vector_sha256,
                     "coordinate": "resid_post",
                     "dimension": int(final.coef_raw.shape[0]),
                     "dtype": "float64",
@@ -771,6 +786,40 @@ def run_concept_probe_workflow(
                     metrics_path=metrics_path,
                 )
             )
+
+    atomic_write_json(
+        destination / "manifest.json",
+        {
+            "schema_version": 1,
+            "workflow": "concept_probe_fitting",
+            "activation_artifact": str(artifact.path),
+            "activation_artifact_hash": artifact.artifact_hash,
+            "activation": activation_provenance,
+            "layers": list(selected_layers),
+            "concept_ids": list(selected_concepts),
+            "probe_coordinate": "resid_post",
+            "selection": {
+                "C_grid": [float(value) for value in C_grid],
+                "cv_splits": cv_splits,
+                "standardize": standardize,
+                "class_weight": class_weight,
+                "random_state": random_state,
+                "max_iter": max_iter,
+            },
+            "probes": [
+                {
+                    "layer": output.layer,
+                    "concept_id": output.concept_id,
+                    "vector_file": str(
+                        output.probe_vector_path.relative_to(destination)
+                    ),
+                    "vector_sha256": sha256_file(output.probe_vector_path),
+                    "metrics_file": str(output.metrics_path.relative_to(destination)),
+                }
+                for output in outputs
+            ],
+        },
+    )
 
     return ConceptWorkflowResult(
         activation_artifact=artifact.path,

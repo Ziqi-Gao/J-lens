@@ -1,7 +1,7 @@
 schema_version: 1
 direction: j_space
-experiment_name: qwen35_4b_j_space_centered
-output_dir: artifacts/j_space/qwen35_4b_centered
+experiment_name: qwen35_4b_j_space_goemotions_full_centered
+output_dir: artifacts/j_space/qwen35_4b_goemotions_full_centered
 seed: 42
 model:
   model_id: Qwen/Qwen3.5-4B
@@ -14,11 +14,12 @@ model:
   force_bos: false
 lens:
   source: fit
-  fit_prompts_path: artifacts/data/go_emotions_7concept_binary_v1/fit_prompts.jsonl
-  fit_output_path: artifacts/lenses/qwen35_4b_jspace_9layers_fp32.pt
-  fit_checkpoint_path: artifacts/lenses/qwen35_4b_jspace_9layers_fp32.checkpoint.pt
+  fit_prompts_path: artifacts/data/go_emotions_7concept_full_ovr_v1/fit_prompts.jsonl
+  fit_output_path: artifacts/lenses/qwen35_4b_jspace_9layers_goemotions_full_fp32.pt
+  fit_checkpoint_path: artifacts/lenses/qwen35_4b_jspace_9layers_goemotions_full_fp32.checkpoint.pt
   layers: [0, 4, 8, 12, 16, 20, 24, 28, 30]
   n_fit_prompts: 1000
+  fit_prompt_offset: 0
   target_layer: 31
   dim_batch: 16
   max_seq_len: 128
@@ -39,5 +40,6 @@ matrix:
   accumulation_dtype: float64
   energy_thresholds: [0.9, 0.95, 0.99]
   rank_relative_tolerance: 0.0000001
+  rank_relative_tolerances: [0.00001, 0.000001, 0.0000001, 0.00000001]
   device: cuda
   cpu_fallback: false

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
+import math
 import os
 import shutil
 import tempfile
@@ -19,6 +21,7 @@ from jlens_workspace.jacobian import EffectiveUnembedding, ManagedJacobianLens
 from jlens_workspace.jacobian._optional import torch
 from jlens_workspace.matrix import (
     TokenFrameOperator,
+    basis_coverage,
     decompose_gram,
     minimum_energy_basis,
     streaming_gram,
@@ -49,6 +52,7 @@ class MatrixWorkflowOptions:
     energy_thresholds: tuple[float, ...] = (0.9, 0.95, 0.99)
     rank_atol: float = 0.0
     rank_rtol: float | None = None
+    rank_rtol_sweep: tuple[float, ...] = (1e-5, 1e-6, 1e-7, 1e-8)
 
     def __post_init__(self) -> None:
         if self.block_size <= 0:
@@ -63,6 +67,12 @@ class MatrixWorkflowOptions:
             self.rank_rtol is not None and self.rank_rtol < 0
         ):
             raise ValueError("rank tolerances must be non-negative")
+        sweep = tuple(float(value) for value in self.rank_rtol_sweep)
+        if not sweep or any(value <= 0 for value in sweep) or len(set(sweep)) != len(sweep):
+            raise ValueError("rank_rtol_sweep must contain unique positive values")
+        if self.rank_rtol is not None and self.rank_rtol not in sweep:
+            raise ValueError("rank_rtol_sweep must include rank_rtol")
+        object.__setattr__(self, "rank_rtol_sweep", tuple(sorted(sweep, reverse=True)))
 
 
 @dataclass(frozen=True)
@@ -83,6 +93,7 @@ class MatrixLayerOutput:
 class MatrixWorkflowResult:
     output_dir: Path
     metrics_path: Path
+    subspace_comparisons_path: Path
     layers: tuple[MatrixLayerOutput, ...]
     provenance: Mapping[str, object]
 
@@ -135,6 +146,22 @@ def _threshold_key(threshold: float) -> str:
 
 def _threshold_slug(threshold: float) -> str:
     return _threshold_key(threshold).replace(".", "p")
+
+
+def _rank_sensitivity(
+    singular_values: NDArray[np.float64], options: MatrixWorkflowOptions
+) -> dict[str, dict[str, float | int]]:
+    largest = float(singular_values[0]) if singular_values.size else 0.0
+    return {
+        f"{rtol:.0e}": {
+            "relative_tolerance": rtol,
+            "absolute_tolerance": max(options.rank_atol, rtol * largest),
+            "numerical_rank": int(
+                np.sum(singular_values > max(options.rank_atol, rtol * largest))
+            ),
+        }
+        for rtol in options.rank_rtol_sweep
+    }
 
 
 def _weights_metadata(weights: Any | None, vocab_size: int) -> dict[str, object]:
@@ -198,6 +225,7 @@ def _layer_metrics(
     numerical_rank_basis_file: str,
     mean_file: str | None,
     energy: Mapping[str, Mapping[str, object]],
+    rank_sensitivity: Mapping[str, Mapping[str, float | int]],
     weights_metadata: Mapping[str, object],
     unembedding_provenance: Mapping[str, object],
 ) -> dict[str, object]:
@@ -247,6 +275,7 @@ def _layer_metrics(
             ),
             "numerical_rank": spectrum.numerical_rank,
             "rank_tolerance": spectrum.rank_tolerance,
+            "rank_sensitivity": dict(rank_sensitivity),
             "numerical_rank_basis_file": numerical_rank_basis_file,
             "numerical_rank_basis_definition": (
                 "right-singular row-space basis retained above rank_tolerance"
@@ -309,6 +338,7 @@ def run_matrix_layers(
         raise FileExistsError(f"matrix workflow output already exists: {destination}") from exc
 
     outputs: list[MatrixLayerOutput] = []
+    energy_basis_arrays: dict[tuple[int, float], NDArray[np.float64]] = {}
     try:
         weights_metadata = _weights_metadata(
             options.row_weights, effective_unembedding.vocab_size
@@ -350,6 +380,9 @@ def run_matrix_layers(
                     np.float64, copy=False
                 ),
             )
+            singular_values = np.asarray(
+                spectrum.singular_values.detach().cpu().numpy(), dtype=np.float64
+            )
             eigenvalues_path = layer_directory / "eigenvalues.npy"
             _atomic_save_npy(
                 eigenvalues_path,
@@ -389,6 +422,9 @@ def run_matrix_layers(
                         np.float64, copy=False
                     ),
                 )
+                energy_basis_arrays[(layer, threshold)] = np.asarray(
+                    energy_basis.basis.detach().cpu().numpy(), dtype=np.float64
+                )
                 basis_paths[threshold] = basis_path
                 energy_metrics[_threshold_key(threshold)] = {
                     "basis_file": basis_path.name,
@@ -410,6 +446,7 @@ def run_matrix_layers(
                     numerical_rank_basis_file=numerical_rank_basis_path.name,
                     mean_file=mean_path.name if mean_path is not None else None,
                     energy=energy_metrics,
+                    rank_sensitivity=_rank_sensitivity(singular_values, options),
                     weights_metadata=weights_metadata,
                     unembedding_provenance=unembedding_provenance,
                 ),
@@ -429,12 +466,51 @@ def run_matrix_layers(
                 )
             )
 
+        comparisons_path = destination / "subspace_comparisons.json"
+        comparison_pairs: list[dict[str, object]] = []
+        for layer_a, layer_b in itertools.combinations(selected_layers, 2):
+            thresholds_payload: dict[str, object] = {}
+            for threshold in options.energy_thresholds:
+                comparison = basis_coverage(
+                    torch.from_numpy(energy_basis_arrays[(layer_a, threshold)]),
+                    torch.from_numpy(energy_basis_arrays[(layer_b, threshold)]),
+                    assume_orthonormal=True,
+                )
+                thresholds_payload[_threshold_key(threshold)] = {
+                    "dim_a": comparison.dim_a,
+                    "dim_b": comparison.dim_b,
+                    "a_covered_by_b": comparison.a_covered_by_b,
+                    "b_covered_by_a": comparison.b_covered_by_a,
+                    "shared_dimension": comparison.shared_dimension,
+                    "principal_angles_degrees": [
+                        math.degrees(float(value))
+                        for value in comparison.angles_radians.cpu().numpy()
+                    ],
+                }
+            comparison_pairs.append(
+                {
+                    "layer_a": layer_a,
+                    "layer_b": layer_b,
+                    "energy_bases": thresholds_payload,
+                }
+            )
+        atomic_write_json(
+            comparisons_path,
+            {
+                "schema_version": 1,
+                "workflow": "matrix_layer_subspace_comparisons",
+                "coordinate": "resid_post/block_output",
+                "pairs": comparison_pairs,
+            },
+        )
+
         root_metrics_path = destination / "metrics.json"
         atomic_write_json(
             root_metrics_path,
             {
                 "schema_version": 1,
                 "workflow": "matrix_layers",
+                "subspace_comparisons_file": comparisons_path.name,
                 "layers": [
                     {
                         "layer": output.layer,
@@ -472,6 +548,7 @@ def run_matrix_layers(
                     "energy_thresholds": list(options.energy_thresholds),
                     "rank_atol": options.rank_atol,
                     "rank_rtol": options.rank_rtol,
+                    "rank_rtol_sweep": list(options.rank_rtol_sweep),
                     "row_weights": weights_metadata,
                 },
             },
@@ -479,6 +556,7 @@ def run_matrix_layers(
         return MatrixWorkflowResult(
             output_dir=destination,
             metrics_path=root_metrics_path,
+            subspace_comparisons_path=comparisons_path,
             layers=tuple(outputs),
             provenance={
                 "effective_unembedding_model_identity": dict(
