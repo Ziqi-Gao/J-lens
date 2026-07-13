@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "dataset_id": "google-research-datasets/go_emotions",
+  "revision": "add492243ff905527e67aeb8b80c082af02207c3",
+  "config": "simplified",
+  "license": "Apache-2.0",
+  "file_sha256": {
+    "train": "b7d74279616ae7c9b8374ab62ea9f9d6504d36a577bb17f745d720dc2b0d4e76",
+    "validation": "d46ad5633c4fa41829d22d549743a7bf858d94129536a02af7280c281db5e63a",
+    "test": "fd0953e535ba2569edc6a1daaa1133f8e4b9071691d540c9bab812fda132bc26"
+  },
+  "selection": {
+    "single_label_only": true,
+    "positive_per_split": {
+      "train": 800,
+      "validation": 100,
+      "test": 100
+    },
+    "negative_per_split": {
+      "train": 800,
+      "validation": 100,
+      "test": 100
+    },
+    "lens_fit_prompt_count": 1000,
+    "lens_fit_min_words": 24
+  },
+  "concepts": [
+    {
+      "label_id": 0,
+      "concept_name": "admiration",
+      "definition": "Regard for another person, action, or outcome as worthy of esteem."
+    },
+    {
+      "label_id": 4,
+      "concept_name": "approval",
+      "definition": "Acceptance of or agreement with a person, action, idea, or outcome."
+    },
+    {
+      "label_id": 7,
+      "concept_name": "curiosity",
+      "definition": "A desire to know, understand, or discover something."
+    },
+    {
+      "label_id": 10,
+      "concept_name": "disapproval",
+      "definition": "A negative judgment that a person, action, idea, or outcome is unacceptable."
+    },
+    {
+      "label_id": 15,
+      "concept_name": "gratitude",
+      "definition": "Appreciation for a benefit, kindness, help, or positive contribution."
+    },
+    {
+      "label_id": 18,
+      "concept_name": "love",
+      "definition": "Deep affection, attachment, or caring directed toward someone or something."
+    },
+    {
+      "label_id": 20,
+      "concept_name": "optimism",
+      "definition": "Expectation or confidence that future events or outcomes will be favorable."
+    }
+  ]
+}

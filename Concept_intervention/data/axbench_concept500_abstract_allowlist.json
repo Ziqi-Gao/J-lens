@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "dataset_id": "pyvene/axbench-concept500",
+  "revision": "ad8a5d60c4616b599c24dd6689f05f696ec610f3",
+  "variant": "9b/l20",
+  "license": "CC-BY-4.0",
+  "train_sha256": "5fb3042cc484a3e194f1043aab047bc1cfbe4efe884131d0113c75e9d2da599a",
+  "test_sha256": "090ff8292a331aab3776a836187406e49d8614864b250d9a1769f537da438f42",
+  "concepts": [
+    {
+      "remote_concept_id": 68,
+      "concept_name": "uses of deception or pretense",
+      "definition": "Language invoking deception, disguise, misleading appearances, or deliberate pretense."
+    },
+    {
+      "remote_concept_id": 82,
+      "concept_name": "expressions of commitment to collaboration and community responsibility",
+      "definition": "Language expressing commitment to shared work, community membership, mutual support, or collective responsibility."
+    },
+    {
+      "remote_concept_id": 114,
+      "concept_name": "references to power dynamics and political figures",
+      "definition": "Language referring to political actors, authority, influence, control, or relationships of power."
+    },
+    {
+      "remote_concept_id": 178,
+      "concept_name": "questions and statements challenging beliefs or assumptions",
+      "definition": "Language that questions, disputes, or prompts reconsideration of a belief or assumption."
+    },
+    {
+      "remote_concept_id": 195,
+      "concept_name": "expressions related to admiration and respect for individuals",
+      "definition": "Language expressing admiration, esteem, honor, or respect toward a person."
+    },
+    {
+      "remote_concept_id": 212,
+      "concept_name": "expressions of vulnerability and honesty about personal struggles",
+      "definition": "Language candidly revealing vulnerability, difficulty, or an ongoing personal struggle."
+    },
+    {
+      "remote_concept_id": 361,
+      "concept_name": "concepts and discussions related to creativity and innovation",
+      "definition": "Language concerning imagination, creative work, invention, novelty, or innovation."
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Experiment outputs and model/data caches
+artifacts/
+outputs/
+logs/
+.cache/
+slurm-*.out
+slurm-*.err
+
+# Large tensor artifacts
+*.npy
+*.npz
+*.pt
+*.pth
+*.safetensors
+*.parquet
+
+# Keep intentionally small test fixtures.
+!tests/fixtures/**/*.npy
+!tests/fixtures/**/*.npz

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "dataset_id": "pyvene/axbench-concept16k",
+  "revision": "ec272d02dd6cde698b5591980bb674baf409533f",
+  "variant": "2b/l20",
+  "license": "CC-BY-4.0",
+  "concepts": [
+    {
+      "concept_name": "Honesty",
+      "definition": "A commitment to truthfulness, candor, and accurate representation of one's knowledge or actions.",
+      "search_terms": ["honesty", "honest", "truthful"],
+      "remote_output_concept": null,
+      "verified_against_revision": null
+    },
+    {
+      "concept_name": "Justice",
+      "definition": "The fair treatment of people through impartial rights, procedures, distributions, and consequences.",
+      "search_terms": ["justice", "fairness", "impartial"],
+      "remote_output_concept": null,
+      "verified_against_revision": null
+    },
+    {
+      "concept_name": "Compassion",
+      "definition": "Recognition of another's suffering together with concern and a motivation to respond with care.",
+      "search_terms": ["compassion", "empathy", "suffering"],
+      "remote_output_concept": null,
+      "verified_against_revision": null
+    },
+    {
+      "concept_name": "Uncertainty",
+      "definition": "Awareness that available evidence does not determine a single outcome or fully justify confidence.",
+      "search_terms": ["uncertainty", "uncertain", "ambiguity"],
+      "remote_output_concept": null,
+      "verified_against_revision": null
+    },
+    {
+      "concept_name": "Creativity",
+      "definition": "The capacity to produce ideas or expressions that are both novel and useful, fitting, or meaningful.",
+      "search_terms": ["creativity", "creative", "novel ideas"],
+      "remote_output_concept": null,
+      "verified_against_revision": null
+    },
+    {
+      "concept_name": "Power",
+      "definition": "The capacity to influence people, decisions, resources, or outcomes despite resistance or alternatives.",
+      "search_terms": ["power", "authority", "influence"],
+      "remote_output_concept": null,
+      "verified_against_revision": null
+    }
+  ]
+}

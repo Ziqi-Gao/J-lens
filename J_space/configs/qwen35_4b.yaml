@@ -1,0 +1,43 @@
+schema_version: 1
+direction: j_space
+experiment_name: qwen35_4b_j_space
+output_dir: artifacts/j_space/qwen35_4b_uncentered
+seed: 42
+model:
+  model_id: Qwen/Qwen3.5-4B
+  revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  tokenizer_id: Qwen/Qwen3.5-4B
+  tokenizer_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  dtype: bfloat16
+  device: auto
+  trust_remote_code: false
+  force_bos: false
+lens:
+  source: fit
+  fit_prompts_path: artifacts/data/go_emotions_7concept_binary_v1/fit_prompts.jsonl
+  fit_output_path: artifacts/lenses/qwen35_4b_jspace_9layers_fp32.pt
+  fit_checkpoint_path: artifacts/lenses/qwen35_4b_jspace_9layers_fp32.checkpoint.pt
+  layers: [0, 4, 8, 12, 16, 20, 24, 28, 30]
+  n_fit_prompts: 1000
+  target_layer: 31
+  dim_batch: 16
+  max_seq_len: 128
+  skip_first: 16
+  compile_blocks: false
+  checkpoint_every: 10
+  resume: true
+  storage_dtype: float32
+matrix:
+  layers: [0, 4, 8, 12, 16, 20, 24, 28, 30]
+  convention: rmsnorm_weighted
+  centered: false
+  row_normalized: false
+  normalize_by_total_weight: false
+  zero_row_policy: error
+  vocabulary_chunk_size: 4096
+  operator_compute_dtype: float32
+  accumulation_dtype: float64
+  energy_thresholds: [0.9, 0.95, 0.99]
+  rank_relative_tolerance: 0.0000001
+  device: cuda
+  cpu_fallback: true
