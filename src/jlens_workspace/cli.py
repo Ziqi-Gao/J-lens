@@ -15,6 +15,7 @@ import json
 import re
 import shutil
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -321,6 +322,7 @@ def _experiment_manifest(
                 "lens_filename": lens.filename,
                 "lens_storage_dtype": lens.storage_dtype,
                 "lens_target_layer": lens.target_layer,
+                "lens_fit_prompt_offset": lens.fit_prompt_offset,
             }
         )
     if notes:
@@ -709,6 +711,36 @@ def _fitted_lens_path(config: Any, lens_output: Path | None) -> Path:
     )
 
 
+def _lens_artifact_provenance(
+    config: Any, lens_output: Path | None
+) -> dict[str, Any]:
+    """Return a content hash for local lenses or an exact Hub identity."""
+
+    from jlens_workspace.artifacts import sha256_file
+
+    lens = _require_section(config, "lens")
+    if lens.source == "huggingface":
+        return {
+            "source": "huggingface",
+            "repository": lens.path_or_repo,
+            "filename": lens.filename,
+            "revision": lens.revision,
+            "identity_status": "revision_pinned",
+        }
+    if lens.source == "fit":
+        path = _fitted_lens_path(config, lens_output)
+    else:
+        path = Path(lens.path_or_repo)
+        if path.is_dir():
+            path = path / (lens.filename or "lens.pt")
+    return {
+        "source": lens.source,
+        "path": str(path),
+        "sha256": sha256_file(path) if path.is_file() else None,
+        "identity_status": "content_hashed" if path.is_file() else "missing",
+    }
+
+
 def _fit_checkpoint_path(config: Any, destination: Path) -> Path:
     lens = _require_section(config, "lens")
     if lens.fit_checkpoint_path is not None:
@@ -716,10 +748,15 @@ def _fit_checkpoint_path(config: Any, destination: Path) -> Path:
     return destination.with_suffix(destination.suffix + ".checkpoint")
 
 
-def _load_fit_prompts(path: str | Path, limit: int) -> list[str]:
+def _load_fit_prompts(
+    path: str | Path, limit: int, *, offset: int = 0
+) -> list[str]:
     source = Path(path)
+    if offset < 0:
+        raise ValueError("fit prompt offset must be non-negative")
     lines = source.read_text(encoding="utf-8").splitlines()
     prompts: list[str] = []
+    usable = 0
     jsonl = source.suffix.casefold() in {".jsonl", ".json"}
     for line_number, line in enumerate(lines, start=1):
         if not line.strip():
@@ -743,12 +780,17 @@ def _load_fit_prompts(path: str | Path, limit: int) -> list[str]:
                 )
         else:
             prompt = line
+        if usable < offset:
+            usable += 1
+            continue
+        usable += 1
         prompts.append(prompt.strip())
         if len(prompts) == limit:
             break
     if len(prompts) < limit:
         raise ValueError(
-            f"fit prompt file has {len(prompts)} usable prompts; requires {limit}"
+            f"fit prompt file has fewer than offset={offset} + limit={limit} "
+            "usable prompts"
         )
     return prompts
 
@@ -783,7 +825,11 @@ def _load_or_fit_lens(
 ) -> Any:
     """Resolve hub/local/fit sources with explicit immutable identity metadata."""
 
-    from jlens_workspace.artifacts import atomic_write_json, sha256_file
+    from jlens_workspace.artifacts import (
+        atomic_write_json,
+        sha256_file,
+        stable_hash,
+    )
     from jlens_workspace.jacobian import JLensMetadata, OfficialJLensAdapter
 
     lens = _require_section(config, "lens")
@@ -794,7 +840,11 @@ def _load_or_fit_lens(
     if lens.source == "fit":
         destination = _fitted_lens_path(config, lens_output)
         prompt_sha256 = sha256_file(lens.fit_prompts_path)
-        prompts = _load_fit_prompts(lens.fit_prompts_path, lens.n_fit_prompts)
+        prompts = _load_fit_prompts(
+            lens.fit_prompts_path,
+            lens.n_fit_prompts,
+            offset=lens.fit_prompt_offset,
+        )
         minimum_tokens, maximum_tokens = _fit_prompt_token_lengths(
             bundle.tokenizer,
             prompts,
@@ -810,6 +860,8 @@ def _load_or_fit_lens(
             "tokenizer_revision": tokenizer_revision,
             "fit_prompts_sha256": prompt_sha256,
             "n_fit_prompts": lens.n_fit_prompts,
+            "fit_prompt_offset": lens.fit_prompt_offset,
+            "selected_fit_prompts_sha256": stable_hash(prompts),
             "source_layers": list(layers),
             "target_layer": target_layer,
             "dim_batch": lens.dim_batch,
@@ -957,6 +1009,7 @@ def _cmd_lens_fit(args: argparse.Namespace) -> int:
         "n_prompts": managed.metadata.n_prompts,
         "storage_dtype": lens.storage_dtype,
         "metadata": managed.metadata.to_dict(),
+        "lens_artifact": _lens_artifact_provenance(config, args.output),
     }
     _finish_command(
         args,
@@ -981,8 +1034,87 @@ def _probe_layers(path: Path) -> tuple[int, ...]:
     return tuple(layers)
 
 
-def _load_probe_vectors(path: Path, layer: int) -> dict[str, Any]:
+def _probe_activation_identity(
+    activation: Mapping[str, Any], *, source: Path
+) -> dict[str, Any]:
+    manifest = activation.get("manifest")
+    if not isinstance(manifest, dict):
+        raise ValueError(f"{source}: activation provenance is missing its manifest")
+    notes = manifest.get("notes")
+    if not isinstance(notes, dict):
+        raise ValueError(f"{source}: activation manifest is missing notes")
+    return {
+        "model_id": manifest.get("model_id"),
+        "model_revision": manifest.get("model_revision"),
+        "tokenizer_id": manifest.get("tokenizer_id"),
+        "tokenizer_revision": manifest.get("tokenizer_revision"),
+        "dataset_source": manifest.get("dataset_source"),
+        "dataset_revision": manifest.get("dataset_revision"),
+        "force_bos": notes.get("force_bos"),
+        "config_sha256": notes.get("config_sha256"),
+        "coordinate": activation.get("coordinate"),
+        "representation": activation.get("representation"),
+        "add_special_tokens": activation.get("add_special_tokens"),
+    }
+
+
+def _expected_probe_identity(
+    config: Any, config_path: Path | None = None
+) -> dict[str, Any]:
+    from jlens_workspace.artifacts import sha256_file
+
+    activation = _require_section(config, "activations")
+    dataset = _require_section(config, "dataset")
+    identity = {
+        "model_id": config.model.model_id,
+        "model_revision": config.model.revision,
+        "tokenizer_id": config.model.tokenizer_id or config.model.model_id,
+        "tokenizer_revision": (
+            config.model.tokenizer_revision or config.model.revision
+        ),
+        "dataset_source": dataset.dataset_id or dataset.source,
+        "dataset_revision": dataset.revision,
+        "force_bos": config.model.force_bos,
+        "coordinate": "resid_post",
+        "representation": "last_non_padding_token",
+        "add_special_tokens": activation.add_special_tokens,
+    }
+    if config_path is not None:
+        identity["config_sha256"] = sha256_file(config_path)
+    return identity
+
+
+def _load_probe_vectors(
+    path: Path,
+    layer: int,
+    *,
+    expected_identity: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     import numpy as np
+
+    root_activation: Mapping[str, Any] | None = None
+    root_hash: str | None = None
+    if expected_identity is not None:
+        root_manifest_path = path / "manifest.json"
+        if not root_manifest_path.is_file():
+            raise ValueError(
+                f"probe directory is missing provenance manifest.json: {path}"
+            )
+        root_manifest = json.loads(root_manifest_path.read_text(encoding="utf-8"))
+        root_activation = root_manifest.get("activation")
+        root_hash = root_manifest.get("activation_artifact_hash")
+        if not isinstance(root_activation, dict) or not isinstance(root_hash, str):
+            raise ValueError(f"{root_manifest_path}: invalid activation provenance")
+        observed_identity = _probe_activation_identity(
+            root_activation, source=root_manifest_path
+        )
+        for field, expected in expected_identity.items():
+            if observed_identity.get(field) != expected:
+                raise ValueError(
+                    f"{root_manifest_path}: probe {field}="
+                    f"{observed_identity.get(field)!r} differs from configured "
+                    f"{field}={expected!r}"
+                )
 
     layer_path = path / f"layer_{layer:02d}"
     vectors: dict[str, Any] = {}
@@ -998,10 +1130,27 @@ def _load_probe_vectors(path: Path, layer: int) -> dict[str, Any]:
         probe_metadata = payload.get("probe")
         if not isinstance(probe_metadata, dict):
             raise ValueError(f"{metrics_path}: missing probe metadata")
+        if probe_metadata.get("coordinate") != "resid_post":
+            raise ValueError(f"{metrics_path}: probe coordinate must be resid_post")
+        if expected_identity is not None:
+            if payload.get("artifact_hash") != root_hash:
+                raise ValueError(f"{metrics_path}: activation artifact hash mismatch")
+            if payload.get("activation") != root_activation:
+                raise ValueError(f"{metrics_path}: activation provenance mismatch")
         vector_file = probe_metadata.get("vector_file", "probe_vector.npy")
-        vector = np.load(metrics_path.parent / vector_file, allow_pickle=False)
+        vector_path = metrics_path.parent / vector_file
+        expected_vector_hash = probe_metadata.get("vector_sha256")
+        if not isinstance(expected_vector_hash, str):
+            raise ValueError(f"{metrics_path}: missing probe vector SHA-256")
+        from jlens_workspace.artifacts import sha256_file
+
+        if sha256_file(vector_path) != expected_vector_hash:
+            raise ValueError(f"{vector_path}: probe vector SHA-256 mismatch")
+        vector = np.load(vector_path, allow_pickle=False)
         if vector.ndim != 1 or not np.isfinite(vector).all():
             raise ValueError(f"{metrics_path.parent}: probe vector must be finite and 1D")
+        if probe_metadata.get("dimension") != int(vector.shape[0]):
+            raise ValueError(f"{metrics_path.parent}: probe dimension metadata mismatch")
         vectors[concept_id] = vector
     if not vectors:
         raise ValueError(f"no concept probes found for layer {layer} in {layer_path}")
@@ -1035,7 +1184,7 @@ def _build_effective_unembedding(config: Any, bundle: Any, convention: str) -> A
 
 
 def _cmd_concept_align(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json
+    from jlens_workspace.artifacts import atomic_write_json, sha256_file
     from jlens_workspace.matrix import TokenFrameOperator
     from jlens_workspace.workflows import run_batched_probe_j_alignment
 
@@ -1053,6 +1202,15 @@ def _cmd_concept_align(args: argparse.Namespace) -> int:
     if bundle is None:
         bundle = _load_model_bundle(config)
     managed_lens = _load_or_fit_lens(config, bundle, lens_output=args.lens_output)
+    lens_artifact = _lens_artifact_provenance(config, args.lens_output)
+    probe_manifest_path = probe_path / "manifest.json"
+    if not probe_manifest_path.is_file():
+        raise ValueError(f"probe directory is missing manifest.json: {probe_path}")
+    probe_artifact = {
+        "path": str(probe_path),
+        "manifest_sha256": sha256_file(probe_manifest_path),
+        "manifest": json.loads(probe_manifest_path.read_text(encoding="utf-8")),
+    }
     missing = sorted(set(layers).difference(managed_lens.source_layers))
     if missing:
         raise ValueError(
@@ -1069,7 +1227,11 @@ def _cmd_concept_align(args: argparse.Namespace) -> int:
     compute_device = config.matrix.device if config.matrix is not None else config.model.device
     layer_results: list[dict[str, Any]] = []
     for layer in layers:
-        probe_vectors = _load_probe_vectors(probe_path, layer)
+        probe_vectors = _load_probe_vectors(
+            probe_path,
+            layer,
+            expected_identity=_expected_probe_identity(config, args.config),
+        )
         operator = TokenFrameOperator.from_lens(
             managed_lens,
             layer,
@@ -1087,12 +1249,15 @@ def _cmd_concept_align(args: argparse.Namespace) -> int:
             candidate_pool_size=alignment.candidate_pool_size,
             sparse_components=alignment.sparse_components,
             decompose=alignment.decompose,
+            random_control_seeds=tuple(alignment.random_control_seeds),
             metadata={
                 "experiment_name": config.experiment_name,
                 "layer": layer,
                 "model_id": config.model.model_id,
                 "model_revision": config.model.revision,
                 "lens": managed_lens.metadata.to_dict(),
+                "lens_artifact": lens_artifact,
+                "probe_artifact": probe_artifact,
                 "convention": convention,
             },
         )
@@ -1109,6 +1274,8 @@ def _cmd_concept_align(args: argparse.Namespace) -> int:
         "output": str(destination),
         "layers": layer_results,
         "lens_metadata": managed_lens.metadata.to_dict(),
+        "lens_artifact": lens_artifact,
+        "probe_artifact": probe_artifact,
         "convention": convention,
     }
     atomic_write_json(destination / "alignment.json", payload)
@@ -1225,6 +1392,13 @@ def _cmd_concept_run(args: argparse.Namespace) -> int:
             _bundle=bundle,
         )
         _cmd_concept_align(alignment_args)
+        from dataclasses import replace
+
+        lens_artifact = alignment_args._payload.get("lens_artifact")
+        manifest = replace(
+            manifest,
+            notes=manifest.notes | {"lens_artifact": lens_artifact},
+        )
         payload = {
             "schema_version": 1,
             "workflow": "concept_run",
@@ -1276,6 +1450,7 @@ def _cmd_matrix_run(args: argparse.Namespace) -> int:
 
     bundle = _load_model_bundle(config)
     managed_lens = _load_or_fit_lens(config, bundle, lens_output=args.lens_output)
+    lens_artifact = _lens_artifact_provenance(config, args.lens_output)
     effective = _build_effective_unembedding(config, bundle, matrix.convention)
     options = MatrixWorkflowOptions(
         centered=matrix.centered,
@@ -1290,6 +1465,7 @@ def _cmd_matrix_run(args: argparse.Namespace) -> int:
         cpu_fallback=matrix.cpu_fallback,
         energy_thresholds=tuple(matrix.energy_thresholds),
         rank_rtol=matrix.rank_relative_tolerance,
+        rank_rtol_sweep=tuple(matrix.rank_relative_tolerances),
     )
     result = run_matrix_layers(
         managed_lens,
@@ -1308,6 +1484,7 @@ def _cmd_matrix_run(args: argparse.Namespace) -> int:
                 "centered": matrix.centered,
                 "row_normalized": matrix.row_normalized,
                 "layers": list(layers),
+                "lens_artifact": lens_artifact,
             },
         )
         atomic_write_json(destination / "manifest.json", manifest)
@@ -1318,6 +1495,7 @@ def _cmd_matrix_run(args: argparse.Namespace) -> int:
         "output": str(result.output_dir),
         "metrics": str(result.metrics_path),
         "manifest": str(destination / "manifest.json"),
+        "lens_artifact": lens_artifact,
         "layers": [
             {
                 "layer": output.layer,

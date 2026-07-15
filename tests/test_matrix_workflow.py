@@ -131,6 +131,15 @@ def test_matrix_workflow_matches_explicit_svd_and_rejects_conflict(tmp_path):
         result.provenance["effective_unembedding_model_identity"]["verified"]
         is True
     )
+    assert result.subspace_comparisons_path.is_file()
+    comparisons = json.loads(result.subspace_comparisons_path.read_text())
+    assert comparisons["pairs"][0]["layer_a"] == 0
+    assert comparisons["pairs"][0]["layer_b"] == 1
+    assert set(comparisons["pairs"][0]["energy_bases"]) == {"0.8", "0.95"}
+    assert root_metrics["subspace_comparisons_file"] == "subspace_comparisons.json"
+    rank_sweep = metrics["spectrum"]["rank_sensitivity"]
+    assert rank_sweep["1e-05"]["numerical_rank"] <= 3
+    assert rank_sweep["1e-07"]["numerical_rank"] <= 3
 
     for threshold, basis_path in layer_output.basis_paths.items():
         basis = np.load(basis_path, allow_pickle=False)

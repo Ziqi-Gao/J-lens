@@ -44,10 +44,13 @@ accumulates \(G_l=A_l^\top A_l\) in float64, and reports:
 
 - singular values from \(\sqrt{\lambda_i(G_l)}\);
 - tolerance-dependent numerical rank;
+- a configured relative-tolerance rank sensitivity sweep;
 - entropy effective rank, participation ratio, and stable rank;
 - the smallest leading right-singular bases reaching configured cumulative
   energy thresholds;
 - centered mean and zero-row behavior when relevant.
+- pairwise principal angles and directional coverage between layer energy
+  subspaces.
 
 PCA here is over vocabulary-row geometry. It does not by itself show that model
 activations or abstract concepts occupy the same low-dimensional subspace.
@@ -68,6 +71,12 @@ because the available 31-layer Hub artifact is float16 and cannot support a
 numerical-rank claim about its discarded spectral tail. Do not substitute a
 model/tokenizer revision, BOS policy, residual coordinate, or fit corpus
 without producing a distinct configuration and run.
+
+Before a stable-low-rank claim, copy the relevant YAML twice, set
+`lens.fit_prompt_offset` to `1000` and `2000`, and give each copy distinct lens,
+checkpoint, experiment, and output paths. Together with the default offset
+`0`, these select three disjoint 1,000-prompt blocks from the pinned 3,000-prompt
+artifact. Compare their spectra and subspaces; do not overwrite or mix them.
 
 ## Run
 
@@ -124,11 +133,12 @@ Every scientific rerun should use a new `experiment_name` and `output_dir`.
 ## Outputs
 
 The default launcher uses the centered config and writes beneath
-`artifacts/j_space/qwen35_4b_centered/`:
+`artifacts/j_space/qwen35_4b_goemotions_full_centered/`:
 
 ```text
 metrics.json
 manifest.json
+subspace_comparisons.json
 layer_NNN/
 ├── metrics.json
 ├── singular_values.npy
@@ -139,10 +149,18 @@ layer_NNN/
 ```
 
 Each layer's metrics state the matrix definition, coordinate convention,
-centering and normalization choices, block size, dtypes, rank tolerance,
-effective-rank values, and basis energy. Interpret tail rank only when lens
-storage and accumulation precision support it; a float16-saved tail is not
-evidence of exact rank deficiency.
+centering and normalization choices, block size, dtypes, primary rank
+tolerance, tolerance-sensitivity ranks, effective-rank values, and basis
+energy. The comparison file reports pairwise principal angles and both
+directions of subspace coverage at each energy threshold. Interpret tail rank
+only when lens storage and accumulation precision support it; a float16-saved
+tail is not evidence of exact rank deficiency.
+
+## Recorded runs
+
+- [Qwen3.5-4B centered J-space baseline (v1)](reports/qwen35_4b_centered_v1.md)
+  records the completed spectrum run, effective dimensions, subspace drift,
+  provenance, and limitations without committing the 1011 MB artifact.
 
 Shared implementation belongs in `../src/jlens_workspace/`; this direction owns
 only configs, launchers, and reports. See the

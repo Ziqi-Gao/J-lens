@@ -289,5 +289,5 @@ never be committed.
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing an invariant or artifact
-format. Automation and coding agents should also read [Agent.md](Agent.md).
+format. Automation and coding agents should also read [AGENTS.md](AGENTS.md).
 This repository is licensed under [Apache License 2.0](LICENSE).

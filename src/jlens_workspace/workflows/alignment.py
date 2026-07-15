@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import tempfile
@@ -215,6 +216,26 @@ def _operator_candidate_rows(operator: Any, token_ids: NDArray[np.int64]) -> NDA
     return rows.matmul(jacobian).detach().to(device="cpu", dtype=torch.float64).numpy()
 
 
+def _matched_random_direction(
+    query: NDArray[np.float64], *, probe_id: str, seed: int
+) -> NDArray[np.float64]:
+    """Return a deterministic matched-norm direction orthogonal to ``query``."""
+
+    if query.size < 2:
+        raise ValueError("random controls require probe width >= 2")
+    digest = hashlib.sha256(probe_id.encode("utf-8")).digest()
+    identity = int.from_bytes(digest[:8], "little")
+    rng = np.random.default_rng(np.random.SeedSequence([seed, identity]))
+    squared_norm = float(query @ query)
+    for _ in range(16):
+        candidate = rng.normal(size=query.shape[0])
+        candidate -= query * float(candidate @ query) / squared_norm
+        norm = float(np.linalg.norm(candidate))
+        if norm > np.finfo(np.float64).eps:
+            return candidate * (np.sqrt(squared_norm) / norm)
+    raise RuntimeError("failed to sample a non-zero orthogonal random control")
+
+
 def run_batched_probe_j_alignment(
     *,
     probe_vectors: Mapping[str, object],
@@ -225,6 +246,7 @@ def run_batched_probe_j_alignment(
     candidate_pool_size: int = 512,
     sparse_components: int = 16,
     decompose: bool = True,
+    random_control_seeds: tuple[int, ...] = (),
     metadata: dict[str, Any] | None = None,
     overwrite: bool = False,
 ) -> dict[str, Any]:
@@ -244,12 +266,34 @@ def run_batched_probe_j_alignment(
     ):
         raise ValueError("require sparse_components <= candidate_pool_size and top_k")
     names = tuple(sorted(probe_vectors))
-    queries = np.stack([np.asarray(probe_vectors[name], dtype=np.float64) for name in names])
+    primary_queries = {
+        name: np.asarray(probe_vectors[name], dtype=np.float64) for name in names
+    }
+    queries = np.stack([primary_queries[name] for name in names])
     if queries.ndim != 2 or queries.shape[1] != operator.d_model:
         raise ValueError(f"probe vectors must have width d_model={operator.d_model}")
-    query_norms = np.linalg.norm(queries, axis=1)
-    if not np.isfinite(queries).all() or np.any(query_norms == 0):
+    primary_norms = np.linalg.norm(queries, axis=1)
+    if not np.isfinite(queries).all() or np.any(primary_norms == 0):
         raise ValueError("probe vectors must be finite and non-zero")
+    control_seeds = tuple(int(seed) for seed in random_control_seeds)
+    if any(seed < 0 for seed in control_seeds):
+        raise ValueError("random_control_seeds must be non-negative")
+    if len(set(control_seeds)) != len(control_seeds):
+        raise ValueError("random_control_seeds must be unique")
+    query_ids = list(names)
+    query_arrays = [primary_queries[name] for name in names]
+    control_ids: dict[str, list[tuple[int, str]]] = {name: [] for name in names}
+    for name in names:
+        for seed in control_seeds:
+            control_id = f"{name}::random::{seed}"
+            query_ids.append(control_id)
+            query_arrays.append(
+                _matched_random_direction(primary_queries[name], probe_id=name, seed=seed)
+            )
+            control_ids[name].append((seed, control_id))
+    queries = np.stack(query_arrays)
+    query_norms = np.linalg.norm(queries, axis=1)
+    query_index = {query_id: index for index, query_id in enumerate(query_ids)}
 
     destination = Path(output_dir)
     if destination.exists() and any(destination.iterdir()) and not overwrite:
@@ -260,8 +304,8 @@ def run_batched_probe_j_alignment(
 
     empty_ids = np.empty(0, dtype=np.int64)
     empty_scores = np.empty(0, dtype=np.float64)
-    positive = {name: (empty_ids.copy(), empty_scores.copy()) for name in names}
-    negative = {name: (empty_ids.copy(), empty_scores.copy()) for name in names}
+    positive = {query_id: (empty_ids.copy(), empty_scores.copy()) for query_id in query_ids}
+    negative = {query_id: (empty_ids.copy(), empty_scores.copy()) for query_id in query_ids}
     for block in operator.iter_rows():
         rows = block.rows.detach().to(device="cpu").double().numpy()
         row_norms = np.linalg.norm(rows, axis=1)
@@ -270,15 +314,17 @@ def run_batched_probe_j_alignment(
         np.divide(scores, denominator, out=scores, where=denominator > 0)
         scores[denominator == 0] = -np.inf
         ids = np.arange(block.start, block.stop, dtype=np.int64)
-        for column, name in enumerate(names):
-            positive[name] = _merge_topk(
-                *positive[name],
+        for column, query_id in enumerate(query_ids):
+            positive[query_id] = _merge_topk(
+                *positive[query_id],
                 ids,
                 scores[:, column],
-                candidate_pool_size if decompose else top_k,
+                candidate_pool_size
+                if decompose and query_id in primary_queries
+                else top_k,
             )
-            negative[name] = _merge_topk(
-                *negative[name], ids, -scores[:, column], top_k
+            negative[query_id] = _merge_topk(
+                *negative[query_id], ids, -scores[:, column], top_k
             )
 
     union_lookup: dict[int, NDArray[np.float64]] = {}
@@ -290,7 +336,8 @@ def run_batched_probe_j_alignment(
             for token_id, row in zip(union_ids, union_rows, strict=True)
         }
     results: dict[str, Any] = {}
-    for index, name in enumerate(names):
+    for name in names:
+        index = query_index[name]
         candidate_ids, positive_scores = positive[name]
         concept_dir = destination / quote(name, safe="")
         decomposition_payload = None
@@ -349,6 +396,37 @@ def run_batched_probe_j_alignment(
             return output
 
         negative_ids, negative_magnitudes = negative[name]
+        random_controls: list[dict[str, Any]] = []
+        for seed, control_id in control_ids[name]:
+            control_index = query_index[control_id]
+            control_positive_ids, control_positive_scores = positive[control_id]
+            control_negative_ids, control_negative_magnitudes = negative[control_id]
+            random_controls.append(
+                {
+                    "seed": seed,
+                    "norm": float(query_norms[control_index]),
+                    "cosine_with_probe": float(
+                        queries[control_index] @ queries[index]
+                        / (query_norms[control_index] * query_norms[index])
+                    ),
+                    "max_abs_score": float(
+                        max(control_positive_scores[0], control_negative_magnitudes[0])
+                    ),
+                    "top_positive": tokens(
+                        control_positive_ids, control_positive_scores, {}
+                    ),
+                    "top_negative": tokens(
+                        control_negative_ids, -control_negative_magnitudes, {}
+                    ),
+                }
+            )
+        observed_max_abs = float(
+            max(positive_scores[0], negative_magnitudes[0])
+        )
+        exceedances = sum(
+            control["max_abs_score"] >= observed_max_abs
+            for control in random_controls
+        )
         payload = {
             "schema_version": 1,
             "probe_id": name,
@@ -357,6 +435,16 @@ def run_batched_probe_j_alignment(
             "operator": operator.metadata.to_dict(),
             "top_positive": tokens(candidate_ids[:top_k], positive_scores[:top_k]),
             "top_negative": tokens(negative_ids, -negative_magnitudes),
+            "random_controls": random_controls,
+            "random_control_summary": {
+                "n_controls": len(random_controls),
+                "observed_max_abs_score": observed_max_abs,
+                "empirical_p_value": (
+                    None
+                    if not random_controls
+                    else (1 + exceedances) / (1 + len(random_controls))
+                ),
+            },
             "decomposition": decomposition_payload,
         }
         atomic_write_json(concept_dir / "alignment.json", payload)
@@ -367,6 +455,7 @@ def run_batched_probe_j_alignment(
         "workflow": "batched_probe_j_alignment",
         "probe_ids": list(names),
         "vocabulary_passes": 1,
+        "random_control_seeds": list(control_seeds),
         "decomposition_enabled": decompose,
         "operator": operator.metadata.to_dict(),
         "metadata": metadata or {},

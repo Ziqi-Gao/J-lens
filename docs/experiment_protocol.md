@@ -11,8 +11,10 @@ Run every selected layer and concept through the same gates:
 4. Record validation diagnostics, then refit with fixed `C` on train+validation
    and evaluate test once.
 5. Search all token-J rows in chunks with ordinary cosine. Report top positive
-   and negative tokens, signs, and stability across seeds. This is the end of
-   the current formal experiment.
+   and negative tokens, signs, and matched-norm orthogonal random nulls. Repeat
+   complete probe fits with independent seeds or bootstrap samples before
+   treating token rankings as stable. This is the end of the current formal
+   experiment.
 
 Only after the nearest-token semantics pass review should a later experiment:
 

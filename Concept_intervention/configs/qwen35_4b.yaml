@@ -1,7 +1,7 @@
 schema_version: 1
 direction: concept_intervention
-experiment_name: qwen35_4b_go_emotions_7concept_full_ovr_v1
-output_dir: artifacts/concept_intervention/qwen35_4b_go_emotions_7concept_full_ovr_v1
+experiment_name: qwen35_4b_go_emotions_7concept_full_ovr_v2
+output_dir: artifacts/concept_intervention/qwen35_4b_go_emotions_7concept_full_ovr_v2
 seed: 42
 model:
   model_id: Qwen/Qwen3.5-4B
@@ -24,10 +24,11 @@ dataset:
 lens:
   source: fit
   fit_prompts_path: artifacts/data/go_emotions_7concept_full_ovr_v1/fit_prompts.jsonl
-  fit_output_path: artifacts/lenses/qwen35_4b_go_emotions_7concept_full_fp32.pt
-  fit_checkpoint_path: artifacts/lenses/qwen35_4b_go_emotions_7concept_full_fp32.checkpoint.pt
+  fit_output_path: artifacts/lenses/qwen35_4b_go_emotions_7concept_full_block0_fp32.pt
+  fit_checkpoint_path: artifacts/lenses/qwen35_4b_go_emotions_7concept_full_block0_fp32.checkpoint.pt
   layers: [8, 12, 16, 20, 24, 28]
   n_fit_prompts: 1000
+  fit_prompt_offset: 0
   target_layer: 31
   dim_batch: 32
   max_seq_len: 128
@@ -58,3 +59,4 @@ alignment:
   vocabulary_chunk_size: 4096
   decompose: false
   require_nonnegative: true
+  random_control_seeds: [101, 202, 303, 404, 505]
