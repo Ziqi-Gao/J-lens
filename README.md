@@ -92,6 +92,10 @@ See [research design](docs/design.md) and the
 [experiment protocol](docs/experiment_protocol.md) for the full invariants and
 evidence gates.
 
+The lightweight [experiment report](reports/index.html) presents the completed
+Concept Intervention and J-space runs as separate, data-driven views. It is
+fully local and does not commit generated tensor artifacts.
+
 ## Repository layout
 
 ```text
@@ -101,6 +105,7 @@ src/jlens_workspace/    shared typed implementation
 tests/                  fast offline tests plus opt-in LLM/GPU tests
 scripts/                tiny public-model integration checks
 docs/                   shared design and experiment protocol
+reports/                shared static HTML report renderer
 artifacts/               generated immutable run outputs; gitignored
 ```
 

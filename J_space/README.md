@@ -161,6 +161,8 @@ tail is not evidence of exact rank deficiency.
 - [Qwen3.5-4B centered J-space baseline (v1)](reports/qwen35_4b_centered_v1.md)
   records the completed spectrum run, effective dimensions, subspace drift,
   provenance, and limitations without committing the 1011 MB artifact.
+- [Interactive experiment report](../reports/index.html#jspace) renders the
+  registered J-space runs and SVG plots from lightweight summaries.
 
 Shared implementation belongs in `../src/jlens_workspace/`; this direction owns
 only configs, launchers, and reports. See the

@@ -151,6 +151,8 @@ policy, hook coordinate, or coordinate-changing model wrapper.
 - [Qwen3.5-4B GoEmotions concept baseline (v1)](reports/qwen35_4b_goemotions_v1.md)
   records the completed probe/alignment run, held-out metrics, provenance, and
   limitations without committing the 3.2 GB artifact.
+- [Interactive experiment report](../reports/index.html#concept) renders the
+  registered Concept runs and SVG plots from lightweight summaries.
 
 Shared implementation belongs in `../src/jlens_workspace/`; this directory owns
 only direction-specific data, configs, launchers, and research reports. The
