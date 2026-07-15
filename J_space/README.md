@@ -156,6 +156,12 @@ directions of subspace coverage at each energy threshold. Interpret tail rank
 only when lens storage and accumulation precision support it; a float16-saved
 tail is not evidence of exact rank deficiency.
 
+## Recorded runs
+
+- [Qwen3.5-4B centered J-space baseline (v1)](reports/qwen35_4b_centered_v1.md)
+  records the completed spectrum run, effective dimensions, subspace drift,
+  provenance, and limitations without committing the 1011 MB artifact.
+
 Shared implementation belongs in `../src/jlens_workspace/`; this direction owns
 only configs, launchers, and reports. See the
 [shared research design](../docs/design.md) for invariants.

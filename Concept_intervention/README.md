@@ -146,6 +146,12 @@ Treat the config and each artifact's metadata/manifest as a unit. A probe or
 lens must never be reused after changing the model revision, tokenizer, BOS
 policy, hook coordinate, or coordinate-changing model wrapper.
 
+## Recorded runs
+
+- [Qwen3.5-4B GoEmotions concept baseline (v1)](reports/qwen35_4b_goemotions_v1.md)
+  records the completed probe/alignment run, held-out metrics, provenance, and
+  limitations without committing the 3.2 GB artifact.
+
 Shared implementation belongs in `../src/jlens_workspace/`; this directory owns
 only direction-specific data, configs, launchers, and research reports. The
 common evidence gates are in [the experiment protocol](../docs/experiment_protocol.md).
