@@ -193,6 +193,78 @@ class MatrixConfig(StrictModel):
         return self
 
 
+class OccupancyConfig(StrictModel):
+    """Concept-vector J-space occupancy (``concept_occupancy_method_v1``)."""
+
+    method: Literal["concept_occupancy_method_v1"] = "concept_occupancy_method_v1"
+    mode: Literal["exact"] = "exact"
+    layers: list[int] = Field(min_length=1)
+    concept_ids: list[str] | None = None
+    signs: list[Literal["+", "-"]] = Field(default_factory=lambda: ["+", "-"])
+    conventions: list[Literal["rmsnorm_weighted", "raw"]] = Field(
+        default_factory=lambda: ["rmsnorm_weighted", "raw"]
+    )
+    selection_modes: list[Literal["positive_cosine", "raw_positive_dot"]] = Field(
+        default_factory=lambda: ["positive_cosine", "raw_positive_dot"]
+    )
+    k_max: int = Field(default=64, ge=1)
+    report_grid: list[int] = Field(
+        default_factory=lambda: [1, 2, 4, 8, 16, 25, 32, 64]
+    )
+    random_seeds: list[int] = Field(
+        default_factory=lambda: [101, 202, 303, 404, 505]
+    )
+    absolute_thresholds: list[float] = Field(
+        default_factory=lambda: [0.01, 0.05, 0.10, 0.20]
+    )
+    vocabulary_chunk_size: int = Field(default=4096, ge=1)
+    device: str = "cpu"
+    expected_lens_sha256: str
+    probe_replicates: list[str] | None = None
+
+    @model_validator(mode="after")
+    def validate_occupancy(self) -> OccupancyConfig:
+        for name in ("layers", "signs", "conventions", "selection_modes"):
+            values = getattr(self, name)
+            if len(set(values)) != len(values):
+                raise ValueError(f"{name} must be unique")
+        if any(layer < 0 for layer in self.layers):
+            raise ValueError("layers must be non-negative")
+        grid = self.report_grid
+        if not grid or sorted(set(grid)) != grid:
+            raise ValueError("report_grid must be non-empty, sorted, and unique")
+        if grid[0] < 1 or grid[-1] > self.k_max:
+            raise ValueError("report_grid must lie in [1, k_max]")
+        if not self.random_seeds or len(set(self.random_seeds)) != len(
+            self.random_seeds
+        ):
+            raise ValueError("random_seeds must be non-empty and unique")
+        if any(seed < 0 for seed in self.random_seeds):
+            raise ValueError("random_seeds must be non-negative")
+        if not self.absolute_thresholds or any(
+            not 0 < value < 1 for value in self.absolute_thresholds
+        ):
+            raise ValueError("absolute_thresholds must lie in (0, 1)")
+        if len(set(self.absolute_thresholds)) != len(self.absolute_thresholds):
+            raise ValueError("absolute_thresholds must be unique")
+        if len(self.expected_lens_sha256) != 64:
+            raise ValueError("expected_lens_sha256 must be a 64-character SHA-256")
+        int(self.expected_lens_sha256, 16)
+        if self.concept_ids is not None and (
+            not self.concept_ids
+            or len(set(self.concept_ids)) != len(self.concept_ids)
+        ):
+            raise ValueError("concept_ids must be non-empty and unique when supplied")
+        if self.probe_replicates is not None and (
+            not self.probe_replicates
+            or len(set(self.probe_replicates)) != len(self.probe_replicates)
+        ):
+            raise ValueError(
+                "probe_replicates must be non-empty and unique when supplied"
+            )
+        return self
+
+
 class ExperimentConfig(StrictModel):
     schema_version: Literal[1] = 1
     direction: Literal["concept_intervention", "j_space"]
@@ -206,6 +278,7 @@ class ExperimentConfig(StrictModel):
     probe: ProbeConfig | None = None
     alignment: AlignmentConfig | None = None
     intervention: InterventionConfig | None = None
+    occupancy: OccupancyConfig | None = None
     matrix: MatrixConfig | None = None
 
     @model_validator(mode="after")
@@ -236,6 +309,8 @@ class ExperimentConfig(StrictModel):
             ]
             if self.intervention is not None:
                 forbidden.append("intervention")
+            if self.occupancy is not None:
+                forbidden.append("occupancy")
             if forbidden:
                 raise ValueError(
                     "j_space must not define concept fields: " + ", ".join(forbidden)

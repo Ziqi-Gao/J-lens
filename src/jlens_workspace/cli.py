@@ -226,6 +226,31 @@ def build_parser() -> argparse.ArgumentParser:
     _add_overwrite_flag(matrix_run)
     _add_json_flag(matrix_run)
     matrix_run.set_defaults(handler=_cmd_matrix_run)
+
+    occupancy = subparsers.add_parser(
+        "occupancy", help="sparse J-space occupancy workflows"
+    )
+    occupancy_subparsers = occupancy.add_subparsers(
+        dest="occupancy_command", required=True
+    )
+    occupancy_concepts = occupancy_subparsers.add_parser(
+        "concepts",
+        help="decompose probe concept vectors over token J-directions "
+        "(concept_occupancy_method_v1)",
+    )
+    _add_config_argument(occupancy_concepts)
+    occupancy_concepts.add_argument(
+        "--probes", type=Path, required=True, help="fitted probe artifact directory"
+    )
+    occupancy_concepts.add_argument(
+        "--output", type=Path, help="occupancy run directory (default: output_dir)"
+    )
+    occupancy_concepts.add_argument(
+        "--layer", type=int, action="append", help="restrict layers; may be repeated"
+    )
+    _add_overwrite_flag(occupancy_concepts)
+    _add_json_flag(occupancy_concepts)
+    occupancy_concepts.set_defaults(handler=_cmd_occupancy_concepts)
     return parser
 
 
@@ -1510,6 +1535,235 @@ def _cmd_matrix_run(args: argparse.Namespace) -> int:
         payload,
         as_json=args.json,
         message=f"analyzed {len(result.layers)} matrix layers -> {result.output_dir}",
+    )
+    return 0
+
+
+def _load_unembedding_tensors_lightweight(config: Any) -> tuple[Any, Any]:
+    """Load only ``W_U`` and the final RMSNorm weight from cached safetensors.
+
+    Occupancy needs the unembedding and norm scale but never a forward pass,
+    so the full multi-GB causal LM is deliberately not instantiated. Fails
+    offline-safe: files must already be in the local Hugging Face cache.
+    """
+
+    import torch
+    from huggingface_hub import snapshot_download
+    from safetensors import safe_open
+
+    snapshot = Path(
+        snapshot_download(
+            config.model.model_id,
+            revision=config.model.revision,
+            local_files_only=True,
+            allow_patterns=["*.safetensors", "*.safetensors.index.json", "config.json"],
+        )
+    )
+    index_path = snapshot / "model.safetensors.index.json"
+    if index_path.is_file():
+        weight_map = json.loads(index_path.read_text(encoding="utf-8"))["weight_map"]
+    else:
+        single = sorted(snapshot.glob("*.safetensors"))
+        if len(single) != 1:
+            raise ValueError(f"cannot resolve safetensors layout in {snapshot}")
+        with safe_open(single[0], framework="pt", device="cpu") as handle:
+            weight_map = {name: single[0].name for name in handle.keys()}
+
+    def read_tensor(candidates: tuple[str, ...]) -> Any:
+        for name in candidates:
+            shard = weight_map.get(name)
+            if shard is None:
+                continue
+            with safe_open(snapshot / shard, framework="pt", device="cpu") as handle:
+                return handle.get_tensor(name)
+        raise ValueError(f"none of {candidates} found in model safetensors")
+
+    unembedding = read_tensor(("lm_head.weight", "model.embed_tokens.weight"))
+    norm_weight = read_tensor(("model.norm.weight", "model.language_model.norm.weight"))
+
+    class _CachedRMSNorm(torch.nn.Module):
+        def __init__(self, weight: Any) -> None:
+            super().__init__()
+            self.weight = torch.nn.Parameter(weight.detach().clone())
+            self.variance_epsilon = 1e-6
+
+    return unembedding.detach(), _CachedRMSNorm(norm_weight)
+
+
+def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
+    from transformers import AutoTokenizer
+
+    from jlens_workspace.artifacts import sha256_file
+    from jlens_workspace.jacobian import (
+        build_effective_unembedding,
+        restrict_effective_unembedding,
+    )
+    from jlens_workspace.pursuit import build_token_frame_dictionary
+    from jlens_workspace.workflows.occupancy import (
+        ConceptTarget,
+        run_concept_occupancy,
+        verify_lens_artifact_sha256,
+    )
+
+    config = _load_config(args.config)
+    occupancy = _require_section(config, "occupancy")
+    lens = _require_section(config, "lens")
+    if lens.source != "local" or not lens.path_or_repo:
+        raise ValueError("occupancy requires lens.source='local' with a pinned artifact")
+    layers = tuple(args.layer) if args.layer else tuple(occupancy.layers)
+    unknown_layers = sorted(set(layers) - set(occupancy.layers))
+    if unknown_layers:
+        raise ValueError(f"layers not declared in occupancy config: {unknown_layers}")
+
+    lens_path = Path(lens.path_or_repo)
+    if lens_path.is_dir():
+        lens_path = lens_path / (lens.filename or "lens.pt")
+    lens_sha = verify_lens_artifact_sha256(lens_path, occupancy.expected_lens_sha256)
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.model.tokenizer_id or config.model.model_id,
+        revision=config.model.tokenizer_revision or config.model.revision,
+    )
+    from jlens_workspace.jacobian import OfficialJLensAdapter
+
+    d_model_unembedding, cached_norm = _load_unembedding_tensors_lightweight(config)
+    managed_lens = OfficialJLensAdapter.load(
+        lens_path,
+        expected=_lens_expected(config, int(d_model_unembedding.shape[1])),
+    )
+    recorded_bos = managed_lens.metadata.extra.get("force_bos")
+    if recorded_bos is not None and recorded_bos != config.model.force_bos:
+        raise ValueError(
+            f"lens force_bos={recorded_bos!r} differs from configured "
+            f"force_bos={config.model.force_bos!r}"
+        )
+    missing_layers = sorted(set(layers) - set(managed_lens.source_layers))
+    if missing_layers:
+        raise ValueError(f"layers absent from fitted lens: {missing_layers}")
+
+    effectives: dict[str, Any] = {}
+    for convention in occupancy.conventions:
+        effective = build_effective_unembedding(
+            d_model_unembedding,
+            convention=convention,
+            norm=cached_norm,
+            model_id=config.model.model_id,
+            model_revision=config.model.revision,
+        )
+        effectives[convention] = restrict_effective_unembedding(
+            effective, len(tokenizer)
+        )
+
+    expected_identity = _expected_probe_identity(config)
+    probes_manifest = json.loads(
+        (args.probes / "manifest.json").read_text(encoding="utf-8")
+    )
+    vector_hashes = {
+        (int(entry["layer"]), str(entry["concept_id"])): str(entry["vector_sha256"])
+        for entry in probes_manifest.get("probes", [])
+    }
+    targets: list[ConceptTarget] = []
+    for layer in layers:
+        vectors = _load_probe_vectors(
+            args.probes, layer, expected_identity=expected_identity
+        )
+        selected = (
+            occupancy.concept_ids
+            if occupancy.concept_ids is not None
+            else sorted(vectors)
+        )
+        unknown = sorted(set(selected) - set(vectors))
+        if unknown:
+            raise ValueError(f"concepts absent from probes at layer {layer}: {unknown}")
+        for concept_id in selected:
+            targets.append(
+                ConceptTarget(
+                    layer=int(layer),
+                    concept_id=concept_id,
+                    vector=vectors[concept_id],
+                    vector_sha256=vector_hashes.get((int(layer), concept_id), ""),
+                    replicate_id=(occupancy.probe_replicates or ["primary"])[0],
+                    provenance={
+                        "probes_dir": str(args.probes),
+                        "activation_artifact_hash": probes_manifest.get(
+                            "activation_artifact_hash"
+                        ),
+                    },
+                )
+            )
+
+    def dictionary_factory(layer: int, convention: str) -> Any:
+        return build_token_frame_dictionary(
+            effectives[convention],
+            managed_lens.jacobians[layer],
+            convention=convention,
+            chunk_size=occupancy.vocabulary_chunk_size,
+            compute_device=occupancy.device,
+        )
+
+    destination = args.output or Path(config.output_dir)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        notes={
+            "workflow": "concept_occupancy",
+            "method": occupancy.method,
+            "mode": occupancy.mode,
+            "lens_artifact": {
+                "path": str(lens_path),
+                "sha256": lens_sha,
+                "identity_status": "content_hashed",
+            },
+            "probes_dir": str(args.probes),
+            "probes_manifest_sha256": sha256_file(args.probes / "manifest.json"),
+            "layers": list(layers),
+            "conventions": list(occupancy.conventions),
+            "selection_modes": list(occupancy.selection_modes),
+            "k_max": occupancy.k_max,
+            "random_seeds": list(occupancy.random_seeds),
+        },
+    )
+    destination.mkdir(parents=True, exist_ok=True)
+    atomic_write_json_path = destination / "manifest.json"
+    from jlens_workspace.artifacts import atomic_write_json
+
+    atomic_write_json(atomic_write_json_path, manifest)
+    summary = run_concept_occupancy(
+        output_dir=destination,
+        dictionary_factory=dictionary_factory,
+        targets=targets,
+        conventions=occupancy.conventions,
+        selection_modes=occupancy.selection_modes,
+        signs=occupancy.signs,
+        k_max=occupancy.k_max,
+        report_grid=occupancy.report_grid,
+        random_seeds=occupancy.random_seeds,
+        absolute_thresholds=occupancy.absolute_thresholds,
+        chunk_size=occupancy.vocabulary_chunk_size,
+        decode_token=lambda token_id: tokenizer.decode([token_id]),
+        run_metadata={
+            "experiment_name": config.experiment_name,
+            "config_sha256": manifest.notes.get("config_sha256"),
+            "lens_sha256": lens_sha,
+            "seed": config.seed,
+        },
+        overwrite=args.overwrite,
+    )
+    payload = {
+        "output": summary["output"],
+        "completed": summary["completed"],
+        "skipped": summary["skipped"],
+        "layers": list(layers),
+        "n_targets": len(targets),
+        "manifest": str(atomic_write_json_path),
+    }
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"occupancy: {summary['completed']} combos completed, "
+            f"{summary['skipped']} skipped -> {summary['output']}"
+        ),
     )
     return 0
 
