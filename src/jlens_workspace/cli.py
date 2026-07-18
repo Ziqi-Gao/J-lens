@@ -1578,7 +1578,15 @@ def _load_unembedding_tensors_lightweight(config: Any) -> tuple[Any, Any]:
                 return handle.get_tensor(name)
         raise ValueError(f"none of {candidates} found in model safetensors")
 
-    unembedding = read_tensor(("lm_head.weight", "model.embed_tokens.weight"))
+    unembedding = read_tensor(
+        (
+            "lm_head.weight",
+            "model.lm_head.weight",
+            "model.language_model.lm_head.weight",
+            "model.embed_tokens.weight",
+            "model.language_model.embed_tokens.weight",
+        )
+    )
     norm_weight = read_tensor(("model.norm.weight", "model.language_model.norm.weight"))
 
     class _CachedRMSNorm(torch.nn.Module):
