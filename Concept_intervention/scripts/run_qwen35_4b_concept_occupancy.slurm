@@ -2,12 +2,13 @@
 #SBATCH --job-name=jlens-concept-occ-pilot
 #SBATCH --account=p32737
 #SBATCH --partition=gengpu
+# Policy: never use the gengpu-long partition; prefer short shardable jobs.
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=48G
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=04:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 
@@ -34,5 +35,9 @@ export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-4}"
 cd "${REPO_ROOT}"
 echo "job=${SLURM_JOB_ID:-interactive} host=$(hostname) config=${CONFIG} hf_home=${HF_HOME}"
 nvidia-smi
+LAYER_ARGS=()
+if [[ -n "${OCCUPANCY_LAYER:-}" ]]; then
+  for layer in ${OCCUPANCY_LAYER}; do LAYER_ARGS+=(--layer "${layer}"); done
+fi
 srun --ntasks=1 --unbuffered \
-  bash Concept_intervention/scripts/run_qwen35_4b_concept_occupancy.sh "${CONFIG}"
+  bash Concept_intervention/scripts/run_qwen35_4b_concept_occupancy.sh "${CONFIG}" "${LAYER_ARGS[@]}"

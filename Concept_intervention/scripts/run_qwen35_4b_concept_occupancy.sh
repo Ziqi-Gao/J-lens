@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 CLI="${JLENS_WORKSPACE_CLI:-${REPO_ROOT}/.venv/bin/jlens-workspace}"
 CONFIG="${1:-${OCCUPANCY_CONFIG:-${REPO_ROOT}/Concept_intervention/configs/qwen35_4b_concept_occupancy_pilot_v1.yaml}}"
+if [[ $# -gt 0 ]]; then shift; fi
 PROBES="${OCCUPANCY_PROBES:-${REPO_ROOT}/artifacts/concept_intervention/qwen35_4b_go_emotions_7concept_full_ovr_v2/probes}"
 
 if [[ ! -x "${CLI}" ]]; then
@@ -32,4 +33,6 @@ cd "${REPO_ROOT}"
 "${CLI}" doctor --require-llm
 "${REPO_ROOT}/.venv/bin/python" -c 'import torch; assert torch.cuda.is_available(), "CUDA is unavailable"; x=torch.ones((16,16), device="cuda", dtype=torch.float64); assert (x@x).sum().item() > 0; print(f"cuda={torch.cuda.get_device_name(0)} torch={torch.__version__} runtime={torch.version.cuda}")'
 "${CLI}" config validate "${CONFIG}"
-exec "${CLI}" occupancy concepts "${CONFIG}" --probes "${PROBES}"
+# Extra args (e.g. --layer 8) shard the run; completed combos are skipped
+# on resume, so shards and reruns write disjoint, idempotent outputs.
+exec "${CLI}" occupancy concepts "${CONFIG}" --probes "${PROBES}" "$@"
