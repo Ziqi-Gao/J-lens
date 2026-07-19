@@ -210,3 +210,59 @@ def test_j_space_direction_rejects_occupancy_section() -> None:
                 "occupancy": {"layers": [0], "expected_lens_sha256": LENS_SHA},
             }
         )
+
+
+def test_control_subsample_is_deterministic_and_sized() -> None:
+    from jlens_workspace.workflows.occupancy import subsample_control_norms
+
+    norms = np.linspace(0.1, 3.0, 40)
+    half_a = subsample_control_norms(norms, 0.5)
+    half_b = subsample_control_norms(norms, 0.5)
+    np.testing.assert_array_equal(half_a, half_b)
+    assert half_a.size == 20
+    # Values are a genuine sub-multiset of the real norms.
+    assert set(np.round(half_a, 12)).issubset(set(np.round(norms, 12)))
+    quarter = subsample_control_norms(norms, 0.25)
+    assert quarter.size == 10 and not np.array_equal(quarter, half_a[:10])
+    # Fraction 1.0 is the identity (primary control unchanged).
+    assert subsample_control_norms(norms, 1.0) is norms
+
+
+def test_single_fraction_keeps_legacy_schema(tmp_path: Path) -> None:
+    atoms = _atoms()
+    _run(tmp_path, atoms)  # default control_atom_fractions=(1.0,)
+    combo = (
+        tmp_path
+        / "occupancy/rmsnorm_weighted/positive_cosine/layer_08"
+        / "goemotions%3Agratitude/pos/primary"
+    )
+    metrics = json.loads((combo / "metrics.json").read_text())
+    assert "occupancy_by_control_fraction" not in metrics
+    assert "fractions" not in metrics["random_controls"]
+    assert not list(combo.glob("control_errors_f*.npy"))
+
+
+def test_multi_fraction_controls_and_occupancy(tmp_path: Path) -> None:
+    atoms = _atoms()
+    summary = _run(tmp_path, atoms, control_atom_fractions=(1.0, 0.5))
+    assert summary["completed"] == 2
+    combo = (
+        tmp_path
+        / "occupancy/rmsnorm_weighted/positive_cosine/layer_08"
+        / "goemotions%3Agratitude/pos/primary"
+    )
+    reduced_errors = np.load(combo / "control_errors_f0p5.npy", allow_pickle=False)
+    reduced_gains = np.load(combo / "control_gains_f0p5.npy", allow_pickle=False)
+    assert reduced_errors.shape == (3, 9) and reduced_gains.shape == (3, 8)
+
+    metrics = json.loads((combo / "metrics.json").read_text())
+    by_fraction = metrics["occupancy_by_control_fraction"]
+    assert set(by_fraction) == {"1", "0.5"}
+    for entry in by_fraction.values():
+        assert set(entry) == {"first_nonexceed_v1", "consecutive3_nonexceed_v1"}
+    # Top-level occupancy stays the fraction-1.0 result.
+    assert metrics["occupancy"] == by_fraction["1"]
+    fractions_meta = metrics["random_controls"]["fractions"]
+    assert [f["fraction"] for f in fractions_meta] == [1.0, 0.5]
+    assert fractions_meta[1]["method"] == "matched_gaussian_atom_norms_subsampled_v1"
+    assert fractions_meta[1]["n_atoms"] == 9  # ceil(0.5 * 18 atoms)

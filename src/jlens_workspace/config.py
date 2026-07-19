@@ -220,6 +220,7 @@ class OccupancyConfig(StrictModel):
     vocabulary_chunk_size: int = Field(default=4096, ge=1)
     device: str = "cpu"
     expected_lens_sha256: str
+    control_atom_fractions: list[float] = Field(default_factory=lambda: [1.0])
     probe_replicates: list[str] | None = None
 
     @model_validator(mode="after")
@@ -250,6 +251,13 @@ class OccupancyConfig(StrictModel):
         if len(self.expected_lens_sha256) != 64:
             raise ValueError("expected_lens_sha256 must be a 64-character SHA-256")
         int(self.expected_lens_sha256, 16)
+        fractions = self.control_atom_fractions
+        if not fractions or len(set(fractions)) != len(fractions):
+            raise ValueError("control_atom_fractions must be non-empty and unique")
+        if 1.0 not in fractions:
+            raise ValueError("control_atom_fractions must include 1.0")
+        if any(not 0 < value <= 1 for value in fractions):
+            raise ValueError("control_atom_fractions must lie in (0, 1]")
         if self.concept_ids is not None and (
             not self.concept_ids
             or len(set(self.concept_ids)) != len(self.concept_ids)

@@ -55,6 +55,34 @@ class OccupancyWorkflowError(ValueError):
     """Raised when occupancy inputs violate the workflow contract."""
 
 
+CONTROL_SUBSAMPLE_KEY = 777
+
+
+def subsample_control_norms(atom_norms: FloatArray, fraction: float) -> FloatArray:
+    """Deterministic norm subsample for the low-cardinality control variant.
+
+    ``fraction == 1.0`` returns the input untouched (the primary control).
+    Otherwise a Philox permutation keyed by ``(CONTROL_SUBSAMPLE_KEY,
+    round(fraction * 1e6))`` selects ``ceil(fraction * V)`` matched norms, so
+    the reduced control dictionary is a pure function of (norms, fraction).
+    """
+
+    value = float(fraction)
+    if not 0.0 < value <= 1.0:
+        raise OccupancyWorkflowError("control fraction must lie in (0, 1]")
+    if value == 1.0:
+        return atom_norms
+    count = int(np.ceil(value * atom_norms.size))
+    rng = np.random.Generator(
+        np.random.Philox(key=[CONTROL_SUBSAMPLE_KEY, round(value * 1_000_000)])
+    )
+    return atom_norms[rng.permutation(atom_norms.size)[:count]]
+
+
+def _fraction_slug(fraction: float) -> str:
+    return f"{fraction:g}".replace(".", "p")
+
+
 def verify_lens_artifact_sha256(path: str | Path, expected_sha256: str) -> str:
     """Fail closed unless the lens file hash matches the pinned expectation."""
 
@@ -191,6 +219,7 @@ def run_concept_occupancy(
     k_max: int = 64,
     report_grid: Sequence[int] = (1, 2, 4, 8, 16, 25, 32, 64),
     random_seeds: Sequence[int] = (101, 202, 303, 404, 505),
+    control_atom_fractions: Sequence[float] = (1.0,),
     absolute_thresholds: Sequence[float] = (0.01, 0.05, 0.10, 0.20),
     chunk_size: int = 4096,
     decode_token: Callable[[int], str] | None = None,
@@ -219,6 +248,13 @@ def run_concept_occupancy(
     seeds = [int(seed) for seed in random_seeds]
     if not seeds or len(set(seeds)) != len(seeds) or any(seed < 0 for seed in seeds):
         raise OccupancyWorkflowError("random_seeds must be unique and non-negative")
+    fractions = [float(fraction) for fraction in control_atom_fractions]
+    if not fractions or len(set(fractions)) != len(fractions):
+        raise OccupancyWorkflowError("control_atom_fractions must be non-empty and unique")
+    if 1.0 not in fractions:
+        raise OccupancyWorkflowError("control_atom_fractions must include 1.0")
+    if any(not 0.0 < fraction <= 1.0 for fraction in fractions):
+        raise OccupancyWorkflowError("control_atom_fractions must lie in (0, 1]")
 
     root = Path(output_dir) / "occupancy"
     root.mkdir(parents=True, exist_ok=True)
@@ -274,17 +310,22 @@ def run_concept_occupancy(
             real_results = streaming_nonnegative_pursuit(
                 dictionary, batch, k_max=k_max, selection_modes=modes
             )
-            control_results: dict[int, list[PursuitResult]] = {}
-            for seed in seeds:
-                control_dictionary = MatchedNormRandomDictionary(
-                    atom_norms,
-                    seed=seed,
-                    d_model=int(dictionary.d_model),
-                    chunk_size=chunk_size,
-                )
-                control_results[seed] = streaming_nonnegative_pursuit(
-                    control_dictionary, batch, k_max=k_max, selection_modes=modes
-                )
+            controls_by_fraction: dict[float, dict[int, list[PursuitResult]]] = {}
+            for fraction in fractions:
+                norms_f = subsample_control_norms(atom_norms, fraction)
+                per_seed: dict[int, list[PursuitResult]] = {}
+                for seed in seeds:
+                    control_dictionary = MatchedNormRandomDictionary(
+                        norms_f,
+                        seed=seed,
+                        d_model=int(dictionary.d_model),
+                        chunk_size=chunk_size,
+                    )
+                    per_seed[seed] = streaming_nonnegative_pursuit(
+                        control_dictionary, batch, k_max=k_max, selection_modes=modes
+                    )
+                controls_by_fraction[fraction] = per_seed
+            control_results = controls_by_fraction[1.0]
 
             for job_index, (target, sign, mode) in enumerate(jobs):
                 result = real_results[job_index]
@@ -309,6 +350,22 @@ def run_concept_occupancy(
                     combo / "control_gains.npy",
                     np.stack([control.gains for control in controls]),
                 )
+                for fraction in fractions:
+                    if fraction == 1.0:
+                        continue
+                    extra = [
+                        controls_by_fraction[fraction][seed][job_index]
+                        for seed in seeds
+                    ]
+                    slug = _fraction_slug(fraction)
+                    _atomic_save_npy(
+                        combo / f"control_errors_f{slug}.npy",
+                        np.stack([control.errors for control in extra]),
+                    )
+                    _atomic_save_npy(
+                        combo / f"control_gains_f{slug}.npy",
+                        np.stack([control.gains for control in extra]),
+                    )
                 _atomic_save_npy(
                     combo / "support_token_ids.npy",
                     result.support.astype(np.int64),
@@ -333,6 +390,38 @@ def run_concept_occupancy(
                     thresholds=absolute_thresholds,
                     decode_token=decode_token,
                 )
+                if len(fractions) > 1:
+                    payload["occupancy_by_control_fraction"] = {
+                        f"{fraction:g}": {
+                            rule: crossing_k(
+                                result.gains,
+                                [
+                                    controls_by_fraction[fraction][seed][
+                                        job_index
+                                    ].gains
+                                    for seed in seeds
+                                ],
+                                rule=rule,
+                            )
+                            for rule in CROSSING_RULES
+                        }
+                        for fraction in fractions
+                    }
+                    payload["random_controls"]["fractions"] = [
+                        {
+                            "fraction": fraction,
+                            "method": RANDOM_CONTROL_METHOD
+                            if fraction == 1.0
+                            else "matched_gaussian_atom_norms_subsampled_v1",
+                            "n_atoms": int(
+                                subsample_control_norms(atom_norms, fraction).size
+                            ),
+                            "subsample_key": None
+                            if fraction == 1.0
+                            else [CONTROL_SUBSAMPLE_KEY, round(fraction * 1_000_000)],
+                        }
+                        for fraction in fractions
+                    ]
                 payload.update(
                     {
                         "schema_version": 1,

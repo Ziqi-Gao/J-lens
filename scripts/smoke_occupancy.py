@@ -117,6 +117,7 @@ def main() -> None:
         k_max=8,
         report_grid=[1, 2, 4, 8],
         random_seeds=[101, 202],
+        control_atom_fractions=[1.0, 0.5],
         chunk_size=1024,
         decode_token=lambda token_id: tokenizer.decode([token_id]),
         run_metadata={"purpose": "occupancy smoke", "model": MODEL_ID},
@@ -140,6 +141,12 @@ def main() -> None:
         allow_pickle=False,
     )
     assert errors[0] == 1.0 and np.all(np.diff(errors) <= 1e-12)
+    reduced = (
+        args.output
+        / "occupancy/raw/positive_cosine/layer_00/smoke%3Aalpha/pos/primary"
+    )
+    assert (reduced / "control_errors_f0p5.npy").is_file()
+    assert "0.5" in sample["occupancy_by_control_fraction"]
     print(
         f"ok model={MODEL_ID}@{MODEL_REVISION} combos={summary['completed']} "
         f"vocab={effective.vocab_size} d_model={wrapped.d_model} "

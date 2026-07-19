@@ -1729,6 +1729,7 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
             "selection_modes": list(occupancy.selection_modes),
             "k_max": occupancy.k_max,
             "random_seeds": list(occupancy.random_seeds),
+            "control_atom_fractions": list(occupancy.control_atom_fractions),
         },
     )
     destination.mkdir(parents=True, exist_ok=True)
@@ -1746,6 +1747,7 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
         k_max=occupancy.k_max,
         report_grid=occupancy.report_grid,
         random_seeds=occupancy.random_seeds,
+        control_atom_fractions=occupancy.control_atom_fractions,
         absolute_thresholds=occupancy.absolute_thresholds,
         chunk_size=occupancy.vocabulary_chunk_size,
         decode_token=lambda token_id: tokenizer.decode([token_id]),
