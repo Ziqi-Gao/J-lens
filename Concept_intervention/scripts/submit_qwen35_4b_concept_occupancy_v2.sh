@@ -6,7 +6,7 @@ REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
 OUTPUT="${REPO_ROOT}/artifacts/concept_intervention/qwen35_4b_concept_occupancy_v2"
 mkdir -p "${OUTPUT}/slurm"
 
-if [[ -n "$(git -C "${REPO_ROOT}" status --short)" ]]; then
+if [[ -n "$(git -C "${REPO_ROOT}" status --short --untracked-files=no)" ]]; then
   echo "error: v2 must be submitted from a clean immutable checkout" >&2
   exit 2
 fi
