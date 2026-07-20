@@ -1,10 +1,9 @@
 """Streaming sparse non-negative pursuit over token J-direction dictionaries.
 
-Implements ``concept_occupancy_method_v1``: an exact full-vocabulary
-re-search-per-step non-negative pursuit, a norm-matched Gaussian random
-dictionary control (``matched_gaussian_atom_norms_v1``), and versioned
-occupancy crossing rules. Solver cores are NumPy; Torch appears only in the
-token-frame dictionary adapter.
+Implements versioned full-vocabulary re-search-per-step solvers, a norm-matched
+Gaussian random dictionary control (``matched_gaussian_atom_norms_v1``), and
+versioned occupancy crossing rules. Solver cores are NumPy; Torch appears only
+in the token-frame dictionary adapter.
 """
 
 from .dictionaries import (
@@ -22,6 +21,7 @@ from .occupancy import (
 )
 from .solver import (
     SELECTION_MODES,
+    SOLVER_METHODS,
     PursuitResult,
     PursuitSolverError,
     streaming_nonnegative_pursuit,
@@ -30,6 +30,7 @@ from .solver import (
 __all__ = [
     "CROSSING_RULES",
     "SELECTION_MODES",
+    "SOLVER_METHODS",
     "DenseDictionary",
     "DictionaryError",
     "MatchedNormRandomDictionary",

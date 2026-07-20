@@ -13,6 +13,7 @@ from jlens_workspace.workflows.occupancy import (
     ConceptTarget,
     OccupancyWorkflowError,
     load_combo_metrics,
+    rebuild_occupancy_index,
     run_concept_occupancy,
     verify_lens_artifact_sha256,
 )
@@ -78,6 +79,11 @@ def test_workflow_writes_complete_combo_artifacts(tmp_path: Path) -> None:
         "first_nonexceed_v1",
         "consecutive3_nonexceed_v1",
     }
+    primary = metrics["primary_occupancy"]
+    assert primary["k_selected_before_crossing"] == max(
+        0, (primary["crossing_k"] or 9) - 1
+    )
+    assert (combo / primary["w_j_file"]).is_file()
     control_errors = np.load(combo / "control_errors.npy", allow_pickle=False)
     assert control_errors.shape == (3, 9)
     # w_J + w_nonJ must reconstruct the signed target exactly.
@@ -118,6 +124,31 @@ def test_resume_skips_and_does_not_change_completed_outputs(tmp_path: Path) -> N
     assert second["skipped"] == 2
     for path, payload in before.items():
         assert path.read_bytes() == payload, f"{path} changed on resume"
+
+
+def test_v2_index_is_complete_and_preserves_solver_identity(tmp_path: Path) -> None:
+    atoms = _atoms()
+    _run(
+        tmp_path,
+        atoms,
+        method="concept_occupancy_method_v2",
+        solver_method="nonnegative_gradient_pursuit_v2",
+    )
+    index = rebuild_occupancy_index(
+        tmp_path,
+        method="concept_occupancy_method_v2",
+        expected_combinations=2,
+    )
+    assert index["complete"] is True
+    assert index["observed_combinations"] == 2
+    assert len(index["entries"]) == 2
+    metrics = load_combo_metrics(
+        tmp_path
+        / "occupancy/rmsnorm_weighted/positive_cosine/layer_08"
+        / "goemotions%3Agratitude/pos/primary/metrics.json"
+    )
+    assert metrics["method"] == "concept_occupancy_method_v2"
+    assert metrics["solver_method"] == "nonnegative_gradient_pursuit_v2"
 
 
 def test_lens_sha_mismatch_fails_closed(tmp_path: Path) -> None:

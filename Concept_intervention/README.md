@@ -36,6 +36,10 @@ A probe AUC or nearest token is not causal evidence. A steering claim requires
 a dose-response, random and non-J controls, off-target metrics, generation
 quality checks, and stability over seeds or prompt samples.
 
+The registered sparse-composition stage that measures how many J-directions
+are supported for each concept vector is documented in
+[`docs/concept_occupancy_v2.md`](docs/concept_occupancy_v2.md).
+
 ## Inputs
 
 - [`configs/qwen35_4b.yaml`](configs/qwen35_4b.yaml) is the formal GoEmotions

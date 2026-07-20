@@ -194,10 +194,18 @@ class MatrixConfig(StrictModel):
 
 
 class OccupancyConfig(StrictModel):
-    """Concept-vector J-space occupancy (``concept_occupancy_method_v1``)."""
+    """Concept-vector J-space occupancy with versioned sparse solvers."""
 
-    method: Literal["concept_occupancy_method_v1"] = "concept_occupancy_method_v1"
+    method: Literal[
+        "concept_occupancy_method_v1", "concept_occupancy_method_v2"
+    ] = "concept_occupancy_method_v1"
     mode: Literal["exact"] = "exact"
+    solver_method: Literal[
+        "nnomp_nnls_v1", "nonnegative_gradient_pursuit_v2"
+    ] = "nnomp_nnls_v1"
+    primary_crossing_rule: Literal[
+        "first_nonexceed_v1", "consecutive3_nonexceed_v1"
+    ] = "first_nonexceed_v1"
     layers: list[int] = Field(min_length=1)
     concept_ids: list[str] | None = None
     signs: list[Literal["+", "-"]] = Field(default_factory=lambda: ["+", "-"])
@@ -222,6 +230,10 @@ class OccupancyConfig(StrictModel):
     expected_lens_sha256: str
     control_atom_fractions: list[float] = Field(default_factory=lambda: [1.0])
     probe_replicates: list[str] | None = None
+    bootstrap_seeds: list[int] = Field(
+        default_factory=lambda: [1101, 2202, 3303, 4404]
+    )
+    bootstrap_k_max: int = Field(default=25, ge=1)
 
     @model_validator(mode="after")
     def validate_occupancy(self) -> OccupancyConfig:
@@ -269,6 +281,21 @@ class OccupancyConfig(StrictModel):
         ):
             raise ValueError(
                 "probe_replicates must be non-empty and unique when supplied"
+            )
+        if (
+            not self.bootstrap_seeds
+            or len(set(self.bootstrap_seeds)) != len(self.bootstrap_seeds)
+            or any(seed < 0 for seed in self.bootstrap_seeds)
+        ):
+            raise ValueError("bootstrap_seeds must be unique and non-negative")
+        if self.bootstrap_k_max > self.k_max:
+            raise ValueError("bootstrap_k_max must not exceed k_max")
+        if self.method == "concept_occupancy_method_v2" and (
+            self.solver_method != "nonnegative_gradient_pursuit_v2"
+        ):
+            raise ValueError(
+                "concept_occupancy_method_v2 requires "
+                "solver_method=nonnegative_gradient_pursuit_v2"
             )
         return self
 

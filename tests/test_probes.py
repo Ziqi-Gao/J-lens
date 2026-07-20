@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from jlens_workspace.probes import fit_logistic_probe
+from jlens_workspace.probes import fit_fixed_logistic_direction, fit_logistic_probe
 
 
 def _synthetic_split() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -153,3 +153,32 @@ def test_torch_tensors_are_an_explicit_optional_boundary() -> None:
 
     assert isinstance(result.coef_raw, np.ndarray)
     assert result.heldout.roc_auc > 0.95
+
+
+def test_fixed_c_probe_honors_bootstrap_weights_deterministically() -> None:
+    rng = np.random.default_rng(404)
+    features = rng.normal(size=(80, 5))
+    labels = np.repeat([0, 1], 40)
+    features[labels == 1, 0] += 1.5
+    weights = np.ones(80)
+    weights[:10] = 3
+
+    first = fit_fixed_logistic_direction(
+        features,
+        labels,
+        C=0.3,
+        sample_weight=weights,
+        random_state=17,
+    )
+    second = fit_fixed_logistic_direction(
+        features,
+        labels,
+        C=0.3,
+        sample_weight=weights,
+        random_state=17,
+    )
+
+    np.testing.assert_array_equal(first.coef_raw, second.coef_raw)
+    assert first.C == 0.3
+    assert first.positive_label == 1
+    assert first.coef_raw[0] > 0

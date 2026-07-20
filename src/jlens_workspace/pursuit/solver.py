@@ -1,4 +1,4 @@
-"""Exact full-vocabulary streaming non-negative pursuit (method v1).
+"""Full-vocabulary streaming non-negative sparse pursuit.
 
 Solves, per target ``w`` and dictionary ``{a_t}``,
 
@@ -11,7 +11,7 @@ and (4) records the normalized error path. A fixed candidate pool chosen from
 the initial target similarity is deliberately not this algorithm; that
 approximation lives elsewhere and is labeled as such.
 
-Selection scores (``method_v1``):
+Selection scores:
 
 - ``positive_cosine`` (primary): maximize ``<a_t, r> / ||a_t||`` over atoms
   with strictly positive score (the common ``||r||`` factor is dropped);
@@ -21,6 +21,19 @@ Selection scores (``method_v1``):
 Errors are reported target-normalized: ``E(k) = ||w - w_J(k)||^2 / ||w||^2``
 with ``E(0) = 1``; marginal gains are ``G(k) = E(k-1) - E(k)``. The target is
 never unit-normalized before solving.
+
+Two versioned active-support coefficient solvers are provided:
+
+- ``nnomp_nnls_v1`` exactly refits the selected support with SciPy NNLS. This
+  is the solver used for the v1 pilot.
+- ``nonnegative_gradient_pursuit_v2`` uses projected gradient pursuit with a
+  support-local Lipschitz step. It is the documented-method reproduction used
+  by v2 because the Workspace paper names Gradient Pursuit but does not release
+  its sparse-decomposition implementation.
+
+Neither name claims a globally exact solution of the non-convex L0 problem.
+``full-vocabulary`` means only that atom selection re-scans every token row at
+every step.
 """
 
 from __future__ import annotations
@@ -36,7 +49,8 @@ FloatArray = NDArray[np.float64]
 IntArray = NDArray[np.int64]
 
 SELECTION_MODES = ("positive_cosine", "raw_positive_dot")
-SOLVER_METHOD = "concept_occupancy_method_v1"
+SOLVER_METHODS = ("nnomp_nnls_v1", "nonnegative_gradient_pursuit_v2")
+SOLVER_METHOD = SOLVER_METHODS[0]
 
 # Guard for the mathematically guaranteed monotonicity of NNLS-over-superset;
 # violations beyond float64 roundoff indicate an implementation defect.
@@ -69,6 +83,7 @@ class PursuitResult:
     selected_atom_norms: FloatArray
     stopped_early_at: int | None
     selection_mode: str
+    solver_method: str
 
     @property
     def k_max(self) -> int:
@@ -95,12 +110,91 @@ def _validate_targets(targets: object, d_model: int) -> FloatArray:
     return matrix
 
 
+def _projected_gradient_refit(
+    atoms: FloatArray,
+    target: FloatArray,
+    *,
+    initial: FloatArray | None,
+    tolerance: float,
+    max_iterations: int,
+) -> FloatArray:
+    """Solve support-local NNLS by projected gradient descent.
+
+    ``atoms`` has shape ``[K, D]`` and coefficients reconstruct as
+    ``coefficients @ atoms``. The step size is the reciprocal squared spectral
+    norm of the active dictionary, which guarantees a non-increasing convex
+    objective. The method stops on the projected-gradient KKT residual.
+    """
+
+    support_size = int(atoms.shape[0])
+    if initial is None:
+        coefficients = np.zeros(support_size, dtype=np.float64)
+    else:
+        previous = np.asarray(initial, dtype=np.float64)
+        if previous.shape != (support_size - 1,):
+            raise PursuitSolverError("gradient-pursuit warm start shape mismatch")
+        coefficients = np.concatenate((previous, np.zeros(1, dtype=np.float64)))
+
+    spectral = float(np.linalg.norm(atoms, ord=2))
+    if not np.isfinite(spectral) or spectral <= 0.0:
+        raise PursuitSolverError("active dictionary has invalid spectral norm")
+    step_size = 1.0 / (spectral * spectral)
+    target_scale = max(1.0, float(np.linalg.norm(target)))
+
+    for _ in range(max_iterations):
+        residual = target - coefficients @ atoms
+        gradient = atoms @ residual
+        projected_gradient = gradient.copy()
+        projected_gradient[
+            (coefficients <= tolerance) & (gradient < 0.0)
+        ] = 0.0
+        if float(np.linalg.norm(projected_gradient, ord=np.inf)) <= (
+            tolerance * target_scale
+        ):
+            break
+        updated = np.maximum(0.0, coefficients + step_size * gradient)
+        if float(np.linalg.norm(updated - coefficients, ord=np.inf)) <= (
+            tolerance * max(1.0, float(np.linalg.norm(coefficients, ord=np.inf)))
+        ):
+            coefficients = updated
+            break
+        coefficients = updated
+    coefficients[coefficients <= tolerance] = 0.0
+    return coefficients
+
+
+def _refit_coefficients(
+    atoms: FloatArray,
+    target: FloatArray,
+    *,
+    solver_method: str,
+    previous: FloatArray | None,
+    gradient_tolerance: float,
+    gradient_max_iterations: int,
+) -> FloatArray:
+    if solver_method == "nnomp_nnls_v1":
+        coefficients, _ = nnls(atoms.T, target)
+        return np.asarray(coefficients, dtype=np.float64)
+    if solver_method == "nonnegative_gradient_pursuit_v2":
+        return _projected_gradient_refit(
+            atoms,
+            target,
+            initial=previous,
+            tolerance=gradient_tolerance,
+            max_iterations=gradient_max_iterations,
+        )
+    raise PursuitSolverError(f"unknown solver method {solver_method!r}")
+
+
 def streaming_nonnegative_pursuit(
     dictionary: object,
     targets: object,
     *,
     k_max: int,
     selection_modes: Sequence[str] | str = "positive_cosine",
+    solver_method: str = SOLVER_METHOD,
+    gradient_tolerance: float = 1e-10,
+    gradient_max_iterations: int = 10_000,
     zero_norm_policy: str = "skip",
 ) -> list[PursuitResult]:
     """Run batched exact pursuit; every target keeps its own support/residual.
@@ -113,6 +207,18 @@ def streaming_nonnegative_pursuit(
 
     if not isinstance(k_max, int) or isinstance(k_max, bool) or k_max < 1:
         raise PursuitSolverError("k_max must be a positive integer")
+    if solver_method not in SOLVER_METHODS:
+        raise PursuitSolverError(
+            f"solver_method must be one of {SOLVER_METHODS}, got {solver_method!r}"
+        )
+    if not np.isfinite(gradient_tolerance) or gradient_tolerance <= 0.0:
+        raise PursuitSolverError("gradient_tolerance must be finite and positive")
+    if (
+        not isinstance(gradient_max_iterations, int)
+        or isinstance(gradient_max_iterations, bool)
+        or gradient_max_iterations < 1
+    ):
+        raise PursuitSolverError("gradient_max_iterations must be a positive integer")
     d_model = int(dictionary.d_model)
     n_atoms = int(dictionary.n_atoms)
     matrix = _validate_targets(targets, d_model)
@@ -188,8 +294,15 @@ def streaming_nonnegative_pursuit(
                         (support_atoms[target_index], lookup[atom_id][None, :])
                     )
                     atoms = support_atoms[target_index]
-                    coefficients, _ = nnls(atoms.T, matrix[target_index])
-                    coefficients = np.asarray(coefficients, dtype=np.float64)
+                    previous_coefficients = coefficients_paths[target_index][-1]
+                    coefficients = _refit_coefficients(
+                        atoms,
+                        matrix[target_index],
+                        solver_method=solver_method,
+                        previous=previous_coefficients,
+                        gradient_tolerance=gradient_tolerance,
+                        gradient_max_iterations=gradient_max_iterations,
+                    )
                     coefficients_paths[target_index].append(coefficients)
                     reconstruction = coefficients @ atoms
                     residual = matrix[target_index] - reconstruction
@@ -250,6 +363,7 @@ def streaming_nonnegative_pursuit(
                 else np.empty(0, dtype=np.float64),
                 stopped_early_at=stopped_at[target_index],
                 selection_mode=modes[target_index],
+                solver_method=solver_method,
             )
         )
     return results

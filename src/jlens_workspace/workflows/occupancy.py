@@ -1,11 +1,11 @@
-"""Concept-vector J-space occupancy workflow (``concept_occupancy_method_v1``).
+"""Concept-vector J-space occupancy workflows.
 
 For every (layer, convention, selection-mode, concept, sign, replicate) this
-workflow runs the exact full-vocabulary streaming pursuit against the token
-J-direction dictionary, repeats the identical solve against
+workflow runs a full-vocabulary streaming pursuit against the token J-direction
+dictionary, repeats the identical solve against
 ``matched_gaussian_atom_norms_v1`` random dictionaries (one per seed), applies
 both versioned crossing rules, and persists complete per-integer-k curves plus
-reconstruction vectors at the reporting grid.
+reconstruction vectors at the reporting grid and at the primary stopping point.
 
 The workflow deliberately takes ALREADY-VERIFIED inputs (probe vectors with
 their SHA-256s, a dictionary factory bound to an identity-checked lens): all
@@ -44,11 +44,14 @@ from jlens_workspace.pursuit.dictionaries import (
     RANDOM_CONTROL_RNG,
 )
 from jlens_workspace.pursuit.occupancy import CROSSING_RULES
-from jlens_workspace.pursuit.solver import SOLVER_METHOD
 
 FloatArray = NDArray[np.float64]
 
 SIGN_LABELS = {"+": "pos", "-": "neg"}
+OCCUPANCY_METHODS = (
+    "concept_occupancy_method_v1",
+    "concept_occupancy_method_v2",
+)
 
 
 class OccupancyWorkflowError(ValueError):
@@ -164,6 +167,7 @@ def _summarize(
     *,
     seeds: Sequence[int],
     thresholds: Sequence[float],
+    primary_crossing_rule: str,
     decode_token: Callable[[int], str] | None,
 ) -> dict[str, Any]:
     control_gains = [control.gains for control in controls]
@@ -171,10 +175,28 @@ def _summarize(
         rule: crossing_k(result.gains, control_gains, rule=rule)
         for rule in CROSSING_RULES
     }
+    primary = occupancy[primary_crossing_rule]
+    crossing = primary.get("k")
+    if crossing is None:
+        selected_k = int(result.k_max)
+    else:
+        selected_k = max(0, int(crossing) - 1)
+    primary_occupancy = {
+        "rule": primary_crossing_rule,
+        "crossing_k": crossing,
+        "k_selected_before_crossing": selected_k,
+        "right_censored": bool(primary["right_censored"]),
+        "semantics": (
+            "crossing_k is the first candidate whose marginal gain does not "
+            "exceed the median matched-random gain; "
+            "k_selected_before_crossing counts the preceding supported atoms"
+        ),
+    }
     support = result.support.tolist()
     payload: dict[str, Any] = {
         "target_norm": result.target_norm,
         "selection_mode": result.selection_mode,
+        "solver_method": result.solver_method,
         "support_token_ids": support,
         "decoded_tokens": (
             [decode_token(token) for token in support] if decode_token else None
@@ -189,6 +211,7 @@ def _summarize(
         ],
         "stopped_early_at": result.stopped_early_at,
         "occupancy": occupancy,
+        "primary_occupancy": primary_occupancy,
         "k_90_attainable": k_90_attainable(result.errors),
         "absolute_explained_fraction_ks": {
             key: (value if value is not None else None)
@@ -224,6 +247,9 @@ def run_concept_occupancy(
     chunk_size: int = 4096,
     decode_token: Callable[[int], str] | None = None,
     run_metadata: Mapping[str, Any] | None = None,
+    method: str = "concept_occupancy_method_v1",
+    solver_method: str = "nnomp_nnls_v1",
+    primary_crossing_rule: str = "first_nonexceed_v1",
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """Run every requested combination, resumably, under ``output_dir``.
@@ -237,6 +263,12 @@ def run_concept_occupancy(
 
     if not targets:
         raise OccupancyWorkflowError("at least one target is required")
+    if method not in OCCUPANCY_METHODS:
+        raise OccupancyWorkflowError(f"unsupported occupancy method: {method}")
+    if primary_crossing_rule not in CROSSING_RULES:
+        raise OccupancyWorkflowError(
+            f"unsupported primary crossing rule: {primary_crossing_rule}"
+        )
     grid = [int(k) for k in report_grid]
     if not grid or sorted(set(grid)) != grid or grid[0] < 1 or grid[-1] > k_max:
         raise OccupancyWorkflowError(
@@ -262,7 +294,6 @@ def run_concept_occupancy(
     layers = sorted({target.layer for target in targets})
     completed = 0
     skipped = 0
-    index_entries: list[dict[str, Any]] = []
 
     for layer in layers:
         layer_targets = [target for target in targets if target.layer == layer]
@@ -283,12 +314,6 @@ def run_concept_occupancy(
                         )
                         if (combo / "metrics.json").is_file() and not overwrite:
                             skipped += 1
-                            index_entries.append(
-                                {
-                                    "path": str(combo.relative_to(root)),
-                                    "status": "already_complete",
-                                }
-                            )
                             continue
                         jobs.append((target, sign, mode))
             if not jobs:
@@ -308,7 +333,11 @@ def run_concept_occupancy(
             )
             modes = [mode for _, _, mode in jobs]
             real_results = streaming_nonnegative_pursuit(
-                dictionary, batch, k_max=k_max, selection_modes=modes
+                dictionary,
+                batch,
+                k_max=k_max,
+                selection_modes=modes,
+                solver_method=solver_method,
             )
             controls_by_fraction: dict[float, dict[int, list[PursuitResult]]] = {}
             for fraction in fractions:
@@ -322,7 +351,11 @@ def run_concept_occupancy(
                         chunk_size=chunk_size,
                     )
                     per_seed[seed] = streaming_nonnegative_pursuit(
-                        control_dictionary, batch, k_max=k_max, selection_modes=modes
+                        control_dictionary,
+                        batch,
+                        k_max=k_max,
+                        selection_modes=modes,
+                        solver_method=solver_method,
                     )
                 controls_by_fraction[fraction] = per_seed
             control_results = controls_by_fraction[1.0]
@@ -371,24 +404,37 @@ def run_concept_occupancy(
                     result.support.astype(np.int64),
                 )
                 signed_target = (1.0 if sign == "+" else -1.0) * target.vector
-                for grid_k in grid:
-                    effective_k = min(grid_k, result.support.size)
-                    if effective_k:
-                        atoms = dictionary.materialize(result.support[:effective_k])
-                        w_j = result.coefficients_at(effective_k) @ atoms
-                    else:
-                        w_j = np.zeros_like(signed_target)
-                    _atomic_save_npy(combo / f"w_J_k{grid_k:02d}.npy", w_j)
-                    _atomic_save_npy(
-                        combo / f"w_nonJ_k{grid_k:02d}.npy", signed_target - w_j
-                    )
-
                 payload = _summarize(
                     result,
                     controls,
                     seeds=seeds,
                     thresholds=absolute_thresholds,
+                    primary_crossing_rule=primary_crossing_rule,
                     decode_token=decode_token,
+                )
+                selected_k = int(
+                    payload["primary_occupancy"]["k_selected_before_crossing"]
+                )
+                reconstruction_ks = sorted(set(grid) | {selected_k})
+                for reconstruction_k in reconstruction_ks:
+                    effective_k = min(reconstruction_k, result.support.size)
+                    if effective_k:
+                        atoms = dictionary.materialize(result.support[:effective_k])
+                        w_j = result.coefficients_at(effective_k) @ atoms
+                    else:
+                        w_j = np.zeros_like(signed_target)
+                    _atomic_save_npy(
+                        combo / f"w_J_k{reconstruction_k:02d}.npy", w_j
+                    )
+                    _atomic_save_npy(
+                        combo / f"w_nonJ_k{reconstruction_k:02d}.npy",
+                        signed_target - w_j,
+                    )
+                payload["primary_occupancy"]["w_j_file"] = (
+                    f"w_J_k{selected_k:02d}.npy"
+                )
+                payload["primary_occupancy"]["w_nonj_file"] = (
+                    f"w_nonJ_k{selected_k:02d}.npy"
                 )
                 if len(fractions) > 1:
                     payload["occupancy_by_control_fraction"] = {
@@ -425,7 +471,7 @@ def run_concept_occupancy(
                 payload.update(
                     {
                         "schema_version": 1,
-                        "method": SOLVER_METHOD,
+                        "method": method,
                         "layer": layer,
                         "concept_id": target.concept_id,
                         "sign": sign,
@@ -448,35 +494,85 @@ def run_concept_occupancy(
                 )
                 atomic_write_json(combo / "metrics.json", payload)
                 completed += 1
-                index_entries.append(
-                    {
-                        "path": str(combo.relative_to(root)),
-                        "status": "completed",
-                        "k_occ": payload["occupancy"],
-                    }
-                )
 
-    atomic_write_json(
-        root / "index.json",
-        {
-            "schema_version": 1,
-            "method": SOLVER_METHOD,
-            "random_control_method": RANDOM_CONTROL_METHOD,
-            "crossing_rules": list(CROSSING_RULES),
-            "k_max": k_max,
-            "completed": completed,
-            "skipped": skipped,
-            "entries": index_entries,
-            "run_metadata": dict(run_metadata or {}),
-        },
-    )
     return {"completed": completed, "skipped": skipped, "output": str(root)}
+
+
+def rebuild_occupancy_index(
+    output_dir: str | Path,
+    *,
+    method: str,
+    expected_combinations: int | None = None,
+    run_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Scan immutable combo metrics and atomically rebuild the shared index."""
+
+    if method not in OCCUPANCY_METHODS:
+        raise OccupancyWorkflowError(f"unsupported occupancy method: {method}")
+    root = Path(output_dir) / "occupancy"
+    entries: list[dict[str, Any]] = []
+    identities: set[tuple[object, ...]] = set()
+    for metrics_path in sorted(root.rglob("metrics.json")):
+        payload = load_combo_metrics(metrics_path)
+        if payload["method"] != method:
+            raise OccupancyWorkflowError(
+                f"{metrics_path}: method {payload['method']!r} != {method!r}"
+            )
+        identity = (
+            payload["layer"],
+            payload["concept_id"],
+            payload["sign"],
+            payload["replicate_id"],
+            payload["convention"],
+            payload["selection_mode"],
+        )
+        if identity in identities:
+            raise OccupancyWorkflowError(
+                f"duplicate occupancy identity at {metrics_path}: {identity}"
+            )
+        identities.add(identity)
+        entries.append(
+            {
+                "path": str(metrics_path.parent.relative_to(root)),
+                "identity": list(identity),
+                "primary_occupancy": payload["primary_occupancy"],
+                "probe_vector_sha256": payload["probe_vector_sha256"],
+            }
+        )
+    observed = len(entries)
+    missing = (
+        None
+        if expected_combinations is None
+        else max(0, int(expected_combinations) - observed)
+    )
+    if expected_combinations is not None and observed > expected_combinations:
+        raise OccupancyWorkflowError(
+            f"found {observed} combos but expected at most {expected_combinations}"
+        )
+    index = {
+        "schema_version": 2,
+        "method": method,
+        "random_control_method": RANDOM_CONTROL_METHOD,
+        "crossing_rules": list(CROSSING_RULES),
+        "observed_combinations": observed,
+        "expected_combinations": expected_combinations,
+        "missing_combinations": missing,
+        "complete": missing == 0 if missing is not None else None,
+        "entries": entries,
+        "run_metadata": dict(run_metadata or {}),
+    }
+    root.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(root / "index.json", index)
+    return index
 
 
 def load_combo_metrics(path: str | Path) -> dict[str, Any]:
     """Load one combination's metrics.json (helper for reports and audits)."""
 
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if payload.get("schema_version") != 1 or payload.get("method") != SOLVER_METHOD:
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("method") not in OCCUPANCY_METHODS
+    ):
         raise OccupancyWorkflowError(f"unsupported occupancy metrics: {path}")
     return payload

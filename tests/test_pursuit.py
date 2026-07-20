@@ -41,6 +41,23 @@ def test_known_nonnegative_sparse_target_is_recovered() -> None:
     assert coefficients[2] == pytest.approx(0.25, abs=1e-9)
 
 
+def test_v2_gradient_pursuit_recovers_known_sparse_target() -> None:
+    atoms = _orthogonal_dictionary()
+    target = 1.7 * atoms[5] + 0.6 * atoms[11] + 0.25 * atoms[2]
+    result = streaming_nonnegative_pursuit(
+        DenseDictionary(atoms),
+        target[None, :],
+        k_max=6,
+        solver_method="nonnegative_gradient_pursuit_v2",
+    )[0]
+
+    assert result.solver_method == "nonnegative_gradient_pursuit_v2"
+    assert set(result.support[:3].tolist()) == {5, 11, 2}
+    assert result.errors[3] < 1e-16
+    assert np.all(np.diff(result.errors) <= 1e-12)
+    assert all(np.all(coefficients >= 0) for coefficients in result.coefficients_per_k)
+
+
 @pytest.mark.parametrize("mode", ["positive_cosine", "raw_positive_dot"])
 def test_error_is_monotonically_nonincreasing_and_coefficients_nonnegative(
     mode: str,

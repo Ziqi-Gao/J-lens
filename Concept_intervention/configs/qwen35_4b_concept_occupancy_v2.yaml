@@ -1,0 +1,85 @@
+schema_version: 1
+direction: concept_intervention
+experiment_name: qwen35_4b_concept_occupancy_v2
+output_dir: artifacts/concept_intervention/qwen35_4b_concept_occupancy_v2
+seed: 42
+model:
+  model_id: Qwen/Qwen3.5-4B
+  revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  tokenizer_id: Qwen/Qwen3.5-4B
+  tokenizer_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  dtype: bfloat16
+  device: auto
+  trust_remote_code: false
+  force_bos: false
+dataset:
+  source: jsonl
+  path: artifacts/data/go_emotions_7concept_full_ovr_v2
+  dataset_id: google-research-datasets/go_emotions
+  revision: add492243ff905527e67aeb8b80c082af02207c3
+  allowlist_path: Concept_intervention/data/go_emotions_7concept_full_allowlist.json
+  streaming: false
+  min_per_label_per_split: 150
+  min_per_concept: 50000
+lens:
+  source: local
+  path_or_repo: artifacts/lenses/qwen35_4b_jspace_9layers_goemotions_full_block0_fp32.pt
+  layers: [0, 4, 8, 12, 16, 20, 24, 28, 30]
+  n_fit_prompts: 1000
+  target_layer: 31
+  storage_dtype: float32
+activations:
+  layers: [8, 12, 16, 20, 24, 28]
+  batch_size: 16
+  max_length: 256
+  share_examples_by_group: true
+  require_complete_concept_matrix: true
+probe:
+  penalty: l2
+  c_grid: [0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0]
+  cv_folds: 5
+  scoring: roc_auc
+  standardize: true
+  class_weight: balanced
+  max_iter: 5000
+  seed: 42
+alignment:
+  metric: cosine
+  convention: rmsnorm_weighted
+  top_k: 50
+  vocabulary_chunk_size: 4096
+  decompose: false
+  require_nonnegative: true
+occupancy:
+  method: concept_occupancy_method_v2
+  mode: exact
+  solver_method: nonnegative_gradient_pursuit_v2
+  primary_crossing_rule: first_nonexceed_v1
+  layers: [8, 12, 16, 20, 24, 28]
+  concept_ids:
+    - "goemotions:admiration"
+    - "goemotions:approval"
+    - "goemotions:curiosity"
+    - "goemotions:disapproval"
+    - "goemotions:gratitude"
+    - "goemotions:love"
+    - "goemotions:optimism"
+  signs: ["+", "-"]
+  conventions: [raw, rmsnorm_weighted]
+  selection_modes: [positive_cosine]
+  k_max: 64
+  report_grid: [1, 2, 4, 8, 16, 25, 32, 64]
+  random_seeds: [101, 202, 303, 404, 505]
+  absolute_thresholds: [0.01, 0.05, 0.10, 0.20]
+  vocabulary_chunk_size: 4096
+  device: cuda
+  expected_lens_sha256: cdb356a078f28f5cfc9bc2f78ac90988abb78be9b05f24624b7f7b3bb5f29446
+  control_atom_fractions: [1.0, 0.0625]
+  probe_replicates:
+    - primary
+    - bootstrap_1101
+    - bootstrap_2202
+    - bootstrap_3303
+    - bootstrap_4404
+  bootstrap_seeds: [1101, 2202, 3303, 4404]
+  bootstrap_k_max: 25

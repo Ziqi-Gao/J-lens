@@ -174,6 +174,47 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json_flag(fit_probes)
     fit_probes.set_defaults(handler=_cmd_concept_fit_probes)
 
+    bootstrap_probes = concept_subparsers.add_parser(
+        "bootstrap-probes",
+        help="fit fixed-C group-bootstrap probe directions for stability",
+    )
+    _add_config_argument(bootstrap_probes)
+    bootstrap_probes.add_argument(
+        "--activations", type=Path, required=True, help="activation artifact directory"
+    )
+    bootstrap_probes.add_argument(
+        "--primary-probes", type=Path, required=True, help="primary probe artifact"
+    )
+    bootstrap_probes.add_argument(
+        "--output", type=Path, required=True, help="bootstrap probe output directory"
+    )
+    bootstrap_probes.add_argument(
+        "--layer", type=int, action="append", help="layer to fit; may be repeated"
+    )
+    bootstrap_probes.add_argument(
+        "--concept-id", action="append", help="concept ID to fit; may be repeated"
+    )
+    _add_overwrite_flag(bootstrap_probes)
+    _add_json_flag(bootstrap_probes)
+    bootstrap_probes.set_defaults(handler=_cmd_concept_bootstrap_probes)
+
+    bootstrap_index = concept_subparsers.add_parser(
+        "bootstrap-probes-index",
+        help="validate bootstrap probe shards and rebuild their shared manifest",
+    )
+    _add_config_argument(bootstrap_index)
+    bootstrap_index.add_argument(
+        "--activations", type=Path, required=True, help="activation artifact directory"
+    )
+    bootstrap_index.add_argument(
+        "--primary-probes", type=Path, required=True, help="primary probe artifact"
+    )
+    bootstrap_index.add_argument(
+        "--output", type=Path, required=True, help="bootstrap probe output directory"
+    )
+    _add_json_flag(bootstrap_index)
+    bootstrap_index.set_defaults(handler=_cmd_concept_bootstrap_probes_index)
+
     align = concept_subparsers.add_parser(
         "align", help="align fitted probes with token J-directions"
     )
@@ -243,14 +284,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--probes", type=Path, required=True, help="fitted probe artifact directory"
     )
     occupancy_concepts.add_argument(
+        "--probe-replicates",
+        type=Path,
+        help="fixed-C bootstrap probe artifact directory",
+    )
+    occupancy_concepts.add_argument(
         "--output", type=Path, help="occupancy run directory (default: output_dir)"
     )
     occupancy_concepts.add_argument(
         "--layer", type=int, action="append", help="restrict layers; may be repeated"
     )
+    occupancy_concepts.add_argument(
+        "--convention",
+        choices=("raw", "rmsnorm_weighted"),
+        action="append",
+        help="restrict coordinate conventions; may be repeated",
+    )
+    occupancy_concepts.add_argument(
+        "--replicate-id",
+        action="append",
+        help="restrict probe replicates; may be repeated",
+    )
+    occupancy_concepts.add_argument(
+        "--k-max", type=int, help="override configured maximum support size"
+    )
     _add_overwrite_flag(occupancy_concepts)
     _add_json_flag(occupancy_concepts)
     occupancy_concepts.set_defaults(handler=_cmd_occupancy_concepts)
+
+    occupancy_index = occupancy_subparsers.add_parser(
+        "index",
+        help="validate completed occupancy shards and rebuild the shared index",
+    )
+    _add_config_argument(occupancy_index)
+    occupancy_index.add_argument(
+        "--output", type=Path, help="occupancy run directory (default: output_dir)"
+    )
+    _add_json_flag(occupancy_index)
+    occupancy_index.set_defaults(handler=_cmd_occupancy_index)
     return parser
 
 
@@ -396,7 +467,16 @@ def _cmd_config_validate(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     sections = [
         name
-        for name in ("dataset", "lens", "activations", "probe", "alignment", "matrix")
+        for name in (
+            "dataset",
+            "lens",
+            "activations",
+            "probe",
+            "alignment",
+            "intervention",
+            "occupancy",
+            "matrix",
+        )
         if getattr(config, name) is not None
     ]
     payload = {
@@ -666,6 +746,86 @@ def _cmd_concept_fit_probes(args: argparse.Namespace) -> int:
         args,
         payload,
         message=f"fit {len(result.probes)} probes -> {result.output_dir}",
+    )
+    return 0
+
+
+def _cmd_concept_bootstrap_probes(args: argparse.Namespace) -> int:
+    from jlens_workspace.workflows.probe_replicates import (
+        build_probe_bootstrap_replicates,
+    )
+
+    config = _load_config(args.config)
+    occupancy = _require_section(config, "occupancy")
+    probe = _require_section(config, "probe")
+    layers = tuple(args.layer) if args.layer else tuple(occupancy.layers)
+    concepts = (
+        tuple(args.concept_id)
+        if args.concept_id
+        else tuple(occupancy.concept_ids or ())
+    )
+    if not concepts:
+        raise ValueError("bootstrap probes require explicit concept_ids")
+    summary = build_probe_bootstrap_replicates(
+        activation_artifact=args.activations,
+        primary_probes=args.primary_probes,
+        output_dir=args.output,
+        layers=layers,
+        concept_ids=concepts,
+        seeds=occupancy.bootstrap_seeds,
+        standardize=probe.standardize,
+        class_weight=probe.class_weight,
+        max_iter=probe.max_iter,
+        overwrite=args.overwrite,
+    )
+    _finish_command(
+        args,
+        summary,
+        message=(
+            f"bootstrap probes: {summary['completed']} completed, "
+            f"{summary['skipped']} skipped -> {summary['output']}"
+        ),
+    )
+    return 0
+
+
+def _cmd_concept_bootstrap_probes_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.workflows.probe_replicates import (
+        rebuild_probe_replicate_manifest,
+    )
+
+    config = _load_config(args.config)
+    occupancy = _require_section(config, "occupancy")
+    concepts = tuple(occupancy.concept_ids or ())
+    if not concepts:
+        raise ValueError("bootstrap probe indexing requires explicit concept_ids")
+    expected = (
+        len(occupancy.layers) * len(concepts) * len(occupancy.bootstrap_seeds)
+    )
+    manifest = rebuild_probe_replicate_manifest(
+        args.output,
+        activation_artifact=args.activations,
+        primary_probes=args.primary_probes,
+        expected_entries=expected,
+    )
+    if not manifest["complete"]:
+        raise ValueError(
+            f"bootstrap probes incomplete: {manifest['observed_entries']}/"
+            f"{manifest['expected_entries']}"
+        )
+    payload = {
+        "output": str(args.output / "manifest.json"),
+        "observed_entries": manifest["observed_entries"],
+        "expected_entries": manifest["expected_entries"],
+        "complete": manifest["complete"],
+    }
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"bootstrap probe manifest: {manifest['observed_entries']}/"
+            f"{manifest['expected_entries']} complete -> {args.output}"
+        ),
     )
     return 0
 
@@ -1612,6 +1772,9 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
         run_concept_occupancy,
         verify_lens_artifact_sha256,
     )
+    from jlens_workspace.workflows.probe_replicates import (
+        load_bootstrap_probe_vectors,
+    )
 
     config = _load_config(args.config)
     occupancy = _require_section(config, "occupancy")
@@ -1622,6 +1785,42 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
     unknown_layers = sorted(set(layers) - set(occupancy.layers))
     if unknown_layers:
         raise ValueError(f"layers not declared in occupancy config: {unknown_layers}")
+    conventions = (
+        tuple(args.convention) if args.convention else tuple(occupancy.conventions)
+    )
+    unknown_conventions = sorted(set(conventions) - set(occupancy.conventions))
+    if unknown_conventions:
+        raise ValueError(
+            f"conventions not declared in occupancy config: {unknown_conventions}"
+        )
+    configured_replicates = tuple(occupancy.probe_replicates or ["primary"])
+    replicate_ids = (
+        tuple(args.replicate_id) if args.replicate_id else configured_replicates
+    )
+    unknown_replicates = sorted(set(replicate_ids) - set(configured_replicates))
+    if unknown_replicates:
+        raise ValueError(
+            f"replicates not declared in occupancy config: {unknown_replicates}"
+        )
+    if any(replicate != "primary" for replicate in replicate_ids):
+        if args.probe_replicates is None:
+            raise ValueError(
+                "--probe-replicates is required for non-primary replicate IDs"
+            )
+        replicate_manifest_path = args.probe_replicates / "manifest.json"
+        replicate_manifest = json.loads(
+            replicate_manifest_path.read_text(encoding="utf-8")
+        )
+        if not replicate_manifest.get("complete"):
+            raise ValueError(
+                f"bootstrap probe manifest is not complete: {replicate_manifest_path}"
+            )
+    requested_k_max = int(args.k_max or occupancy.k_max)
+    if requested_k_max < 1 or requested_k_max > occupancy.k_max:
+        raise ValueError(
+            f"k_max override must lie in [1, {occupancy.k_max}], "
+            f"got {requested_k_max}"
+        )
 
     lens_path = Path(lens.path_or_repo)
     if lens_path.is_dir():
@@ -1650,7 +1849,7 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
         raise ValueError(f"layers absent from fitted lens: {missing_layers}")
 
     effectives: dict[str, Any] = {}
-    for convention in occupancy.conventions:
+    for convention in conventions:
         effective = build_effective_unembedding(
             d_model_unembedding,
             convention=convention,
@@ -1672,33 +1871,68 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
     }
     targets: list[ConceptTarget] = []
     for layer in layers:
-        vectors = _load_probe_vectors(
+        primary_vectors = _load_probe_vectors(
             args.probes, layer, expected_identity=expected_identity
         )
         selected = (
             occupancy.concept_ids
             if occupancy.concept_ids is not None
-            else sorted(vectors)
+            else sorted(primary_vectors)
         )
-        unknown = sorted(set(selected) - set(vectors))
+        unknown = sorted(set(selected) - set(primary_vectors))
         if unknown:
             raise ValueError(f"concepts absent from probes at layer {layer}: {unknown}")
-        for concept_id in selected:
-            targets.append(
-                ConceptTarget(
+        for replicate_id in replicate_ids:
+            if replicate_id == "primary":
+                vectors_for_replicate = {
+                    concept_id: (
+                        primary_vectors[concept_id],
+                        vector_hashes.get((int(layer), concept_id), ""),
+                        {
+                            "probes_dir": str(args.probes),
+                            "activation_artifact_hash": probes_manifest.get(
+                                "activation_artifact_hash"
+                            ),
+                        },
+                    )
+                    for concept_id in selected
+                }
+            else:
+                assert args.probe_replicates is not None
+                bootstrap_vectors = load_bootstrap_probe_vectors(
+                    args.probe_replicates,
                     layer=int(layer),
-                    concept_id=concept_id,
-                    vector=vectors[concept_id],
-                    vector_sha256=vector_hashes.get((int(layer), concept_id), ""),
-                    replicate_id=(occupancy.probe_replicates or ["primary"])[0],
-                    provenance={
-                        "probes_dir": str(args.probes),
-                        "activation_artifact_hash": probes_manifest.get(
-                            "activation_artifact_hash"
-                        ),
-                    },
+                    replicate_id=replicate_id,
                 )
-            )
+                missing = sorted(set(selected) - set(bootstrap_vectors))
+                if missing:
+                    raise ValueError(
+                        f"concepts absent from {replicate_id} at layer "
+                        f"{layer}: {missing}"
+                    )
+                vectors_for_replicate = {
+                    concept_id: (
+                        bootstrap_vectors[concept_id][0],
+                        bootstrap_vectors[concept_id][1],
+                        {
+                            "probe_replicates_dir": str(args.probe_replicates),
+                            "bootstrap_metrics": bootstrap_vectors[concept_id][2],
+                        },
+                    )
+                    for concept_id in selected
+                }
+            for concept_id in selected:
+                vector, vector_hash, provenance = vectors_for_replicate[concept_id]
+                targets.append(
+                    ConceptTarget(
+                        layer=int(layer),
+                        concept_id=concept_id,
+                        vector=vector,
+                        vector_sha256=vector_hash,
+                        replicate_id=replicate_id,
+                        provenance=provenance,
+                    )
+                )
 
     def dictionary_factory(layer: int, convention: str) -> Any:
         return build_token_frame_dictionary(
@@ -1724,16 +1958,29 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
             },
             "probes_dir": str(args.probes),
             "probes_manifest_sha256": sha256_file(args.probes / "manifest.json"),
+            "probe_replicates_dir": (
+                str(args.probe_replicates) if args.probe_replicates else None
+            ),
             "layers": list(layers),
-            "conventions": list(occupancy.conventions),
+            "conventions": list(conventions),
+            "replicate_ids": list(replicate_ids),
             "selection_modes": list(occupancy.selection_modes),
-            "k_max": occupancy.k_max,
+            "k_max": requested_k_max,
             "random_seeds": list(occupancy.random_seeds),
             "control_atom_fractions": list(occupancy.control_atom_fractions),
         },
     )
     destination.mkdir(parents=True, exist_ok=True)
-    atomic_write_json_path = destination / "manifest.json"
+    shard_name = (
+        "layers_"
+        + "-".join(f"{layer:02d}" for layer in layers)
+        + "__conventions_"
+        + "-".join(conventions)
+        + "__replicates_"
+        + "-".join(replicate_ids)
+        + ".json"
+    )
+    atomic_write_json_path = destination / "manifests" / shard_name
     from jlens_workspace.artifacts import atomic_write_json
 
     atomic_write_json(atomic_write_json_path, manifest)
@@ -1741,11 +1988,13 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
         output_dir=destination,
         dictionary_factory=dictionary_factory,
         targets=targets,
-        conventions=occupancy.conventions,
+        conventions=conventions,
         selection_modes=occupancy.selection_modes,
         signs=occupancy.signs,
-        k_max=occupancy.k_max,
-        report_grid=occupancy.report_grid,
+        k_max=requested_k_max,
+        report_grid=[
+            value for value in occupancy.report_grid if value <= requested_k_max
+        ],
         random_seeds=occupancy.random_seeds,
         control_atom_fractions=occupancy.control_atom_fractions,
         absolute_thresholds=occupancy.absolute_thresholds,
@@ -1757,6 +2006,9 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
             "lens_sha256": lens_sha,
             "seed": config.seed,
         },
+        method=occupancy.method,
+        solver_method=occupancy.solver_method,
+        primary_crossing_rule=occupancy.primary_crossing_rule,
         overwrite=args.overwrite,
     )
     payload = {
@@ -1773,6 +2025,70 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
         message=(
             f"occupancy: {summary['completed']} combos completed, "
             f"{summary['skipped']} skipped -> {summary['output']}"
+        ),
+    )
+    return 0
+
+
+def _cmd_occupancy_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json
+    from jlens_workspace.workflows.occupancy import rebuild_occupancy_index
+
+    config = _load_config(args.config)
+    occupancy = _require_section(config, "occupancy")
+    destination = args.output or Path(config.output_dir)
+    replicates = tuple(occupancy.probe_replicates or ["primary"])
+    concepts = tuple(occupancy.concept_ids or ())
+    if not concepts:
+        raise ValueError("occupancy indexing requires explicit concept_ids")
+    expected = (
+        len(occupancy.layers)
+        * len(concepts)
+        * len(occupancy.signs)
+        * len(occupancy.conventions)
+        * len(occupancy.selection_modes)
+        * len(replicates)
+    )
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        notes={
+            "workflow": "concept_occupancy",
+            "method": occupancy.method,
+            "solver_method": occupancy.solver_method,
+            "primary_crossing_rule": occupancy.primary_crossing_rule,
+            "expected_combinations": expected,
+            "coordinate": "resid_post",
+        },
+    )
+    atomic_write_json(destination / "manifest.json", manifest)
+    index = rebuild_occupancy_index(
+        destination,
+        method=occupancy.method,
+        expected_combinations=expected,
+        run_metadata={
+            "experiment_name": config.experiment_name,
+            "config_sha256": manifest.notes.get("config_sha256"),
+            "git_commit": manifest.git_commit,
+        },
+    )
+    if not index["complete"]:
+        raise ValueError(
+            f"occupancy incomplete: {index['observed_combinations']}/"
+            f"{index['expected_combinations']}"
+        )
+    payload = {
+        "output": str(destination / "occupancy" / "index.json"),
+        "observed_combinations": index["observed_combinations"],
+        "expected_combinations": index["expected_combinations"],
+        "complete": index["complete"],
+    }
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"occupancy index: {index['observed_combinations']}/"
+            f"{index['expected_combinations']} complete -> {destination}"
         ),
     )
     return 0
