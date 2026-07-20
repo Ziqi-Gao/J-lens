@@ -41,6 +41,13 @@ def _package_version(name: str) -> str | None:
 
 
 def _git_commit(cwd: Path) -> str | None:
+    recorded = os.environ.get("JLENS_GIT_COMMIT")
+    if recorded is not None:
+        candidate = recorded.strip().casefold()
+        if len(candidate) not in {40, 64}:
+            raise ValueError("JLENS_GIT_COMMIT must be a 40- or 64-character hex digest")
+        int(candidate, 16)
+        return candidate
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=cwd, text=True, stderr=subprocess.DEVNULL

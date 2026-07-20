@@ -34,3 +34,15 @@ def test_random_control_is_unit_and_orthogonal() -> None:
     control = matched_random_direction(direction, seed=7)
     assert torch.allclose(control.norm(), torch.tensor(1.0), atol=1e-6)
     assert abs(float(control @ (direction / direction.norm()))) < 1e-6
+
+
+def test_manifest_commit_can_be_supplied_without_git(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    from pathlib import Path
+
+    from jlens_workspace.artifacts import RunManifest
+
+    monkeypatch.setenv("JLENS_GIT_COMMIT", "a" * 40)
+    manifest = RunManifest.for_workspace(Path(str(tmp_path)))
+    assert manifest.git_commit == "a" * 40

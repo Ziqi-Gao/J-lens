@@ -116,13 +116,18 @@ def generate_with_intervention(
     do_sample: bool = False,
     temperature: float = 1.0,
     seed: int = 42,
+    add_special_tokens: bool = True,
 ) -> str:
     import torch
 
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-    encoded = tokenizer(prompt, return_tensors="pt")
+    encoded = tokenizer(
+        prompt,
+        return_tensors="pt",
+        add_special_tokens=add_special_tokens,
+    )
     encoded = {key: value.to(model_input_device(model)) for key, value in encoded.items()}
     with intervention_session(
         model,

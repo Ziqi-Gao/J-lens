@@ -140,6 +140,10 @@ class AlignmentConfig(StrictModel):
 
 
 class InterventionConfig(StrictModel):
+    method: Literal[
+        "generic_residual_intervention_v1",
+        "concept_j_component_intervention_v2",
+    ] = "generic_residual_intervention_v1"
     kind: Literal["addition", "project_out"] = "addition"
     strengths: list[float] = Field(default_factory=lambda: [-2.0, -1.0, 0.0, 1.0, 2.0])
     position: Literal["last_prompt", "generated", "last_prompt_and_generated", "all"] = (
@@ -150,6 +154,107 @@ class InterventionConfig(StrictModel):
     do_sample: bool = False
     temperature: float = Field(default=1.0, gt=0)
     seed: int = 42
+    layer: int | None = Field(default=None, ge=0)
+    concept_ids: list[str] | None = None
+    convention: Literal["raw", "rmsnorm_weighted"] = "rmsnorm_weighted"
+    conditions: list[Literal["full", "j", "non_j", "random"]] = Field(
+        default_factory=lambda: ["full", "j", "non_j", "random"]
+    )
+    random_control_seeds: list[int] = Field(
+        default_factory=lambda: [101, 202, 303, 404, 505]
+    )
+    source_occupancy_dir: str | None = None
+    source_occupancy_git_commit: str | None = None
+    expected_occupancy_index_sha256: str | None = None
+    source_probes_dir: str | None = None
+    source_activations_dir: str | None = None
+    prompts_path: str | None = None
+    candidate_labels: dict[str, str] | None = None
+    score_batch_size: int = Field(default=8, ge=1)
+    generation_prompt_count: int = Field(default=4, ge=0)
+
+    @model_validator(mode="after")
+    def validate_intervention(self) -> InterventionConfig:
+        if (
+            not self.strengths
+            or len(set(self.strengths)) != len(self.strengths)
+            or any(not math.isfinite(value) for value in self.strengths)
+        ):
+            raise ValueError("intervention strengths must be finite and unique")
+        if 0.0 not in self.strengths:
+            raise ValueError("intervention strengths must include zero")
+        if not any(value < 0 for value in self.strengths) or not any(
+            value > 0 for value in self.strengths
+        ):
+            raise ValueError("intervention strengths must include both signs")
+        if (
+            not self.random_control_seeds
+            or len(set(self.random_control_seeds))
+            != len(self.random_control_seeds)
+            or any(seed < 0 for seed in self.random_control_seeds)
+        ):
+            raise ValueError(
+                "random_control_seeds must be non-empty, unique, and non-negative"
+            )
+        if len(set(self.conditions)) != len(self.conditions):
+            raise ValueError("intervention conditions must be unique")
+        if self.method == "concept_j_component_intervention_v2":
+            required = {
+                "layer": self.layer,
+                "concept_ids": self.concept_ids,
+                "source_occupancy_dir": self.source_occupancy_dir,
+                "source_occupancy_git_commit": self.source_occupancy_git_commit,
+                "expected_occupancy_index_sha256": (
+                    self.expected_occupancy_index_sha256
+                ),
+                "source_probes_dir": self.source_probes_dir,
+                "source_activations_dir": self.source_activations_dir,
+                "prompts_path": self.prompts_path,
+                "candidate_labels": self.candidate_labels,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                raise ValueError(
+                    "concept_j_component_intervention_v2 requires: "
+                    + ", ".join(missing)
+                )
+            if self.kind != "addition" or self.position != "last_prompt":
+                raise ValueError(
+                    "concept_j_component_intervention_v2 requires addition at "
+                    "last_prompt"
+                )
+            if not self.scale_by_residual_norm:
+                raise ValueError(
+                    "concept_j_component_intervention_v2 requires "
+                    "scale_by_residual_norm=true"
+                )
+            if set(self.conditions) != {"full", "j", "non_j", "random"}:
+                raise ValueError(
+                    "concept_j_component_intervention_v2 requires matched full, "
+                    "j, non_j, and random conditions"
+                )
+            assert self.concept_ids is not None
+            assert self.candidate_labels is not None
+            if (
+                len(set(self.concept_ids)) != len(self.concept_ids)
+                or set(self.candidate_labels) != set(self.concept_ids)
+            ):
+                raise ValueError(
+                    "candidate_labels keys must exactly match unique concept_ids"
+                )
+            assert self.source_occupancy_git_commit is not None
+            assert self.expected_occupancy_index_sha256 is not None
+            for name, value in (
+                ("source_occupancy_git_commit", self.source_occupancy_git_commit),
+                (
+                    "expected_occupancy_index_sha256",
+                    self.expected_occupancy_index_sha256,
+                ),
+            ):
+                if len(value) not in {40, 64}:
+                    raise ValueError(f"{name} must be a Git/SHA-256 hex digest")
+                int(value, 16)
+        return self
 
 
 class MatrixConfig(StrictModel):

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "description": "Counterbalanced neutral prompts for next-token concept-label scoring.",
+  "prompts": [
+    {"prompt_id": "choose_0", "label_rotation": 0, "text": "Choose exactly one emotion noun from: {labels}. Answer with only that noun. The emotion is"},
+    {"prompt_id": "choose_1", "label_rotation": 1, "text": "Choose exactly one emotion noun from: {labels}. Answer with only that noun. The emotion is"},
+    {"prompt_id": "choose_2", "label_rotation": 2, "text": "Choose exactly one emotion noun from: {labels}. Answer with only that noun. The emotion is"},
+    {"prompt_id": "choose_3", "label_rotation": 3, "text": "Choose exactly one emotion noun from: {labels}. Answer with only that noun. The emotion is"},
+    {"prompt_id": "choose_4", "label_rotation": 4, "text": "Choose exactly one emotion noun from: {labels}. Answer with only that noun. The emotion is"},
+    {"prompt_id": "choose_5", "label_rotation": 5, "text": "Choose exactly one emotion noun from: {labels}. Answer with only that noun. The emotion is"},
+    {"prompt_id": "choose_6", "label_rotation": 6, "text": "Choose exactly one emotion noun from: {labels}. Answer with only that noun. The emotion is"},
+
+    {"prompt_id": "complete_0", "label_rotation": 0, "text": "Complete the sentence with one label from {labels}. Return the label only. My response reflects"},
+    {"prompt_id": "complete_1", "label_rotation": 1, "text": "Complete the sentence with one label from {labels}. Return the label only. My response reflects"},
+    {"prompt_id": "complete_2", "label_rotation": 2, "text": "Complete the sentence with one label from {labels}. Return the label only. My response reflects"},
+    {"prompt_id": "complete_3", "label_rotation": 3, "text": "Complete the sentence with one label from {labels}. Return the label only. My response reflects"},
+    {"prompt_id": "complete_4", "label_rotation": 4, "text": "Complete the sentence with one label from {labels}. Return the label only. My response reflects"},
+    {"prompt_id": "complete_5", "label_rotation": 5, "text": "Complete the sentence with one label from {labels}. Return the label only. My response reflects"},
+    {"prompt_id": "complete_6", "label_rotation": 6, "text": "Complete the sentence with one label from {labels}. Return the label only. My response reflects"},
+
+    {"prompt_id": "classify_0", "label_rotation": 0, "text": "Select one category: {labels}. Do not explain the choice. The selected category is"},
+    {"prompt_id": "classify_1", "label_rotation": 1, "text": "Select one category: {labels}. Do not explain the choice. The selected category is"},
+    {"prompt_id": "classify_2", "label_rotation": 2, "text": "Select one category: {labels}. Do not explain the choice. The selected category is"},
+    {"prompt_id": "classify_3", "label_rotation": 3, "text": "Select one category: {labels}. Do not explain the choice. The selected category is"},
+    {"prompt_id": "classify_4", "label_rotation": 4, "text": "Select one category: {labels}. Do not explain the choice. The selected category is"},
+    {"prompt_id": "classify_5", "label_rotation": 5, "text": "Select one category: {labels}. Do not explain the choice. The selected category is"},
+    {"prompt_id": "classify_6", "label_rotation": 6, "text": "Select one category: {labels}. Do not explain the choice. The selected category is"},
+
+    {"prompt_id": "report_0", "label_rotation": 0, "text": "Report one internal-state word using only {labels}. The internal state is"},
+    {"prompt_id": "report_1", "label_rotation": 1, "text": "Report one internal-state word using only {labels}. The internal state is"},
+    {"prompt_id": "report_2", "label_rotation": 2, "text": "Report one internal-state word using only {labels}. The internal state is"},
+    {"prompt_id": "report_3", "label_rotation": 3, "text": "Report one internal-state word using only {labels}. The internal state is"},
+    {"prompt_id": "report_4", "label_rotation": 4, "text": "Report one internal-state word using only {labels}. The internal state is"},
+    {"prompt_id": "report_5", "label_rotation": 5, "text": "Report one internal-state word using only {labels}. The internal state is"},
+    {"prompt_id": "report_6", "label_rotation": 6, "text": "Report one internal-state word using only {labels}. The internal state is"}
+  ]
+}

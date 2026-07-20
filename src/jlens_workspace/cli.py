@@ -18,6 +18,7 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 _LAYER_DIRECTORY = re.compile(r"layer_(\d+)")
 _CORE_PACKAGES = (
@@ -250,6 +251,37 @@ def build_parser() -> argparse.ArgumentParser:
     _add_overwrite_flag(concept_run)
     _add_json_flag(concept_run)
     concept_run.set_defaults(handler=_cmd_concept_run)
+
+    intervention = subparsers.add_parser(
+        "intervention", help="causal residual-stream intervention workflows"
+    )
+    intervention_subparsers = intervention.add_subparsers(
+        dest="intervention_command", required=True
+    )
+    intervention_concepts = intervention_subparsers.add_parser(
+        "concepts-v2",
+        help="compare full, sparse-J, non-J, and matched-random concept directions",
+    )
+    _add_config_argument(intervention_concepts)
+    intervention_concepts.add_argument(
+        "--output", type=Path, help="intervention output directory"
+    )
+    intervention_concepts.add_argument(
+        "--concept-id", action="append", help="target concept; may be repeated"
+    )
+    _add_overwrite_flag(intervention_concepts)
+    _add_json_flag(intervention_concepts)
+    intervention_concepts.set_defaults(handler=_cmd_intervention_concepts_v2)
+
+    intervention_index = intervention_subparsers.add_parser(
+        "index", help="validate intervention shards and rebuild the shared index"
+    )
+    _add_config_argument(intervention_index)
+    intervention_index.add_argument(
+        "--output", type=Path, help="intervention output directory"
+    )
+    _add_json_flag(intervention_index)
+    intervention_index.set_defaults(handler=_cmd_intervention_index)
 
     matrix = subparsers.add_parser("matrix", help="J-space matrix workflows")
     matrix_subparsers = matrix.add_subparsers(dest="matrix_command", required=True)
@@ -1756,6 +1788,178 @@ def _load_unembedding_tensors_lightweight(config: Any) -> tuple[Any, Any]:
             self.variance_epsilon = 1e-6
 
     return unembedding.detach(), _CachedRMSNorm(norm_weight)
+
+
+def _cmd_intervention_concepts_v2(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json, sha256_file
+    from jlens_workspace.workflows.concept_intervention import (
+        run_concept_intervention,
+    )
+
+    config = _load_config(args.config)
+    intervention = _require_section(config, "intervention")
+    if intervention.method != "concept_j_component_intervention_v2":
+        raise ValueError(
+            "intervention concepts-v2 requires "
+            "method=concept_j_component_intervention_v2"
+        )
+    configured = tuple(intervention.concept_ids or ())
+    concepts = tuple(args.concept_id) if args.concept_id else configured
+    unknown = sorted(set(concepts) - set(configured))
+    if unknown:
+        raise ValueError(f"concepts absent from intervention config: {unknown}")
+    if not concepts:
+        raise ValueError("at least one intervention concept is required")
+    assert intervention.layer is not None
+    assert intervention.candidate_labels is not None
+    assert intervention.prompts_path is not None
+    assert intervention.source_occupancy_dir is not None
+    assert intervention.source_probes_dir is not None
+    assert intervention.source_activations_dir is not None
+    assert intervention.expected_occupancy_index_sha256 is not None
+    assert intervention.source_occupancy_git_commit is not None
+
+    destination = args.output or Path(config.output_dir)
+    bundle = _load_model_bundle(config)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        notes={
+            "workflow": "concept_j_component_intervention_v2",
+            "method": intervention.method,
+            "coordinate": "resid_post",
+            "layer": intervention.layer,
+            "concept_ids": list(concepts),
+            "source_occupancy_dir": intervention.source_occupancy_dir,
+            "source_occupancy_index_sha256": (
+                intervention.expected_occupancy_index_sha256
+            ),
+            "source_occupancy_git_commit": (
+                intervention.source_occupancy_git_commit
+            ),
+            "prompts_path": intervention.prompts_path,
+            "prompts_sha256": sha256_file(intervention.prompts_path),
+        },
+    )
+    destination.mkdir(parents=True, exist_ok=True)
+    shard_name = "concepts_" + "-".join(
+        quote(concept_id, safe="") for concept_id in concepts
+    )
+    shard_manifest = destination / "manifests" / f"{shard_name}.json"
+    atomic_write_json(shard_manifest, manifest)
+
+    summaries: list[dict[str, Any]] = []
+    for concept_id in concepts:
+        result = run_concept_intervention(
+            output_dir=destination,
+            model=bundle.model,
+            tokenizer=bundle.tokenizer,
+            target_concept_id=concept_id,
+            candidate_labels=intervention.candidate_labels,
+            prompts_path=intervention.prompts_path,
+            occupancy_dir=intervention.source_occupancy_dir,
+            probes_dir=intervention.source_probes_dir,
+            activations_dir=intervention.source_activations_dir,
+            expected_occupancy_index_sha256=(
+                intervention.expected_occupancy_index_sha256
+            ),
+            expected_occupancy_git_commit=(
+                intervention.source_occupancy_git_commit
+            ),
+            layer=intervention.layer,
+            convention=intervention.convention,
+            strengths=intervention.strengths,
+            random_seeds=intervention.random_control_seeds,
+            score_batch_size=intervention.score_batch_size,
+            generation_prompt_count=intervention.generation_prompt_count,
+            max_new_tokens=intervention.max_new_tokens,
+            run_metadata={
+                "experiment_name": config.experiment_name,
+                "config_sha256": manifest.notes.get("config_sha256"),
+                "git_commit": manifest.git_commit,
+                "seed": intervention.seed,
+            },
+            overwrite=args.overwrite,
+        )
+        summaries.append(
+            {
+                "concept_id": concept_id,
+                "status": result["status"],
+                "summary": result["summary"],
+            }
+        )
+    payload = {
+        "output": str(destination),
+        "concepts": summaries,
+        "manifest": str(shard_manifest),
+    }
+    _finish_command(
+        args,
+        payload,
+        message=f"intervention: {len(summaries)} concepts -> {destination}",
+    )
+    return 0
+
+
+def _cmd_intervention_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json
+    from jlens_workspace.workflows.concept_intervention import (
+        rebuild_intervention_index,
+    )
+
+    config = _load_config(args.config)
+    intervention = _require_section(config, "intervention")
+    if intervention.method != "concept_j_component_intervention_v2":
+        raise ValueError(
+            "intervention index requires method=concept_j_component_intervention_v2"
+        )
+    concepts = tuple(intervention.concept_ids or ())
+    destination = args.output or Path(config.output_dir)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        notes={
+            "workflow": "concept_j_component_intervention_v2",
+            "method": intervention.method,
+            "coordinate": "resid_post",
+            "expected_concepts": list(concepts),
+            "source_occupancy_git_commit": (
+                intervention.source_occupancy_git_commit
+            ),
+            "source_occupancy_index_sha256": (
+                intervention.expected_occupancy_index_sha256
+            ),
+        },
+    )
+    atomic_write_json(destination / "manifest.json", manifest)
+    index = rebuild_intervention_index(
+        destination,
+        expected_concepts=concepts,
+        run_metadata={
+            "experiment_name": config.experiment_name,
+            "config_sha256": manifest.notes.get("config_sha256"),
+            "git_commit": manifest.git_commit,
+        },
+    )
+    if not index["complete"]:
+        raise ValueError(
+            f"intervention incomplete: missing={index['missing_concepts']}, "
+            f"extra={index['extra_concepts']}"
+        )
+    payload = {
+        "output": str(destination / "index.json"),
+        "complete": index["complete"],
+        "observed_concepts": index["observed_concepts"],
+    }
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"intervention index: {len(index['observed_concepts'])}/"
+            f"{len(concepts)} complete -> {destination}"
+        ),
+    )
+    return 0
 
 
 def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:

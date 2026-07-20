@@ -152,6 +152,10 @@ policy, hook coordinate, or coordinate-changing model wrapper.
 
 ## Recorded runs
 
+- [Qwen3.5-4B concept-vector J-space occupancy (v2)](reports/qwen35_4b_concept_occupancy_v2.md)
+  records the completed 840-combination sparse decomposition, bootstrap
+  stability, numerical audit, supported layer-28 K values, and the causal
+  intervention gate.
 - [Qwen3.5-4B GoEmotions concept baseline (v1)](reports/qwen35_4b_goemotions_v1.md)
   records the completed probe/alignment run, held-out metrics, provenance, and
   limitations without committing the 3.2 GB artifact.
