@@ -21,12 +21,12 @@ from jlens_workspace.iti import (
     load_iti_head_shifts,
 )
 from jlens_workspace.modeling import model_input_device
-from jlens_workspace.workflows.concept_intervention import (
+from jlens_workspace.workflows.candidate_evaluation import (
     PromptRecord,
-    _atomic_write_jsonl,
-    _batched,
-    _candidate_token_ids,
-    _load_prompt_bank,
+    atomic_write_jsonl,
+    batched,
+    candidate_token_ids,
+    load_prompt_bank,
 )
 
 
@@ -72,7 +72,7 @@ def _score_condition(
     original_padding_side = tokenizer.padding_side
     tokenizer.padding_side = "left"
     try:
-        for prompt_batch in _batched(list(prompts), batch_size):
+        for prompt_batch in batched(list(prompts), batch_size):
             encoded = tokenizer(
                 [prompt.formatted_text for prompt in prompt_batch],
                 return_tensors="pt",
@@ -283,7 +283,7 @@ def run_iti_intervention(
     ):
         raise ITIWorkflowError("configured ITI head layout differs from fitted directions")
 
-    all_prompts = _load_prompt_bank(
+    all_prompts = load_prompt_bank(
         prompts_path,
         tokenizer=tokenizer,
         candidate_labels=candidate_labels,
@@ -294,7 +294,7 @@ def run_iti_intervention(
         p.prompt_id for p in test_prompts
     ):
         raise ITIWorkflowError("validation and test prompt templates overlap")
-    token_ids = _candidate_token_ids(tokenizer, candidate_labels)
+    token_ids = candidate_token_ids(tokenizer, candidate_labels)
 
     validation_rows: list[dict[str, Any]] = []
     for top_k in top_k_grid:
@@ -446,9 +446,9 @@ def run_iti_intervention(
         "run_metadata": dict(run_metadata or {}),
     }
     destination.mkdir(parents=True, exist_ok=True)
-    _atomic_write_jsonl(destination / "validation_scores.jsonl", validation_rows)
-    _atomic_write_jsonl(destination / "test_scores.jsonl", test_rows)
-    _atomic_write_jsonl(destination / "generations.jsonl", generation_rows)
+    atomic_write_jsonl(destination / "validation_scores.jsonl", validation_rows)
+    atomic_write_jsonl(destination / "test_scores.jsonl", test_rows)
+    atomic_write_jsonl(destination / "generations.jsonl", generation_rows)
     atomic_write_json(summary_path, summary)
     return {"status": "completed", "summary": str(summary_path), **summary}
 

@@ -8,10 +8,12 @@ import numpy as np
 
 from jlens_workspace.artifacts import sha256_file
 from jlens_workspace.config import load_experiment_config
+from jlens_workspace.workflows.candidate_evaluation import (
+    candidate_token_ids,
+    load_prompt_bank,
+)
 from jlens_workspace.workflows.concept_intervention import (
-    _candidate_token_ids,
     _curve_summary,
-    _load_prompt_bank,
     load_registered_directions,
 )
 
@@ -42,10 +44,10 @@ def test_prompt_bank_counterbalances_and_candidate_tokens_are_unique(
     )
     labels = {"concept:a": "alpha", "concept:b": "beta"}
     tokenizer = _FakeTokenizer()
-    loaded = _load_prompt_bank(prompts, tokenizer=tokenizer, candidate_labels=labels)
+    loaded = load_prompt_bank(prompts, tokenizer=tokenizer, candidate_labels=labels)
     assert loaded[0].label_order == ("concept:a", "concept:b")
     assert loaded[1].label_order == ("concept:b", "concept:a")
-    assert len(set(_candidate_token_ids(tokenizer, labels).values())) == 2
+    assert len(set(candidate_token_ids(tokenizer, labels).values())) == 2
 
 
 def test_registered_directions_are_identity_checked_and_reconstruct(

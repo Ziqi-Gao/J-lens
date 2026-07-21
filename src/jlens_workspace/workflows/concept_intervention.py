@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
-import tempfile
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -22,6 +20,13 @@ from jlens_workspace.interventions import (
     intervention_session,
 )
 from jlens_workspace.modeling import model_input_device
+from jlens_workspace.workflows.candidate_evaluation import (
+    PromptRecord,
+    atomic_write_jsonl,
+    batched,
+    candidate_token_ids,
+    load_prompt_bank,
+)
 
 FloatArray = NDArray[np.float64]
 
@@ -31,101 +36,11 @@ class ConceptInterventionError(ValueError):
 
 
 @dataclass(frozen=True)
-class PromptRecord:
-    prompt_id: str
-    raw_text: str
-    formatted_text: str
-    label_order: tuple[str, ...]
-
-
-@dataclass(frozen=True)
 class DirectionRecord:
     condition_id: str
     condition: str
     direction: FloatArray
     random_seed: int | None = None
-
-
-def _atomic_write_jsonl(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            for row in rows:
-                handle.write(json.dumps(dict(row), sort_keys=True))
-                handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, path)
-    except BaseException:
-        try:
-            os.unlink(temporary_name)
-        except FileNotFoundError:
-            pass
-        raise
-
-
-def _load_prompt_bank(
-    path: str | Path,
-    *,
-    tokenizer: Any,
-    candidate_labels: Mapping[str, str],
-) -> list[PromptRecord]:
-    source = Path(path)
-    payload = json.loads(source.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != 1:
-        raise ConceptInterventionError(f"unsupported prompt schema: {source}")
-    concept_ids = tuple(candidate_labels)
-    prompts: list[PromptRecord] = []
-    seen: set[str] = set()
-    for entry in payload.get("prompts", []):
-        prompt_id = str(entry["prompt_id"])
-        if prompt_id in seen:
-            raise ConceptInterventionError(f"duplicate prompt_id: {prompt_id}")
-        seen.add(prompt_id)
-        rotation = int(entry["label_rotation"])
-        ordered = concept_ids[rotation:] + concept_ids[:rotation]
-        labels = ", ".join(candidate_labels[concept_id] for concept_id in ordered)
-        raw_text = str(entry["text"]).format(labels=labels)
-        if getattr(tokenizer, "chat_template", None):
-            formatted = tokenizer.apply_chat_template(
-                [{"role": "user", "content": raw_text}],
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=False,
-            )
-        else:
-            formatted = raw_text
-        prompts.append(
-            PromptRecord(
-                prompt_id=prompt_id,
-                raw_text=raw_text,
-                formatted_text=formatted,
-                label_order=ordered,
-            )
-        )
-    if not prompts:
-        raise ConceptInterventionError("prompt bank must be non-empty")
-    return prompts
-
-
-def _candidate_token_ids(
-    tokenizer: Any, candidate_labels: Mapping[str, str]
-) -> dict[str, int]:
-    output: dict[str, int] = {}
-    for concept_id, label in candidate_labels.items():
-        token_ids = tokenizer.encode(f" {label}", add_special_tokens=False)
-        if len(token_ids) != 1:
-            raise ConceptInterventionError(
-                f"candidate label {concept_id!r}={label!r} must be one token "
-                f"with a leading space, got {token_ids}"
-            )
-        output[concept_id] = int(token_ids[0])
-    if len(set(output.values())) != len(output):
-        raise ConceptInterventionError("candidate labels must map to unique tokens")
-    return output
 
 
 def _median_residual_norm(
@@ -300,10 +215,6 @@ def load_registered_directions(
     return directions, provenance
 
 
-def _batched(values: Sequence[Any], size: int) -> list[Sequence[Any]]:
-    return [values[start : start + size] for start in range(0, len(values), size)]
-
-
 def _score_condition(
     *,
     model: Any,
@@ -330,7 +241,7 @@ def _score_condition(
     original_padding_side = tokenizer.padding_side
     tokenizer.padding_side = "left"
     try:
-        for prompt_batch in _batched(list(prompts), batch_size):
+        for prompt_batch in batched(list(prompts), batch_size):
             encoded = tokenizer(
                 [prompt.formatted_text for prompt in prompt_batch],
                 return_tensors="pt",
@@ -502,12 +413,12 @@ def run_concept_intervention(
         expected_occupancy_index_sha256=expected_occupancy_index_sha256,
         expected_occupancy_git_commit=expected_occupancy_git_commit,
     )
-    prompts = _load_prompt_bank(
+    prompts = load_prompt_bank(
         prompts_path,
         tokenizer=tokenizer,
         candidate_labels=candidate_labels,
     )
-    token_ids = _candidate_token_ids(tokenizer, candidate_labels)
+    token_ids = candidate_token_ids(tokenizer, candidate_labels)
     residual_norm = _median_residual_norm(activations_dir, layer=layer)
 
     score_rows: list[dict[str, Any]] = []
@@ -609,8 +520,8 @@ def run_concept_intervention(
         "run_metadata": dict(run_metadata or {}),
     }
     destination.mkdir(parents=True, exist_ok=True)
-    _atomic_write_jsonl(destination / "scores.jsonl", score_rows)
-    _atomic_write_jsonl(destination / "generations.jsonl", generation_rows)
+    atomic_write_jsonl(destination / "scores.jsonl", score_rows)
+    atomic_write_jsonl(destination / "generations.jsonl", generation_rows)
     atomic_write_json(summary_path, summary)
     return {"status": "completed", "summary": str(summary_path), **summary}
 

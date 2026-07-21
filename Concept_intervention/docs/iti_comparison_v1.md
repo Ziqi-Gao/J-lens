@@ -55,6 +55,13 @@ change the published intervention. Results must therefore be described as a
 comparison between methods, not as two directions injected at the same model
 boundary.
 
+The two method pipelines are also separate in code. J-component direction
+loading and `resid_post` hooks live in the J workflow and intervention module;
+ITI head fitting and pre-`o_proj` hooks live in the ITI workflow and module.
+Neither method workflow imports the other. They share only the method-neutral
+prompt/candidate-label evaluation contract, the pinned model/tokenizer, and
+identity-checked source data and split artifacts.
+
 The original TruthfulQA grouped answer layout is replaced by the existing
 GoEmotions `[N,7]` label matrix. Within the existing train and validation
 splits, each concept's positive and negative rows are seed-balanced so that the

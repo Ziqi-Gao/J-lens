@@ -6,6 +6,15 @@
 share stable implementation code from `src/jlens_workspace/`, but one direction
 must not import scripts or outputs from the other.
 
+Within `Concept_intervention/`, J-component intervention and ITI are independent
+method pipelines. J-component code owns residual-space direction loading and
+`resid_post` hooks; ITI code owns head-probe fitting, head selection, and
+pre-`o_proj` shifts. The method workflows must not import each other. They may
+depend on a neutral evaluation interface for the common prompt schema,
+candidate-label tokens, batching, and artifact writes, and they must
+identity-check the shared model, tokenizer, source examples, and data splits.
+Sharing inputs is not permission to share method-specific fitting or hook code.
+
 ## Coordinate conventions
 
 - Activations are captured at the transformer block output (`resid_post`), which
