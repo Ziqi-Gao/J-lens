@@ -78,7 +78,7 @@ def test_parser_exposes_required_commands_without_importing_optional_stack() -> 
     }
     parser = cli.build_parser()
     help_text = parser.format_help()
-    for command in ("doctor", "config", "data", "concept", "matrix"):
+    for command in ("doctor", "config", "data", "concept", "iti", "matrix"):
         assert command in help_text
     for argv in (
         ["doctor"],
@@ -89,6 +89,10 @@ def test_parser_exposes_required_commands_without_importing_optional_stack() -> 
         ["concept", "fit-probes", "--config", "experiment.yaml"],
         ["concept", "align", "--config", "experiment.yaml"],
         ["concept", "run", "--config", "experiment.yaml"],
+        ["iti", "capture", "--config", "experiment.yaml"],
+        ["iti", "fit", "--config", "experiment.yaml"],
+        ["iti", "run", "--config", "experiment.yaml"],
+        ["iti", "index", "--config", "experiment.yaml"],
         ["matrix", "run", "--config", "experiment.yaml"],
     ):
         assert callable(parser.parse_args(argv).handler)

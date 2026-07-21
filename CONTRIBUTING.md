@@ -38,7 +38,9 @@ download, remote data, or CUDA with the existing `integration`, `remote`, or
 ## Non-negotiable scientific invariants
 
 1. Capture and intervene at transformer block output, recorded as
-   `resid_post`.
+   `resid_post`, for J-lens claims. A faithful external baseline may retain a
+   different published coordinate only when it is explicitly named, isolated,
+   attributed, and documented as a method-specific comparison.
 2. Keep the official Jacobian-lens dependency pinned unless a migration is
    intentional, tested, and documented.
 3. Reject a saved lens if model/tokenizer revisions, residual coordinate, BOS

@@ -283,6 +283,52 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json_flag(intervention_index)
     intervention_index.set_defaults(handler=_cmd_intervention_index)
 
+    iti = subparsers.add_parser(
+        "iti", help="pinned honest_llama inference-time intervention workflows"
+    )
+    iti_subparsers = iti.add_subparsers(dest="iti_command", required=True)
+
+    iti_capture = iti_subparsers.add_parser(
+        "capture", help="capture full-attention pre-o_proj head outputs"
+    )
+    _add_config_argument(iti_capture)
+    iti_capture.add_argument("--output", type=Path, help="head activation directory")
+    _add_overwrite_flag(iti_capture)
+    _add_json_flag(iti_capture)
+    iti_capture.set_defaults(handler=_cmd_iti_capture)
+
+    iti_fit = iti_subparsers.add_parser(
+        "fit", help="fit original ITI head probes and direction artifacts"
+    )
+    _add_config_argument(iti_fit)
+    iti_fit.add_argument("--output", type=Path, help="ITI direction directory")
+    iti_fit.add_argument(
+        "--concept-id", action="append", help="target concept; may be repeated"
+    )
+    _add_overwrite_flag(iti_fit)
+    _add_json_flag(iti_fit)
+    iti_fit.set_defaults(handler=_cmd_iti_fit)
+
+    iti_run = iti_subparsers.add_parser(
+        "run", help="select ITI hyperparameters and score held-out prompt templates"
+    )
+    _add_config_argument(iti_run)
+    iti_run.add_argument("--output", type=Path, help="ITI experiment output directory")
+    iti_run.add_argument(
+        "--concept-id", action="append", help="target concept; may be repeated"
+    )
+    _add_overwrite_flag(iti_run)
+    _add_json_flag(iti_run)
+    iti_run.set_defaults(handler=_cmd_iti_run)
+
+    iti_index = iti_subparsers.add_parser(
+        "index", help="validate ITI shards and build the held-out J comparison"
+    )
+    _add_config_argument(iti_index)
+    iti_index.add_argument("--output", type=Path, help="ITI experiment output directory")
+    _add_json_flag(iti_index)
+    iti_index.set_defaults(handler=_cmd_iti_index)
+
     matrix = subparsers.add_parser("matrix", help="J-space matrix workflows")
     matrix_subparsers = matrix.add_subparsers(dest="matrix_command", required=True)
     matrix_run = matrix_subparsers.add_parser(
@@ -506,6 +552,7 @@ def _cmd_config_validate(args: argparse.Namespace) -> int:
             "probe",
             "alignment",
             "intervention",
+            "iti",
             "occupancy",
             "matrix",
         )
@@ -1957,6 +2004,282 @@ def _cmd_intervention_index(args: argparse.Namespace) -> int:
         message=(
             f"intervention index: {len(index['observed_concepts'])}/"
             f"{len(concepts)} complete -> {destination}"
+        ),
+    )
+    return 0
+
+
+def _iti_concepts(section: Any, requested: list[str] | None) -> tuple[str, ...]:
+    configured = tuple(section.concept_ids)
+    concepts = tuple(requested) if requested else configured
+    unknown = sorted(set(concepts) - set(configured))
+    if unknown:
+        raise ValueError(f"concepts absent from ITI config: {unknown}")
+    if not concepts:
+        raise ValueError("at least one ITI concept is required")
+    return concepts
+
+
+def _cmd_iti_capture(args: argparse.Namespace) -> int:
+    from jlens_workspace.data import dataset_fingerprint
+    from jlens_workspace.iti import capture_iti_head_activations
+
+    config = _load_config(args.config)
+    iti = _require_section(config, "iti")
+    examples = _load_examples(config)
+    bundle = _load_model_bundle(config)
+    destination = args.output or Path(iti.head_activations_dir)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        dataset_hash=dataset_fingerprint(examples),
+        notes={
+            "workflow": "iti_activation_capture",
+            "method": iti.method,
+            "coordinate": "attention_head_output_pre_o_proj",
+            "attention_layers": list(iti.attention_layers),
+            "upstream_repository": iti.upstream_repository,
+            "upstream_commit": iti.upstream_commit,
+            "source_residual_activations_dir": iti.source_residual_activations_dir,
+        },
+    )
+    output = capture_iti_head_activations(
+        model=bundle.model,
+        tokenizer=bundle.tokenizer,
+        examples=examples,
+        layers=iti.attention_layers,
+        output_dir=destination,
+        batch_size=iti.capture_batch_size,
+        max_length=iti.capture_max_length,
+        add_special_tokens=config.activations.add_special_tokens,
+        expected_num_heads=iti.num_heads,
+        expected_head_dim=iti.head_dim,
+        source_residual_activations=iti.source_residual_activations_dir,
+        manifest=manifest,
+        overwrite=args.overwrite,
+    )
+    metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    if (
+        int(metadata["num_heads"]) != iti.num_heads
+        or int(metadata["head_dim"]) != iti.head_dim
+    ):
+        raise ValueError(
+            "runtime ITI head layout differs from config: "
+            f"observed H={metadata['num_heads']}, D_head={metadata['head_dim']}"
+        )
+    payload = {
+        "output": str(output),
+        "n_examples": metadata["n_examples"],
+        "layers": metadata["layers"],
+        "num_heads": metadata["num_heads"],
+        "head_dim": metadata["head_dim"],
+        "coordinate": metadata["coordinate"],
+    }
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"captured ITI heads for {metadata['n_examples']} examples x "
+            f"{len(metadata['layers'])} layers -> {output}"
+        ),
+    )
+    return 0
+
+
+def _cmd_iti_fit(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json
+    from jlens_workspace.iti import fit_iti_concept_directions
+
+    config = _load_config(args.config)
+    iti = _require_section(config, "iti")
+    concepts = _iti_concepts(iti, args.concept_id)
+    destination = args.output or Path(iti.directions_dir)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        notes={
+            "workflow": "iti_direction_fit",
+            "method": iti.method,
+            "coordinate": "attention_head_output_pre_o_proj",
+            "upstream_repository": iti.upstream_repository,
+            "upstream_commit": iti.upstream_commit,
+            "head_activations_dir": iti.head_activations_dir,
+            "test_examples_used": 0,
+        },
+    )
+    results = []
+    for concept_id in concepts:
+        metrics = fit_iti_concept_directions(
+            activation_dir=iti.head_activations_dir,
+            output_dir=destination,
+            concept_id=concept_id,
+            max_top_k=max(iti.top_k_grid),
+            random_seeds=iti.random_control_seeds,
+            seed=config.seed,
+            overwrite=args.overwrite,
+        )
+        encoded = quote(concept_id, safe="")
+        shard_manifest = destination / "manifests" / f"{encoded}.json"
+        atomic_write_json(shard_manifest, manifest)
+        results.append(
+            {
+                "concept_id": concept_id,
+                "metrics": str(destination / encoded / "metrics.json"),
+                "max_top_k": metrics["max_top_k"],
+            }
+        )
+    payload = {"output": str(destination), "concepts": results}
+    _finish_command(
+        args,
+        payload,
+        message=f"fitted ITI directions for {len(results)} concepts -> {destination}",
+    )
+    return 0
+
+
+def _cmd_iti_run(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json, sha256_file
+    from jlens_workspace.workflows.iti import run_iti_intervention
+
+    config = _load_config(args.config)
+    iti = _require_section(config, "iti")
+    concepts = _iti_concepts(iti, args.concept_id)
+    destination = args.output or Path(config.output_dir)
+    bundle = _load_model_bundle(config)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        notes={
+            "workflow": "iti_intervention",
+            "method": iti.method,
+            "coordinate": "attention_head_output_pre_o_proj",
+            "upstream_repository": iti.upstream_repository,
+            "upstream_commit": iti.upstream_commit,
+            "prompts_path": iti.prompts_path,
+            "prompts_sha256": sha256_file(iti.prompts_path),
+            "validation_prompt_prefixes": list(iti.validation_prompt_prefixes),
+            "test_prompt_prefixes": list(iti.test_prompt_prefixes),
+        },
+    )
+    destination.mkdir(parents=True, exist_ok=True)
+    summaries = []
+    for concept_id in concepts:
+        encoded = quote(concept_id, safe="")
+        shard_manifest = destination / "manifests" / f"{encoded}.json"
+        atomic_write_json(shard_manifest, manifest)
+        result = run_iti_intervention(
+            output_dir=destination,
+            model=bundle.model,
+            tokenizer=bundle.tokenizer,
+            target_concept_id=concept_id,
+            candidate_labels=iti.candidate_labels,
+            prompts_path=iti.prompts_path,
+            direction_dir=iti.directions_dir,
+            top_k_grid=iti.top_k_grid,
+            strengths=iti.strengths,
+            random_seeds=iti.random_control_seeds,
+            validation_prompt_prefixes=iti.validation_prompt_prefixes,
+            test_prompt_prefixes=iti.test_prompt_prefixes,
+            num_heads=iti.num_heads,
+            head_dim=iti.head_dim,
+            score_batch_size=iti.score_batch_size,
+            generation_prompt_count=iti.generation_prompt_count,
+            max_new_tokens=iti.max_new_tokens,
+            run_metadata={
+                "experiment_name": config.experiment_name,
+                "config_sha256": manifest.notes.get("config_sha256"),
+                "git_commit": manifest.git_commit,
+                "seed": config.seed,
+                "random_control_seeds": list(iti.random_control_seeds),
+            },
+            overwrite=args.overwrite,
+        )
+        summaries.append(
+            {
+                "concept_id": concept_id,
+                "status": result["status"],
+                "summary": result["summary"],
+            }
+        )
+    payload = {
+        "output": str(destination),
+        "concepts": summaries,
+    }
+    _finish_command(
+        args,
+        payload,
+        message=f"ITI intervention: {len(summaries)} concepts -> {destination}",
+    )
+    return 0
+
+
+def _cmd_iti_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json, sha256_file
+    from jlens_workspace.workflows.iti import rebuild_iti_index
+
+    config = _load_config(args.config)
+    iti = _require_section(config, "iti")
+    destination = args.output or Path(config.output_dir)
+    source_residual_root = Path(iti.source_residual_activations_dir)
+    source_residual_metadata_path = source_residual_root / "metadata.json"
+    source_residual_labels_path = source_residual_root / "labels.npy"
+    source_residual_metadata = json.loads(
+        source_residual_metadata_path.read_text(encoding="utf-8")
+    )
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        notes={
+            "workflow": "iti_intervention",
+            "method": iti.method,
+            "coordinate": "attention_head_output_pre_o_proj",
+            "upstream_repository": iti.upstream_repository,
+            "upstream_commit": iti.upstream_commit,
+            "prompts_path": iti.prompts_path,
+            "prompts_sha256": sha256_file(iti.prompts_path),
+            "validation_prompt_prefixes": list(iti.validation_prompt_prefixes),
+            "test_prompt_prefixes": list(iti.test_prompt_prefixes),
+            "reference_j_intervention_dir": iti.reference_j_intervention_dir,
+            "source_residual_activations_dir": iti.source_residual_activations_dir,
+            "source_residual_metadata_sha256": sha256_file(
+                source_residual_metadata_path
+            ),
+            "source_residual_labels_sha256": sha256_file(source_residual_labels_path),
+            "source_residual_example_hash": source_residual_metadata.get(
+                "example_hash"
+            ),
+        },
+    )
+    atomic_write_json(destination / "manifest.json", manifest)
+    index = rebuild_iti_index(
+        destination,
+        expected_concepts=iti.concept_ids,
+        reference_j_intervention_dir=iti.reference_j_intervention_dir,
+        validation_prompt_prefixes=iti.validation_prompt_prefixes,
+        test_prompt_prefixes=iti.test_prompt_prefixes,
+        run_metadata={
+            "experiment_name": config.experiment_name,
+            "config_sha256": manifest.notes.get("config_sha256"),
+            "git_commit": manifest.git_commit,
+        },
+    )
+    if not index["complete"]:
+        raise ValueError(
+            f"ITI intervention incomplete: missing={index['missing_concepts']}, "
+            f"extra={index['extra_concepts']}"
+        )
+    payload = {
+        "output": str(destination / "index.json"),
+        "comparison": str(destination / "comparison.json"),
+        "complete": True,
+        "observed_concepts": index["observed_concepts"],
+    }
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"ITI index/comparison: {len(index['observed_concepts'])}/"
+            f"{len(iti.concept_ids)} complete -> {destination}"
         ),
     )
     return 0

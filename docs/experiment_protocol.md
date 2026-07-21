@@ -25,6 +25,16 @@ Only after the nearest-token semantics pass review should a later experiment:
    perplexity/fluency, and dose-response. No single nearest token is treated as
    causal evidence.
 
+An external intervention baseline may retain its published internal coordinate
+when moving it to `resid_post` would change the algorithm. Such a baseline must
+name the coordinate separately, pin and attribute upstream code, document every
+adapter, and must not be presented as a J-lens intervention at that boundary.
+The registered ITI comparison uses full-attention head output immediately
+before `o_proj`, selects K/strength on validation prompt templates, and reports
+candidate-logit effects on held-out templates. LLM-as-judge is unnecessary for
+that fixed one-token label task; it becomes an additional blinded measurement
+only for a separately registered open-ended generation task.
+
 The built-in dataset is an offline smoke seed. The formal GoEmotions benchmark
 uses all 53,861 unique split-safe source texts for every concept, preserves
 multilabel rows, and defines one-vs-rest labels. Its expanded JSONL is an audit

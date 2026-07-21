@@ -257,6 +257,95 @@ class InterventionConfig(StrictModel):
         return self
 
 
+class ITIConfig(StrictModel):
+    """Pinned honest_llama ITI comparison on full-attention head outputs."""
+
+    method: Literal["honest_llama_mass_mean_qwen_full_attention_v1"] = (
+        "honest_llama_mass_mean_qwen_full_attention_v1"
+    )
+    upstream_repository: Literal["https://github.com/likenneth/honest_llama"] = (
+        "https://github.com/likenneth/honest_llama"
+    )
+    upstream_commit: Literal["2c6b2179be7b5aa8f0a171688cf9e01b812ca327"] = (
+        "2c6b2179be7b5aa8f0a171688cf9e01b812ca327"
+    )
+    attention_layers: list[int] = Field(min_length=1)
+    num_heads: int = Field(ge=1)
+    head_dim: int = Field(ge=1)
+    top_k_grid: list[int] = Field(default_factory=lambda: [4, 8, 16, 32, 48])
+    strengths: list[float] = Field(
+        default_factory=lambda: [-20.0, -10.0, -5.0, 0.0, 5.0, 10.0, 20.0]
+    )
+    random_control_seeds: list[int] = Field(
+        default_factory=lambda: [101, 202, 303, 404, 505], min_length=2
+    )
+    concept_ids: list[str] = Field(min_length=1)
+    source_residual_activations_dir: str
+    head_activations_dir: str
+    directions_dir: str
+    reference_j_intervention_dir: str
+    prompts_path: str
+    candidate_labels: dict[str, str]
+    validation_prompt_prefixes: list[str] = Field(
+        default_factory=lambda: ["choose", "complete"]
+    )
+    test_prompt_prefixes: list[str] = Field(
+        default_factory=lambda: ["classify", "report"]
+    )
+    capture_batch_size: int = Field(default=8, ge=1)
+    capture_max_length: int = Field(default=256, ge=8)
+    score_batch_size: int = Field(default=8, ge=1)
+    generation_prompt_count: int = Field(default=4, ge=0)
+    max_new_tokens: int = Field(default=4, ge=1)
+
+    @model_validator(mode="after")
+    def validate_iti(self) -> ITIConfig:
+        if (
+            sorted(set(self.attention_layers)) != self.attention_layers
+            or any(layer < 0 for layer in self.attention_layers)
+        ):
+            raise ValueError("ITI attention_layers must be sorted, unique, and non-negative")
+        total_heads = len(self.attention_layers) * self.num_heads
+        if (
+            not self.top_k_grid
+            or sorted(set(self.top_k_grid)) != self.top_k_grid
+            or self.top_k_grid[0] < 1
+            or self.top_k_grid[-1] > total_heads
+        ):
+            raise ValueError(
+                f"ITI top_k_grid must be sorted and unique within [1, {total_heads}]"
+            )
+        if (
+            len(set(self.strengths)) != len(self.strengths)
+            or any(not math.isfinite(value) for value in self.strengths)
+            or 0.0 not in self.strengths
+            or not any(value < 0 for value in self.strengths)
+            or not any(value > 0 for value in self.strengths)
+        ):
+            raise ValueError("ITI strengths must be finite, unique, and include zero and both signs")
+        if (
+            not self.random_control_seeds
+            or len(set(self.random_control_seeds)) != len(self.random_control_seeds)
+            or any(seed < 0 for seed in self.random_control_seeds)
+        ):
+            raise ValueError("ITI random_control_seeds must be unique and non-negative")
+        if len(set(self.concept_ids)) != len(self.concept_ids):
+            raise ValueError("ITI concept_ids must be unique")
+        if set(self.candidate_labels) != set(self.concept_ids):
+            raise ValueError("ITI candidate_labels keys must exactly match concept_ids")
+        validation = self.validation_prompt_prefixes
+        test = self.test_prompt_prefixes
+        if (
+            not validation
+            or not test
+            or len(set(validation)) != len(validation)
+            or len(set(test)) != len(test)
+            or set(validation).intersection(test)
+        ):
+            raise ValueError("ITI validation/test prompt prefixes must be non-empty and disjoint")
+        return self
+
+
 class MatrixConfig(StrictModel):
     layers: list[int] | None = None
     convention: Literal["raw", "rmsnorm_weighted"] = "rmsnorm_weighted"
@@ -418,6 +507,7 @@ class ExperimentConfig(StrictModel):
     probe: ProbeConfig | None = None
     alignment: AlignmentConfig | None = None
     intervention: InterventionConfig | None = None
+    iti: ITIConfig | None = None
     occupancy: OccupancyConfig | None = None
     matrix: MatrixConfig | None = None
 
@@ -449,6 +539,8 @@ class ExperimentConfig(StrictModel):
             ]
             if self.intervention is not None:
                 forbidden.append("intervention")
+            if self.iti is not None:
+                forbidden.append("iti")
             if self.occupancy is not None:
                 forbidden.append("occupancy")
             if forbidden:

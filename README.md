@@ -228,6 +228,10 @@ jlens-workspace config validate CONFIG.yaml
 jlens-workspace data validate DATA.jsonl
 jlens-workspace lens fit CONFIG.yaml
 jlens-workspace concept capture CONFIG.yaml
+jlens-workspace iti capture CONFIG.yaml
+jlens-workspace iti fit CONFIG.yaml --concept-id CONCEPT
+jlens-workspace iti run CONFIG.yaml --concept-id CONCEPT
+jlens-workspace iti index CONFIG.yaml
 jlens-workspace concept fit-probes CONFIG.yaml
 jlens-workspace concept align CONFIG.yaml
 jlens-workspace concept run CONFIG.yaml

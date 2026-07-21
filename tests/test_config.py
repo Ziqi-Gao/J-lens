@@ -6,9 +6,28 @@ from pydantic import ValidationError
 from jlens_workspace.config import (
     AlignmentConfig,
     ExperimentConfig,
+    ITIConfig,
     MatrixConfig,
     ProbeConfig,
 )
+
+
+def _iti_config(**overrides: object) -> ITIConfig:
+    values = {
+        "attention_layers": [3, 7],
+        "num_heads": 2,
+        "head_dim": 4,
+        "top_k_grid": [1, 4],
+        "concept_ids": ["concept:a"],
+        "source_residual_activations_dir": "residuals",
+        "head_activations_dir": "heads",
+        "directions_dir": "directions",
+        "reference_j_intervention_dir": "j",
+        "prompts_path": "prompts.json",
+        "candidate_labels": {"concept:a": "alpha"},
+    }
+    values.update(overrides)
+    return ITIConfig.model_validate(values)
 
 
 def test_probe_rejects_invalid_penalty_strength() -> None:
@@ -26,6 +45,14 @@ def test_alignment_control_seeds_are_unique() -> None:
         AlignmentConfig(random_control_seeds=[7, 7])
     with pytest.raises(ValidationError, match="non-negative"):
         AlignmentConfig(random_control_seeds=[-1])
+
+
+def test_iti_grid_and_prompt_splits_are_validation_safe() -> None:
+    assert _iti_config().top_k_grid == [1, 4]
+    with pytest.raises(ValidationError, match="top_k_grid"):
+        _iti_config(top_k_grid=[5])
+    with pytest.raises(ValidationError, match="disjoint"):
+        _iti_config(validation_prompt_prefixes=["same"], test_prompt_prefixes=["same"])
 
 
 def test_matrix_rank_sweep_contains_primary_tolerance() -> None:

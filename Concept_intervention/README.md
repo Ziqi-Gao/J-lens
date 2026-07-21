@@ -39,6 +39,8 @@ quality checks, and stability over seeds or prompt samples.
 The registered sparse-composition stage that measures how many J-directions
 are supported for each concept vector is documented in
 [`docs/concept_occupancy_v2.md`](docs/concept_occupancy_v2.md).
+The same-model, same-data ITI baseline and its held-out evaluation are
+registered in [`docs/iti_comparison_v1.md`](docs/iti_comparison_v1.md).
 
 ## Inputs
 
@@ -126,6 +128,17 @@ generation-time hook exists in `jlens_workspace.interventions`, but no
 intervention is run by this launcher; do not report alignment as causal
 steering evidence.
 
+The separate ITI comparison is submitted from an immutable checkout with:
+
+```bash
+Concept_intervention/scripts/submit_qwen35_4b_iti_comparison_v1.sh
+```
+
+It reuses the pinned Qwen checkpoint, all 53,861 GoEmotions source rows, and
+the same candidate-label prompt bank as the J-component intervention. ITI K
+and alpha are selected on two prompt-template families and evaluated on two
+held-out families; no LLM judge is used for this controlled one-token task.
+
 ## Outputs
 
 The default Qwen config writes beneath
@@ -151,6 +164,11 @@ lens must never be reused after changing the model revision, tokenizer, BOS
 policy, hook coordinate, or coordinate-changing model wrapper.
 
 ## Recorded runs
+
+- [Qwen3.5-4B ITI comparison v1 protocol](docs/iti_comparison_v1.md) pins the
+  original implementation commit, records the Qwen hybrid-attention adapter,
+  and defines the same-model/data held-out comparison. It is a registered
+  experiment protocol, not a completed result.
 
 - [Qwen3.5-4B concept-vector J-space occupancy (v2)](reports/qwen35_4b_concept_occupancy_v2.md)
   records the completed 840-combination sparse decomposition, bootstrap
