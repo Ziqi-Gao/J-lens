@@ -5,7 +5,10 @@ from pathlib import Path
 from urllib.parse import quote
 
 from jlens_workspace.artifacts import atomic_write_json, sha256_file
-from jlens_workspace.workflows.iti import _best_validation_setting, rebuild_iti_index
+from jlens_workspace.concept_intervention.iti.workflow import (
+    _best_validation_setting,
+    rebuild_iti_index,
+)
 
 
 def test_validation_selection_prefers_margin_then_smaller_k_and_strength() -> None:

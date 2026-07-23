@@ -15,19 +15,19 @@ import yaml
 
 from jlens_workspace.activations import _capture_forward_kwargs
 from jlens_workspace.artifacts import atomic_write_json, sha256_file
-from jlens_workspace.iti import (
-    ITI_METHOD,
-    iti_intervention_session,
-    load_iti_head_shifts,
-)
-from jlens_workspace.modeling import model_input_device
-from jlens_workspace.workflows.candidate_evaluation import (
+from jlens_workspace.concept_intervention.evaluation import (
     PromptRecord,
     atomic_write_jsonl,
     batched,
     candidate_token_ids,
     load_prompt_bank,
 )
+from jlens_workspace.concept_intervention.iti.intervention import (
+    ITI_METHOD,
+    iti_intervention_session,
+    load_iti_head_shifts,
+)
+from jlens_workspace.modeling import model_input_device
 
 
 class ITIWorkflowError(ValueError):

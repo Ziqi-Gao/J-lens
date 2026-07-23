@@ -15,18 +15,18 @@ import numpy as np
 from numpy.typing import NDArray
 
 from jlens_workspace.artifacts import atomic_write_json, sha256_file
-from jlens_workspace.interventions import (
-    generate_with_intervention,
-    intervention_session,
-)
-from jlens_workspace.modeling import model_input_device
-from jlens_workspace.workflows.candidate_evaluation import (
+from jlens_workspace.concept_intervention.evaluation import (
     PromptRecord,
     atomic_write_jsonl,
     batched,
     candidate_token_ids,
     load_prompt_bank,
 )
+from jlens_workspace.concept_intervention.j_component.intervention import (
+    generate_with_intervention,
+    intervention_session,
+)
+from jlens_workspace.modeling import model_input_device
 
 FloatArray = NDArray[np.float64]
 

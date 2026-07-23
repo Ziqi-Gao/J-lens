@@ -101,7 +101,11 @@ fully local and does not commit generated tensor artifacts.
 ```text
 Concept_intervention/   data, configs, launchers, and reports for steering
 J_space/                configs, launchers, and reports for matrix geometry
-src/jlens_workspace/    shared typed implementation
+src/jlens_workspace/    packaged, tested implementation
+└── concept_intervention/
+    ├── evaluation.py   method-neutral prompt and score contract
+    ├── j_component/    resid_post J/full/non-J/random method
+    └── iti/            pre-o_proj head-probe and ITI method
 tests/                  fast offline tests plus opt-in LLM/GPU tests
 scripts/                tiny public-model integration checks
 docs/                   shared design and experiment protocol

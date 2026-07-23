@@ -12,7 +12,7 @@ from jlens_workspace._vendor.honest_llama_core import (
     get_interventions_dict,
     train_probes,
 )
-from jlens_workspace.iti import (
+from jlens_workspace.concept_intervention.iti import (
     ITIHeadShift,
     capture_iti_head_activations,
     fit_iti_concept_directions,

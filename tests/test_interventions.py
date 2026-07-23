@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from jlens_workspace.interventions import ResidualIntervention, matched_random_direction
+from jlens_workspace.concept_intervention.j_component import (
+    ResidualIntervention,
+    matched_random_direction,
+)
 
 torch = pytest.importorskip("torch")
 

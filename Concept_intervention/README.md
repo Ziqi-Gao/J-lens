@@ -124,7 +124,8 @@ scientific output; copy the YAML and give it a new `experiment_name` and
 `output_dir`.
 
 The current formal run stops after probe/J-direction alignment. The
-generation-time hook exists in `jlens_workspace.interventions`, but no
+generation-time hook exists in
+`jlens_workspace.concept_intervention.j_component`, but no
 intervention is run by this launcher; do not report alignment as causal
 steering evidence.
 

@@ -1839,7 +1839,7 @@ def _load_unembedding_tensors_lightweight(config: Any) -> tuple[Any, Any]:
 
 def _cmd_intervention_concepts_v2(args: argparse.Namespace) -> int:
     from jlens_workspace.artifacts import atomic_write_json, sha256_file
-    from jlens_workspace.workflows.concept_intervention import (
+    from jlens_workspace.concept_intervention.j_component import (
         run_concept_intervention,
     )
 
@@ -1950,7 +1950,7 @@ def _cmd_intervention_concepts_v2(args: argparse.Namespace) -> int:
 
 def _cmd_intervention_index(args: argparse.Namespace) -> int:
     from jlens_workspace.artifacts import atomic_write_json
-    from jlens_workspace.workflows.concept_intervention import (
+    from jlens_workspace.concept_intervention.j_component import (
         rebuild_intervention_index,
     )
 
@@ -2021,8 +2021,8 @@ def _iti_concepts(section: Any, requested: list[str] | None) -> tuple[str, ...]:
 
 
 def _cmd_iti_capture(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.iti import capture_iti_head_activations
     from jlens_workspace.data import dataset_fingerprint
-    from jlens_workspace.iti import capture_iti_head_activations
 
     config = _load_config(args.config)
     iti = _require_section(config, "iti")
@@ -2088,7 +2088,7 @@ def _cmd_iti_capture(args: argparse.Namespace) -> int:
 
 def _cmd_iti_fit(args: argparse.Namespace) -> int:
     from jlens_workspace.artifacts import atomic_write_json
-    from jlens_workspace.iti import fit_iti_concept_directions
+    from jlens_workspace.concept_intervention.iti import fit_iti_concept_directions
 
     config = _load_config(args.config)
     iti = _require_section(config, "iti")
@@ -2139,7 +2139,7 @@ def _cmd_iti_fit(args: argparse.Namespace) -> int:
 
 def _cmd_iti_run(args: argparse.Namespace) -> int:
     from jlens_workspace.artifacts import atomic_write_json, sha256_file
-    from jlens_workspace.workflows.iti import run_iti_intervention
+    from jlens_workspace.concept_intervention.iti import run_iti_intervention
 
     config = _load_config(args.config)
     iti = _require_section(config, "iti")
@@ -2215,7 +2215,7 @@ def _cmd_iti_run(args: argparse.Namespace) -> int:
 
 def _cmd_iti_index(args: argparse.Namespace) -> int:
     from jlens_workspace.artifacts import atomic_write_json, sha256_file
-    from jlens_workspace.workflows.iti import rebuild_iti_index
+    from jlens_workspace.concept_intervention.iti import rebuild_iti_index
 
     config = _load_config(args.config)
     iti = _require_section(config, "iti")

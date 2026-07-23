@@ -15,6 +15,23 @@ candidate-label tokens, batching, and artifact writes, and they must
 identity-check the shared model, tokenizer, source examples, and data splits.
 Sharing inputs is not permission to share method-specific fitting or hook code.
 
+The Python package mirrors that ownership:
+
+```text
+jlens_workspace/concept_intervention/
+├── evaluation.py
+├── j_component/
+│   ├── intervention.py
+│   └── workflow.py
+└── iti/
+    ├── intervention.py
+    └── workflow.py
+```
+
+The top-level `Concept_intervention/` directory remains the experiment surface
+for YAML, data manifests, launchers, and reports; reusable implementations stay
+under `src/jlens_workspace/` so they are packaged and tested normally.
+
 ## Coordinate conventions
 
 - Activations are captured at the transformer block output (`resid_post`), which

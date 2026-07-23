@@ -7,15 +7,15 @@ from urllib.parse import quote
 import numpy as np
 
 from jlens_workspace.artifacts import sha256_file
-from jlens_workspace.config import load_experiment_config
-from jlens_workspace.workflows.candidate_evaluation import (
+from jlens_workspace.concept_intervention.evaluation import (
     candidate_token_ids,
     load_prompt_bank,
 )
-from jlens_workspace.workflows.concept_intervention import (
+from jlens_workspace.concept_intervention.j_component.workflow import (
     _curve_summary,
     load_registered_directions,
 )
+from jlens_workspace.config import load_experiment_config
 
 
 class _FakeTokenizer:

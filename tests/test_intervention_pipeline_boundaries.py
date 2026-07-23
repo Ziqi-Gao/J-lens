@@ -16,13 +16,29 @@ def _imports(path: Path) -> set[str]:
 
 
 def test_j_component_and_iti_workflows_do_not_import_each_other() -> None:
-    root = Path(__file__).parents[1] / "src/jlens_workspace/workflows"
-    j_imports = _imports(root / "concept_intervention.py")
-    iti_imports = _imports(root / "iti.py")
+    root = Path(__file__).parents[1] / "src/jlens_workspace/concept_intervention"
+    j_imports = set().union(*(_imports(path) for path in (root / "j_component").glob("*.py")))
+    iti_imports = set().union(*(_imports(path) for path in (root / "iti").glob("*.py")))
 
-    assert "jlens_workspace.workflows.iti" not in j_imports
-    assert "jlens_workspace.iti" not in j_imports
-    assert "jlens_workspace.workflows.concept_intervention" not in iti_imports
-    assert "jlens_workspace.interventions" not in iti_imports
-    assert "jlens_workspace.workflows.candidate_evaluation" in j_imports
-    assert "jlens_workspace.workflows.candidate_evaluation" in iti_imports
+    assert not any(
+        module.startswith("jlens_workspace.concept_intervention.iti")
+        for module in j_imports
+    )
+    assert not any(
+        module.startswith("jlens_workspace.concept_intervention.j_component")
+        for module in iti_imports
+    )
+    assert "jlens_workspace.concept_intervention.evaluation" in j_imports
+    assert "jlens_workspace.concept_intervention.evaluation" in iti_imports
+
+
+def test_legacy_flat_intervention_modules_are_absent() -> None:
+    root = Path(__file__).parents[1] / "src/jlens_workspace"
+    legacy_paths = (
+        root / "interventions.py",
+        root / "iti.py",
+        root / "workflows/candidate_evaluation.py",
+        root / "workflows/concept_intervention.py",
+        root / "workflows/iti.py",
+    )
+    assert not any(path.exists() for path in legacy_paths)
