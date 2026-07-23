@@ -13,6 +13,7 @@ import numpy as np
 
 from jlens_workspace.artifacts import atomic_write_json, sha256_file
 from jlens_workspace.concept_intervention.generation import (
+    validate_equivalent_generation_outputs,
     validate_generation_artifacts,
 )
 
@@ -115,7 +116,11 @@ def validate_three_method_smokes(
             raise InterventionComparisonError(
                 f"registered smoke score identity mismatch: {candidate_path}"
             )
-        validate_generation_artifacts(shard, summary["generation_files"])
+        validate_generation_artifacts(
+            shard,
+            summary["generation_files"],
+            contract=summary["generation_contract"],
+        )
         entries.append(
             {
                 "method": method,
@@ -157,6 +162,78 @@ def _mean(rows: Sequence[Mapping[str, Any]]) -> float:
     if not rows:
         raise InterventionComparisonError("cannot average an empty score set")
     return float(np.mean([float(row["target_margin"]) for row in rows]))
+
+
+def _baseline_generation_path(
+    root: Path,
+    summary: Mapping[str, Any],
+    *,
+    condition: Mapping[str, Any],
+) -> Path:
+    matches = [
+        row
+        for row in summary.get("shards", [])
+        if all(row.get("grid_condition", {}).get(key) == value for key, value in condition.items())
+    ]
+    if len(matches) != 1:
+        raise InterventionComparisonError(
+            f"expected one baseline generation shard for {condition}, found {len(matches)}"
+        )
+    return root / str(matches[0]["summary"]).replace("summary.json", "generations.jsonl")
+
+
+def _validate_cross_method_zero_scores(
+    method_rows: Mapping[str, Sequence[Mapping[str, Any]]],
+    queries: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    baselines: dict[str, dict[str, Mapping[str, float]]] = {}
+    for method, rows in method_rows.items():
+        query = queries[method]
+        selected = [
+            row
+            for row in rows
+            if all(row.get(key) == value for key, value in query.items())
+        ]
+        by_prompt = {
+            str(row["prompt_id"]): {
+                str(key): float(value)
+                for key, value in row["candidate_log_probabilities"].items()
+            }
+            for row in selected
+        }
+        if not by_prompt or len(by_prompt) != len(selected):
+            raise InterventionComparisonError(
+                f"{method} zero baseline is empty or has duplicate prompts"
+            )
+        baselines[method] = by_prompt
+    prompt_sets = {tuple(sorted(rows)) for rows in baselines.values()}
+    if len(prompt_sets) != 1:
+        raise InterventionComparisonError(
+            "methods used different prompts for zero/no-hook scoring"
+        )
+    reference = next(iter(baselines.values()))
+    max_difference = 0.0
+    for rows in baselines.values():
+        for prompt_id, values in rows.items():
+            if set(values) != set(reference[prompt_id]):
+                raise InterventionComparisonError(
+                    "methods used different candidate labels at zero/no-hook"
+                )
+            max_difference = max(
+                max_difference,
+                max(
+                    abs(values[key] - reference[prompt_id][key])
+                    for key in values
+                ),
+            )
+    if max_difference > 1e-5:
+        raise InterventionComparisonError(
+            f"cross-method zero/no-hook scores differ by {max_difference}"
+        )
+    return {
+        "prompt_count": len(reference),
+        "max_candidate_logprob_difference": max_difference,
+    }
 
 
 def _effect(
@@ -274,9 +351,23 @@ def rebuild_intervention_comparison(
         "raptor_intervention": Path(raptor_root),
     }
     indexes = {}
+    generation_identities: dict[str, dict[str, Any]] = {}
     method_identities: set[tuple[Any, ...]] = set()
     generation_contracts: set[str] = set()
-    expected_selection_hash = sha256_file(shared_layer_selection)
+    selection_path = Path(shared_layer_selection)
+    selection_payload = json.loads(selection_path.read_text(encoding="utf-8"))
+    expected_selection_hash = sha256_file(selection_path)
+    row_manifest_path = (
+        selection_path.parent / str(selection_payload["row_manifest"])
+    ).resolve()
+    expected_row_manifest_hash = sha256_file(row_manifest_path)
+    if (
+        selection_payload.get("row_manifest_sha256")
+        != expected_row_manifest_hash
+    ):
+        raise InterventionComparisonError(
+            f"shared row-manifest identity mismatch: {row_manifest_path}"
+        )
     for method, root in roots.items():
         path = root / "index.json"
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -306,12 +397,24 @@ def rebuild_intervention_comparison(
                 f"{method} manifest lacks a required model/data/lens identity"
             )
         method_identities.add(identity)
-        generation_contracts.add(
-            json.dumps(notes.get("generation"), sort_keys=True)
-        )
+        generation_identity = notes.get("generation")
+        if (
+            not isinstance(generation_identity, dict)
+            or not generation_identity.get("candidate_prompts_sha256")
+            or not generation_identity.get("open_prompts_sha256")
+        ):
+            raise InterventionComparisonError(
+                f"{method} manifest lacks prompt content hashes"
+            )
+        generation_contracts.add(json.dumps(generation_identity, sort_keys=True))
+        generation_identities[method] = generation_identity
         if notes.get("selected_layers_sha256") != expected_selection_hash:
             raise InterventionComparisonError(
                 f"{method} manifest used another selected-layer artifact"
+            )
+        if notes.get("row_manifest_sha256") != expected_row_manifest_hash:
+            raise InterventionComparisonError(
+                f"{method} manifest used another balanced-row artifact"
             )
         indexes[method] = {
             "path": str(path),
@@ -340,6 +443,25 @@ def rebuild_intervention_comparison(
             raise InterventionComparisonError(
                 f"{concept_id}: methods used different selected layers"
             )
+        for method, summary in summaries.items():
+            generation_contract = summary.get("generation_contract", {})
+            generation_identity = generation_identities[method]
+            if (
+                generation_contract.get("prompt_ids_sha256")
+                != generation_identity.get("prompt_ids_sha256")
+                or int(generation_contract.get("prompt_count", -1))
+                != int(generation_identity.get("prompt_count", -2))
+                or int(generation_contract.get("expected_rows", -1))
+                != int(
+                    generation_identity.get(
+                        "expected_rows_per_grid_point", -2
+                    )
+                )
+            ):
+                raise InterventionComparisonError(
+                    f"{concept_id}: {method} generation contract differs "
+                    "from the content-addressed prompt banks"
+                )
         iti_direction_metrics = Path(
             summaries["iti_intervention"]["direction_metrics"]
         )
@@ -370,6 +492,23 @@ def rebuild_intervention_comparison(
             raise InterventionComparisonError(
                 f"{concept_id}: methods used different selected-layer artifact hashes"
             )
+        row_manifest_hashes = {
+            str(
+                summaries["j_component_intervention"]["source_provenance"][
+                    "row_manifest_sha256"
+                ]
+            ),
+            str(
+                summaries["raptor_intervention"]["source_provenance"][
+                    "row_manifest_sha256"
+                ]
+            ),
+            str(iti_direction_payload["row_manifest_sha256"]),
+        }
+        if row_manifest_hashes != {expected_row_manifest_hash}:
+            raise InterventionComparisonError(
+                f"{concept_id}: methods used different balanced-row artifact hashes"
+            )
         j_rows = _read_method_scores(
             roots["j_component_intervention"] / "targets" / encoded
         )
@@ -379,10 +518,60 @@ def rebuild_intervention_comparison(
         raptor_rows = _read_method_scores(
             roots["raptor_intervention"] / "targets" / encoded
         )
+        native_zero_k = min(
+            int(value)
+            for value in summaries["iti_intervention"]["native_top_k_grid"]
+        )
+        zero_generation_consistency = validate_equivalent_generation_outputs(
+            [
+                _baseline_generation_path(
+                    roots["j_component_intervention"],
+                    summaries["j_component_intervention"],
+                    condition={"condition_id": "full", "strength": 0.0},
+                ),
+                _baseline_generation_path(
+                    roots["raptor_intervention"],
+                    summaries["raptor_intervention"],
+                    condition={"condition_id": "no_hook"},
+                ),
+                _baseline_generation_path(
+                    roots["iti_intervention"],
+                    summaries["iti_intervention"],
+                    condition={
+                        "variant": "native",
+                        "condition_id": "iti_native_mass_mean",
+                        "top_k": native_zero_k,
+                        "strength": 0.0,
+                    },
+                ),
+            ]
+        )
+        zero_score_consistency = _validate_cross_method_zero_scores(
+            {
+                "j_component_intervention": j_rows,
+                "raptor_intervention": raptor_rows,
+                "iti_intervention": iti_rows,
+            },
+            {
+                "j_component_intervention": {
+                    "condition_id": "full",
+                    "strength": 0.0,
+                },
+                "raptor_intervention": {"condition_id": "no_hook"},
+                "iti_intervention": {
+                    "variant": "native",
+                    "condition_id": "iti_native_mass_mean",
+                    "top_k": native_zero_k,
+                    "strength": 0.0,
+                },
+            },
+        )
         entries.append(
             {
                 "concept_id": concept_id,
                 "selected_layers": list(next(iter(selected_layers))),
+                "zero_generation_consistency": zero_generation_consistency,
+                "zero_score_consistency": zero_score_consistency,
                 "j_component": _select_j(j_rows),
                 "raptor": _select_raptor(raptor_rows),
                 "iti_native": _select_iti(

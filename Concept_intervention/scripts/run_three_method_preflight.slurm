@@ -18,4 +18,4 @@ for config in "${SHARED_CONFIG}" "${J_CONFIG}" "${ITI_CONFIG}" "${RAPTOR_CONFIG}
   jlens config validate "${config}"
 done
 jlens data validate --config "${SHARED_CONFIG}"
-"${PYTHON}" -c "from jlens_workspace.concept_intervention.raptor import verify_raptor_checkout; verify_raptor_checkout('third_party_external/RAPTOR')"
+"${PYTHON}" -c "from jlens_workspace.concept_intervention.raptor import verify_raptor_adaptive_epsilon_parity, verify_raptor_checkout; root=verify_raptor_checkout('third_party_external/RAPTOR'); verify_raptor_adaptive_epsilon_parity(root)"

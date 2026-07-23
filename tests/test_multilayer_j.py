@@ -8,6 +8,7 @@ import pytest
 
 from jlens_workspace.artifacts import atomic_write_json, sha256_file
 from jlens_workspace.concept_intervention.generation import (
+    prompt_ids_sha256,
     write_generation_artifacts,
 )
 from jlens_workspace.concept_intervention.j_component.multilayer import (
@@ -120,7 +121,37 @@ def test_j_shard_index_requires_complete_grid_and_checks_zero_consistency(
             + "\n",
             encoding="utf-8",
         )
-        generation_files = write_generation_artifacts(shard, [])
+        settings = {
+            "sample_seeds": [1001],
+            "max_new_tokens": 8,
+            "temperature": 0.75,
+            "top_p": 0.95,
+            "repetition_penalty": 1.1,
+            "no_repeat_ngram_size": 3,
+        }
+        generation_rows = [
+            {
+                "generation_id": f"generation-{grid_index}-{decoding}",
+                "blind_id": f"blind-{grid_index}-{decoding}",
+                "method": "j_component_intervention",
+                "concept_id": "concept:a",
+                "condition_id": condition_id,
+                "grid_point": {"strength": 0.0},
+                "prompt_id": "prompt",
+                "prompt_text": "Prompt.",
+                "decoding": decoding,
+                "seed": seed,
+                "generated_token_ids": [1],
+                "generated_text": "Result.",
+                "token_log_probabilities": [-0.5],
+                "telemetry": [],
+                "injected_norm_by_layer": {},
+                "total_injected_norm": 0.0,
+                "generation_settings": settings,
+            }
+            for decoding, seed in (("greedy", None), ("sample", 1001))
+        ]
+        generation_files = write_generation_artifacts(shard, generation_rows)
         atomic_write_json(
             shard / "summary.json",
             {
@@ -134,6 +165,18 @@ def test_j_shard_index_requires_complete_grid_and_checks_zero_consistency(
                 "source_provenance": provenance,
                 "candidate_scores_sha256": sha256_file(candidate_path),
                 "generation_files": generation_files,
+                "generation_contract": {
+                    "schema_version": 1,
+                    "prompt_ids": ["prompt"],
+                    "prompt_ids_sha256": prompt_ids_sha256(["prompt"]),
+                    "prompt_count": 1,
+                    "candidate_prompt_ids": ["prompt"],
+                    "open_prompt_ids": [],
+                    "sample_seeds": [1001],
+                    "decodings_per_prompt": 2,
+                    "expected_rows": 2,
+                    "generation_settings": settings,
+                },
                 "grid_index": grid_index,
                 "grid_size": 3,
                 "grid_condition": {

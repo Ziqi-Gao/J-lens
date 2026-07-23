@@ -3,8 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from jlens_workspace.artifacts import sha256_file
 from jlens_workspace.concept_intervention.generation import (
+    InterventionGenerationError,
     load_open_prompt_bank,
+    prompt_ids_sha256,
+    validate_generation_artifacts,
     write_generation_artifacts,
 )
 
@@ -50,3 +56,40 @@ def test_blind_export_hides_method_but_keeps_private_mapping(tmp_path: Path) -> 
     assert "condition_id" not in blind
     assert mapping["method"] == "j_component_intervention"
     assert mapping["condition_id"] == "j"
+
+
+def test_generation_validator_rejects_hash_valid_empty_files(
+    tmp_path: Path,
+) -> None:
+    files = {}
+    for filename, hash_key in (
+        ("generations.jsonl", "generations_sha256"),
+        ("judge_blind_generations.jsonl", "blind_generations_sha256"),
+        ("judge_blind_map.jsonl", "blind_map_sha256"),
+    ):
+        path = tmp_path / filename
+        path.write_text("", encoding="utf-8")
+        files[hash_key] = sha256_file(path)
+
+    with pytest.raises(InterventionGenerationError, match="row count"):
+        validate_generation_artifacts(
+            tmp_path,
+            files,
+            contract={
+                "schema_version": 1,
+                "prompt_ids": ["prompt-a"],
+                "prompt_ids_sha256": prompt_ids_sha256(["prompt-a"]),
+                "prompt_count": 1,
+                "sample_seeds": [1001, 2002, 3003],
+                "decodings_per_prompt": 4,
+                "generation_settings": {
+                    "sample_seeds": [1001, 2002, 3003],
+                    "max_new_tokens": 128,
+                    "temperature": 0.75,
+                    "top_p": 0.95,
+                    "repetition_penalty": 1.1,
+                    "no_repeat_ngram_size": 3,
+                },
+                "expected_rows": 4,
+            },
+        )

@@ -17,8 +17,10 @@ from jlens_workspace.concept_intervention.evaluation import (
 )
 from jlens_workspace.concept_intervention.generation import (
     GenerationSettings,
+    build_generation_contract,
     generate_full_grid,
     load_open_prompt_bank,
+    validate_equivalent_generation_outputs,
     validate_generation_artifacts,
     write_generation_artifacts,
 )
@@ -134,6 +136,7 @@ def run_iti_intervention_experiment(
     ]
     token_ids = candidate_token_ids(tokenizer, config.candidate_labels)
     settings = _settings(config.generation)
+    generation_contract = build_generation_contract(all_prompts, settings)
     score_rows: list[dict[str, Any]] = []
     generation_rows: list[dict[str, Any]] = []
     validation_by_variant: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -291,6 +294,7 @@ def run_iti_intervention_experiment(
         ),
         "generation_rows": len(generation_rows),
         "generation_files": generation_files,
+        "generation_contract": generation_contract,
         "zero_strength_max_logprob_spread": zero_spread,
         "llm_as_judge_run": False,
     }
@@ -334,7 +338,9 @@ def rebuild_iti_experiment_index(
                         f"ITI candidate-score identity mismatch: {candidate_path}"
                     )
                 validate_generation_artifacts(
-                    shard.parent, shard_payload["generation_files"]
+                    shard.parent,
+                    shard_payload["generation_files"],
+                    contract=shard_payload["generation_contract"],
                 )
             indices = {row.get("grid_index") for row in shard_payloads}
             if (
@@ -357,9 +363,14 @@ def rebuild_iti_experiment_index(
                 )
             validation: dict[str, list[dict[str, Any]]] = defaultdict(list)
             zero_by_key: dict[tuple[str, int, str], list[float]] = defaultdict(list)
-            for shard, _shard_payload in zip(
+            zero_generation_paths: list[Path] = []
+            for shard, shard_payload in zip(
                 shard_paths, shard_payloads, strict=True
             ):
+                if float(shard_payload["grid_condition"]["strength"]) == 0.0:
+                    zero_generation_paths.append(
+                        shard.parent / "generations.jsonl"
+                    )
                 with (shard.parent / "candidate_scores.jsonl").open(
                     encoding="utf-8"
                 ) as handle:
@@ -389,6 +400,9 @@ def rebuild_iti_experiment_index(
                 raise ITIWorkflowError(
                     f"{concept_id}: zero-strength ITI shards differ by {zero_spread}"
                 )
+            zero_generation_consistency = validate_equivalent_generation_outputs(
+                zero_generation_paths
+            )
             first = shard_payloads[0]
             payload = {
                 "schema_version": 1,
@@ -410,7 +424,9 @@ def rebuild_iti_experiment_index(
                     "direction_metrics_sha256"
                 ],
                 "zero_strength_max_logprob_spread": zero_spread,
+                "zero_generation_consistency": zero_generation_consistency,
                 "generation_artifacts_sharded": True,
+                "generation_contract": first["generation_contract"],
                 "grid_size": expected_grid_size,
                 "shards": [
                     {

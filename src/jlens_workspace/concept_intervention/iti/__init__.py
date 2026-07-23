@@ -16,6 +16,7 @@ from .intervention import (
     full_attention_head_specs,
     iti_intervention_session,
     layer_matched_head_order,
+    layer_matched_random_head_order,
     layer_shift_vectors,
     load_iti_head_shifts,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "full_attention_head_specs",
     "iti_intervention_session",
     "layer_matched_head_order",
+    "layer_matched_random_head_order",
     "layer_shift_vectors",
     "load_iti_head_shifts",
     "rebuild_iti_experiment_index",

@@ -35,6 +35,7 @@ _OPTIONAL_PACKAGES = (
     ("huggingface-hub", "huggingface_hub"),
     ("jlens", "jlens"),
 )
+_EXPECTED_JLENS_REVISION = "581d398613e5602a5af361e1c34d3a92ea82ba8e"
 
 
 def _add_json_flag(parser: argparse.ArgumentParser) -> None:
@@ -516,6 +517,24 @@ def _package_status(distribution: str, module: str) -> dict[str, Any]:
     return {"available": available, "version": version}
 
 
+def _installed_vcs_commit(distribution: str) -> str | None:
+    """Read a PEP 610 VCS commit from an installed distribution."""
+
+    try:
+        payload = importlib.metadata.distribution(distribution).read_text(
+            "direct_url.json"
+        )
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    if not payload:
+        return None
+    try:
+        value = json.loads(payload).get("vcs_info", {}).get("commit_id")
+    except json.JSONDecodeError:
+        return None
+    return str(value) if value else None
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     core = {
         name: _package_status(name, module) for name, module in _CORE_PACKAGES
@@ -526,7 +545,11 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     python_ok = sys.version_info >= (3, 11)
     core_ok = python_ok and all(status["available"] for status in core.values())
     llm_ok = all(status["available"] for status in optional.values())
-    ok = core_ok and (llm_ok or not args.require_llm)
+    observed_jlens_revision = _installed_vcs_commit("jlens")
+    jlens_revision_ok = observed_jlens_revision == _EXPECTED_JLENS_REVISION
+    ok = core_ok and (
+        (llm_ok and jlens_revision_ok) or not args.require_llm
+    )
     payload = {
         "ok": ok,
         "python": {
@@ -537,7 +560,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         "optional_llm": optional,
         "optional_llm_complete": llm_ok,
         "require_llm": args.require_llm,
-        "expected_jlens_revision": "581d398613e5602a5af361e1c34d3a92ea82ba8e",
+        "expected_jlens_revision": _EXPECTED_JLENS_REVISION,
+        "observed_jlens_revision": observed_jlens_revision,
+        "jlens_revision_ok": jlens_revision_ok,
     }
     installed_optional = sum(status["available"] for status in optional.values())
     _emit(
@@ -624,6 +649,69 @@ def _activation_dataset_hash(path: str | Path) -> str:
             f"activation artifact lacks a source dataset hash: {metadata_path}"
         )
     return value
+
+
+def _generation_identity(value: Any) -> dict[str, Any]:
+    """Content-address both prompt banks together with decoding parameters."""
+
+    from jlens_workspace.artifacts import sha256_file
+    from jlens_workspace.concept_intervention.generation import (
+        prompt_ids_sha256,
+    )
+
+    candidate_payload = json.loads(
+        Path(value.candidate_prompts_path).read_text(encoding="utf-8")
+    )
+    open_payload = json.loads(
+        Path(value.open_prompts_path).read_text(encoding="utf-8")
+    )
+    candidate_ids = [
+        str(row["prompt_id"]) for row in candidate_payload.get("prompts", [])
+    ]
+    open_ids = [str(row["prompt_id"]) for row in open_payload.get("prompts", [])]
+    prompt_ids = [*candidate_ids, *open_ids]
+    if (
+        candidate_payload.get("schema_version") != 1
+        or open_payload.get("schema_version") != 1
+        or not candidate_ids
+        or not open_ids
+        or len(set(prompt_ids)) != len(prompt_ids)
+    ):
+        raise ValueError("generation prompt banks have invalid or duplicate IDs")
+    sample_seeds = list(value.sample_seeds)
+
+    return {
+        **value.model_dump(),
+        "candidate_prompts_sha256": sha256_file(value.candidate_prompts_path),
+        "open_prompts_sha256": sha256_file(value.open_prompts_path),
+        "candidate_prompt_count": len(candidate_ids),
+        "open_prompt_count": len(open_ids),
+        "prompt_count": len(prompt_ids),
+        "prompt_ids_sha256": prompt_ids_sha256(prompt_ids),
+        "expected_rows_per_grid_point": len(prompt_ids)
+        * (1 + len(sample_seeds)),
+    }
+
+
+def _shared_protocol_identity(path: str | Path) -> dict[str, Any]:
+    """Resolve and verify the selected-layer and balanced-row identities."""
+
+    from jlens_workspace.artifacts import sha256_file
+
+    selection_path = Path(path)
+    selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    row_manifest_path = selection_path.parent / str(selection["row_manifest"])
+    row_hash = sha256_file(row_manifest_path)
+    if selection.get("row_manifest_sha256") != row_hash:
+        raise ValueError(
+            f"shared row manifest identity mismatch: {row_manifest_path}"
+        )
+    return {
+        "selected_layers_sha256": sha256_file(selection_path),
+        "row_manifest_path": str(row_manifest_path),
+        "row_manifest_sha256": row_hash,
+        "activation_artifact_hash": selection.get("activation_artifact_hash"),
+    }
 
 
 def _normalize_config_argument(args: argparse.Namespace) -> None:
@@ -2188,6 +2276,8 @@ def _cmd_j_component_intervention(args: argparse.Namespace) -> int:
             "selected_layers_path": section.selected_layers_path,
             "source_occupancy_dir": section.source_occupancy_dir,
             "concept_ids": list(concepts),
+            "generation": _generation_identity(section.generation),
+            **_shared_protocol_identity(section.selected_layers_path),
         },
     )
     destination.mkdir(parents=True, exist_ok=True)
@@ -2237,9 +2327,9 @@ def _cmd_j_component_index(args: argparse.Namespace) -> int:
         notes={
             "workflow": "j_component_intervention",
             "selected_layers_path": section.selected_layers_path,
-            "selected_layers_sha256": sha256_file(section.selected_layers_path),
             "lens_sha256": sha256_file(config.lens.path_or_repo),
-            "generation": section.generation.model_dump(),
+            "generation": _generation_identity(section.generation),
+            **_shared_protocol_identity(section.selected_layers_path),
         },
     )
     atomic_write_json(destination / "manifest.json", manifest)
@@ -2286,6 +2376,8 @@ def _cmd_raptor_intervention(args: argparse.Namespace) -> int:
             "upstream_repository": section.upstream_repository,
             "upstream_commit": section.upstream_commit,
             "concept_ids": list(concepts),
+            "generation": _generation_identity(section.generation),
+            **_shared_protocol_identity(section.selected_layers_path),
         },
     )
     destination.mkdir(parents=True, exist_ok=True)
@@ -2333,10 +2425,10 @@ def _cmd_raptor_index(args: argparse.Namespace) -> int:
         notes={
             "workflow": "raptor_intervention",
             "selected_layers_path": section.selected_layers_path,
-            "selected_layers_sha256": sha256_file(section.selected_layers_path),
             "lens_sha256": sha256_file(config.lens.path_or_repo),
-            "generation": section.generation.model_dump(),
+            "generation": _generation_identity(section.generation),
             "upstream_commit": section.upstream_commit,
+            **_shared_protocol_identity(section.selected_layers_path),
         },
     )
     atomic_write_json(destination / "manifest.json", manifest)
@@ -2562,6 +2654,11 @@ def _cmd_iti_run(args: argparse.Namespace) -> int:
     concepts = _iti_concepts(iti, args.concept_id)
     destination = args.output or Path(config.output_dir)
     bundle = _load_model_bundle(config)
+    shared_identity = (
+        _shared_protocol_identity(iti.selected_layers_path)
+        if iti.selected_layers_path is not None
+        else {}
+    )
     manifest = _experiment_manifest(
         config,
         args.config,
@@ -2578,6 +2675,12 @@ def _cmd_iti_run(args: argparse.Namespace) -> int:
             "prompts_sha256": sha256_file(iti.prompts_path),
             "validation_prompt_prefixes": list(iti.validation_prompt_prefixes),
             "test_prompt_prefixes": list(iti.test_prompt_prefixes),
+            "generation": (
+                _generation_identity(iti.generation)
+                if iti.generation is not None
+                else None
+            ),
+            **shared_identity,
         },
     )
     destination.mkdir(parents=True, exist_ok=True)
@@ -2666,6 +2769,11 @@ def _cmd_iti_index(args: argparse.Namespace) -> int:
     source_residual_metadata = json.loads(
         source_residual_metadata_path.read_text(encoding="utf-8")
     )
+    shared_identity = (
+        _shared_protocol_identity(iti.selected_layers_path)
+        if iti.selected_layers_path is not None
+        else {}
+    )
     manifest = _experiment_manifest(
         config,
         args.config,
@@ -2692,17 +2800,13 @@ def _cmd_iti_index(args: argparse.Namespace) -> int:
                 "example_hash"
             ),
             "selected_layers_path": iti.selected_layers_path,
-            "selected_layers_sha256": (
-                sha256_file(iti.selected_layers_path)
-                if iti.selected_layers_path is not None
-                else None
-            ),
             "lens_sha256": sha256_file(config.lens.path_or_repo),
             "generation": (
-                iti.generation.model_dump()
+                _generation_identity(iti.generation)
                 if iti.generation is not None
                 else None
             ),
+            **shared_identity,
         },
     )
     atomic_write_json(destination / "manifest.json", manifest)

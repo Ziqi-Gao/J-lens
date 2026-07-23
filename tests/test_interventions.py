@@ -60,6 +60,10 @@ def test_multilayer_addition_uses_full_per_layer_norm_and_cleans_hooks() -> None
     torch.testing.assert_close(changed, torch.tensor([[[1.0, 2.0]]]))
     assert states[0].events[-1]["injected_norm"] == pytest.approx(1.0)
     assert states[1].events[-1]["injected_norm"] == pytest.approx(2.0)
+    assert states[0].events[-1]["forward_call"] == 0
+    assert states[0].events[-1]["generation_step"] == 0
+    assert states[0].events[-1]["strength"] == 0.5
+    assert states[0].events[-1]["residual_norm"] == 2.0
     torch.testing.assert_close(blocks[1](blocks[0](source)), source)
 
 

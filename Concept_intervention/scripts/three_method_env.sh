@@ -2,6 +2,9 @@
 # Shared immutable execution environment for the three intervention methods.
 set -euo pipefail
 
+# Quest batch shells may start without system binaries on PATH.
+export PATH="/usr/bin:/bin:${PATH:-}"
+
 CODE_ROOT="${CODE_ROOT:?submit with CODE_ROOT set to the immutable code checkout}"
 RUN_ROOT="${RUN_ROOT:?submit with RUN_ROOT set to the artifact/data checkout}"
 JLENS_GIT_COMMIT="${JLENS_GIT_COMMIT:?submit with JLENS_GIT_COMMIT frozen}"

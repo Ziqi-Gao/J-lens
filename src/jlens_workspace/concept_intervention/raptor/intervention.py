@@ -70,6 +70,70 @@ def load_upstream_raptor(path: str | Path) -> Any:
     return module
 
 
+def verify_raptor_adaptive_epsilon_parity(
+    path: str | Path,
+) -> dict[str, Any]:
+    """Compare the pinned author's epsilon function with the registered formula."""
+
+    import torch
+
+    upstream = load_upstream_raptor(path)
+    direction = torch.tensor([1.0, 0.0], dtype=torch.float64)
+    cases = (
+        (0.9, 0.0),
+        (0.9, 3.0),
+        (0.1, 0.0),
+        (0.1, -3.0),
+    )
+    results = []
+    for target_probability, projection in cases:
+        embedding = torch.tensor(
+            [[projection, 0.0]], dtype=torch.float64
+        )
+        observed = upstream.compute_adaptive_epsilon(
+            embedding=embedding,
+            concept_vector=direction,
+            bias=0.0,
+            target_prob=target_probability,
+        )
+        target_logit = math.log(
+            target_probability / (1.0 - target_probability)
+        )
+        current_probability = 1.0 / (1.0 + math.exp(-projection))
+        should_steer = (
+            current_probability < target_probability
+            if target_probability > 0.5
+            else current_probability > target_probability
+        )
+        expected = target_logit - projection if should_steer else 0.0
+        if not torch.allclose(
+            observed,
+            torch.full_like(observed, expected),
+            # The pinned implementation constructs ``logit_target`` with
+            # Torch's default float32 dtype before promotion to the embedding
+            # dtype.  The resulting ~4e-8 rounding is part of the upstream
+            # implementation, not an algorithmic mismatch.
+            rtol=1e-6,
+            atol=1e-6,
+        ):
+            raise RaptorError(
+                "pinned compute_adaptive_epsilon differs from registered formula"
+            )
+        results.append(
+            {
+                "target_probability": target_probability,
+                "projection": projection,
+                "epsilon": float(observed.item()),
+            }
+        )
+    return {
+        "repository": RAPTOR_REPOSITORY,
+        "commit": RAPTOR_COMMIT,
+        "function": "raptor.steering.generate.compute_adaptive_epsilon",
+        "cases": results,
+    }
+
+
 def _unit_directions(directions: Mapping[int, Any]) -> dict[int, np.ndarray]:
     output: dict[int, np.ndarray] = {}
     for layer, value in directions.items():
@@ -107,7 +171,8 @@ def raptor_intervention_session(
             raise RaptorError(f"RAPTOR layer {layer} is outside model depth")
         vectors[layer] = torch.as_tensor(vector)
 
-    before: dict[int, Any] = {}
+    before: dict[int, tuple[Any, int, int, int]] = {}
+    forward_calls = {layer: 0 for layer in layers}
     observer_handles = []
     state = RaptorInterventionState()
     for layer in layers:
@@ -124,7 +189,14 @@ def raptor_intervention_session(
                 raise RaptorError(
                     "author RAPTOR hook uses .item(); scoring/generation batch must be 1"
                 )
-            before[layer_id] = hidden[:, -1, :].detach().clone()
+            forward_call = forward_calls[layer_id]
+            forward_calls[layer_id] += 1
+            before[layer_id] = (
+                hidden[:, -1, :].detach().clone(),
+                forward_call,
+                int(hidden.shape[0]),
+                int(hidden.shape[1]),
+            )
 
         observer_handles.append(blocks[layer].register_forward_hook(capture_before))
 
@@ -159,7 +231,9 @@ def raptor_intervention_session(
             direction: np.ndarray = unit[layer],
         ) -> None:
             hidden = hidden_from_block_output(output)
-            prior = before.pop(layer_id)
+            prior, forward_call, batch_size, sequence_length = before.pop(
+                layer_id
+            )
             current = hidden[:, -1, :].detach()
             delta = (current - prior).float()
             tensor_direction = torch.as_tensor(
@@ -172,6 +246,10 @@ def raptor_intervention_session(
             state.events.append(
                 {
                     "layer": layer_id,
+                    "forward_call": forward_call,
+                    "generation_step": forward_call,
+                    "batch_size": batch_size,
+                    "sequence_length": sequence_length,
                     "target_probability": float(target_probability),
                     "pre_intervention_logit": current_logit,
                     "pre_intervention_probability": float(

@@ -20,6 +20,7 @@ from jlens_workspace.concept_intervention.evaluation import (
 )
 from jlens_workspace.concept_intervention.generation import (
     GenerationSettings,
+    build_generation_contract,
     generate_full_grid,
     load_open_prompt_bank,
     validate_generation_artifacts,
@@ -53,10 +54,48 @@ def load_raptor_directions(
     concept_id: str,
 ) -> tuple[dict[int, np.ndarray], dict[str, Any]]:
     layers = load_selected_layers(selected_layers_path, concept_id)
+    root = Path(probes_dir)
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    selected_layers_sha256 = sha256_file(selected_layers_path)
+    if (
+        manifest.get("workflow") != "shared_raptor_probe_fitting"
+        or manifest.get("layer_selection_sha256") != selected_layers_sha256
+    ):
+        raise RaptorError(
+            f"RAPTOR probe manifest does not match layer selection: {manifest_path}"
+        )
+    row_manifest_path = (root / str(manifest["row_manifest"])).resolve()
+    row_manifest_sha256 = sha256_file(row_manifest_path)
+    if manifest.get("row_manifest_sha256") != row_manifest_sha256:
+        raise RaptorError(
+            f"RAPTOR probe row-manifest identity mismatch: {row_manifest_path}"
+        )
+    authoritative: dict[tuple[int, str], Mapping[str, Any]] = {}
+    for row in manifest.get("probes", []):
+        identity = (int(row["layer"]), str(row["concept_id"]))
+        if identity in authoritative:
+            raise RaptorError(f"duplicate RAPTOR probe identity: {identity}")
+        authoritative[identity] = row
     directions: dict[int, np.ndarray] = {}
     entries = []
     for layer in layers:
-        path = _probe_path(Path(probes_dir), layer, concept_id)
+        path = _probe_path(root, layer, concept_id)
+        registered = authoritative.get((layer, concept_id))
+        if registered is None:
+            raise RaptorError(
+                f"RAPTOR probe is absent from shared manifest: {layer}/{concept_id}"
+            )
+        registered_path = root / str(registered["vector_file"])
+        if registered_path.resolve() != path.resolve():
+            raise RaptorError(
+                f"RAPTOR probe path differs from shared manifest: {path}"
+            )
+        observed_hash = sha256_file(path)
+        if registered.get("vector_sha256") != observed_hash:
+            raise RaptorError(
+                f"RAPTOR probe hash differs from shared manifest: {path}"
+            )
         vector = np.asarray(np.load(path, allow_pickle=False), dtype=np.float64)
         norm = float(np.linalg.norm(vector))
         if vector.ndim != 1 or not np.isfinite(vector).all() or norm <= 0:
@@ -66,7 +105,7 @@ def load_raptor_directions(
             {
                 "layer": layer,
                 "probe_vector": str(path),
-                "probe_vector_sha256": sha256_file(path),
+                "probe_vector_sha256": observed_hash,
                 "source_norm": norm,
                 "steering_norm": 1.0,
             }
@@ -74,7 +113,11 @@ def load_raptor_directions(
     return directions, {
         "selected_layers": list(layers),
         "selected_layers_path": str(selected_layers_path),
-        "selected_layers_sha256": sha256_file(selected_layers_path),
+        "selected_layers_sha256": selected_layers_sha256,
+        "row_manifest": str(row_manifest_path),
+        "row_manifest_sha256": row_manifest_sha256,
+        "probe_manifest": str(manifest_path),
+        "probe_manifest_sha256": sha256_file(manifest_path),
         "directions": entries,
         "bias": 0.0,
         "bias_provenance": (
@@ -235,6 +278,7 @@ def run_raptor_intervention(
     ]
     candidate_ids = candidate_token_ids(tokenizer, config.candidate_labels)
     settings = _settings(config.generation)
+    generation_contract = build_generation_contract(all_prompts, settings)
     scores: list[dict[str, Any]] = []
     generations: list[dict[str, Any]] = []
 
@@ -315,6 +359,7 @@ def run_raptor_intervention(
         ),
         "generation_rows": len(generations),
         "generation_files": generation_files,
+        "generation_contract": generation_contract,
         "upstream": {
             "repository": RAPTOR_REPOSITORY,
             "commit": RAPTOR_COMMIT,
@@ -367,7 +412,9 @@ def rebuild_raptor_index(
                         f"RAPTOR candidate-score identity mismatch: {candidate_path}"
                     )
                 validate_generation_artifacts(
-                    shard.parent, shard_payload["generation_files"]
+                    shard.parent,
+                    shard_payload["generation_files"],
+                    contract=shard_payload["generation_contract"],
                 )
             indices = {row.get("grid_index") for row in shard_payloads}
             if (
@@ -402,6 +449,7 @@ def rebuild_raptor_index(
                 "source_provenance": first["source_provenance"],
                 "upstream": first["upstream"],
                 "generation_artifacts_sharded": True,
+                "generation_contract": first["generation_contract"],
                 "grid_size": expected_grid_size,
                 "shards": [
                     {

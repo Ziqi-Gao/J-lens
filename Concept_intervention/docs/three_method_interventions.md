@@ -14,7 +14,9 @@ will cite these artifact roots directly:
 | Final comparison | `intervention_comparison` |
 
 Earlier versioned runs and YAML files are historical artifacts and are not
-overwritten.
+overwritten. These stable names are intentional (there is no `_v1` suffix);
+their writers are fail-closed and do not silently replace an existing
+scientific shard.
 
 ## Common model, data, rows, layers, and prompts
 
@@ -43,7 +45,10 @@ selection and `classify_*` and `report_*` for held-out direct evaluation. An
 additional frozen bank has 16 validation and 16 test neutral open-ended
 prompts. Every grid point saves greedy generation plus samples with seeds
 `[1001,2002,3003]`, 128 new tokens, temperature 0.75, top-p 0.95, repetition
-penalty 1.1, and no-repeat-ngram size 3.
+penalty 1.1, and no-repeat-ngram size 3. The prompt-bank content hashes,
+ordered prompt-ID hash, expected prompt count, and expected row count are
+frozen in the run manifest and checked against every shard's generation
+contract.
 
 ## Independent method implementations
 
@@ -52,6 +57,8 @@ penalty 1.1, and no-repeat-ngram size 3.
 The official Jacobian-lens implementation is pinned at
 `581d398613e5602a5af361e1c34d3a92ea82ba8e`. It refits float32 maps from every
 candidate source layer to target layer 31 using the same 1,000 prompt IDs.
+Preflight reads the installed package's PEP 610 provenance and requires its
+observed VCS commit to equal this pin.
 
 Each layer's newly fitted shared concept vector is decomposed over
 RMSNorm-weighted unit J-token directions with standard non-negative Gradient
@@ -75,14 +82,21 @@ retain the author implementation.
 `ITI-native` uses the author's global accuracy ranking. `ITI-layer-matched`
 places the best head from each shared selected layer first and then resumes the
 global ranking, ensuring all six layers are represented. Probe-weight and five
-original-style random controls are sensitivities.
+original-style random controls are sensitivities. Native random controls keep
+the author's seeded global permutation exactly. Layer-matched random controls
+start from that same seeded permutation, move its first encountered head from
+each selected layer to the prefix while preserving encounter order, and then
+resume the remaining permutation. Thus the K=8 layer-matched controls cover all
+six layers without changing the native control definition.
 
 ### RAPTOR
 
 RAPTOR is used from an external checkout pinned at
 `Ziqi-Gao/RAPTOR@cf7405899174af39f3970e093e4b86bf0972ff87`. The upstream root
 does not provide a license, so its source is neither copied nor vendored.
-Preflight verifies the checkout commit. Shared probe fitting directly calls
+Preflight verifies the checkout commit and directly checks the pinned
+`compute_adaptive_epsilon` on steering and no-steering cases against the
+registered formula. Shared probe fitting directly calls
 the author's `raptor.probes.tuning.tune_raptor_c` inside every group-safe
 training fold, then aggregates fold accuracies without exposing the registered
 validation split. Runtime directly calls the author's
@@ -105,8 +119,15 @@ Generation is sharded by concept and scientific grid point:
 Each shard contains candidate scores, full generations, method-blind
 generations, a private blind-ID map, token IDs, text, per-token log
 probabilities, direction/head/K metadata, and per-forward injection telemetry.
-Method indexes reject missing or duplicated grid indices, inconsistent layer
-sets, and inconsistent zero-strength outputs.
+Telemetry contains the generation/forward step, layer, sequence shape, dynamic
+strength or epsilon, per-event injected norm, per-layer accumulated norm, and
+explicit total injected norm. Method indexes reject missing or duplicated grid
+indices, empty or cardinality-mismatched generation files, duplicate IDs,
+incomplete token/logprob records, malformed telemetry, inconsistent layer
+sets, and non-identical zero-strength token IDs, text, or per-token log
+probabilities. The final comparison additionally requires the J full/zero,
+RAPTOR no-hook, and ITI native/zero outputs and candidate log probabilities to
+agree.
 
 No LLM-as-judge is called. Direct outputs are target log probability,
 candidate-normalized probability, target margin, rank, and off-target
@@ -139,10 +160,12 @@ J/ITI/RAPTOR smoke -> hash/identity smoke gate
                      -> submit full grid arrays -> method indexes -> comparison index
 ```
 
-An `afterok` CPU gate first validates the registered smoke conditions and all
-score/generation hashes, writes `intervention_comparison/smoke_gate.json`, and
-only then submits the exhaustive arrays. Thus the full jobs are not submitted
-before the GPU smokes have actually passed. The experiment is complete only when
-`artifacts/concept_intervention/intervention_comparison/index.json` exists and
-contains `"complete": true`. Pending jobs, launchers, or partial method
-directories are not experimental results.
+An `afterok` CPU gate first validates the registered smoke conditions and the
+full prompt-by-decoding generation contract (not only file hashes), writes
+`intervention_comparison/smoke_gate.json`, and only then submits the exhaustive
+arrays. Thus the full jobs are not submitted before the GPU smokes have
+actually passed. The experiment is complete only when
+`artifacts/concept_intervention/intervention_comparison/index.json` exists,
+contains `"complete": true`, and was produced after all prompt, row-manifest,
+probe, layer, zero-output, and telemetry checks. Pending jobs, launchers, or
+partial method directories are not experimental results.

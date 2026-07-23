@@ -22,8 +22,10 @@ from jlens_workspace.concept_intervention.evaluation import (
 )
 from jlens_workspace.concept_intervention.generation import (
     GenerationSettings,
+    build_generation_contract,
     generate_full_grid,
     load_open_prompt_bank,
+    validate_equivalent_generation_outputs,
     validate_generation_artifacts,
     write_generation_artifacts,
 )
@@ -144,6 +146,16 @@ def load_multilayer_directions(
     """Load per-layer full/J/non-J/random directions at replicate-median K."""
 
     layers = load_selected_layers(selected_layers_path, concept_id)
+    selection_path = Path(selected_layers_path)
+    selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    row_manifest_path = (
+        selection_path.parent / str(selection["row_manifest"])
+    ).resolve()
+    row_manifest_sha256 = sha256_file(row_manifest_path)
+    if selection.get("row_manifest_sha256") != row_manifest_sha256:
+        raise MultiLayerJError(
+            f"shared row-manifest identity mismatch: {row_manifest_path}"
+        )
     directions: dict[str, dict[int, np.ndarray]] = {
         "full": {},
         "j": {},
@@ -210,6 +222,8 @@ def load_multilayer_directions(
         "selected_layers": list(layers),
         "selected_layers_path": str(selected_layers_path),
         "selected_layers_sha256": sha256_file(selected_layers_path),
+        "row_manifest": str(row_manifest_path),
+        "row_manifest_sha256": row_manifest_sha256,
         "layer_k": provenance,
     }
 
@@ -407,6 +421,7 @@ def run_multilayer_j_intervention(
         ),
     ]
     settings = _settings(config.generation)
+    generation_contract = build_generation_contract(all_prompts, settings)
     for condition_id, strength in selected_grid:
         layer_directions = directions[condition_id]
         condition = (
@@ -515,6 +530,7 @@ def run_multilayer_j_intervention(
         ),
         "generation_rows": len(generation_rows),
         "generation_files": generation_files,
+        "generation_contract": generation_contract,
         "llm_as_judge_run": False,
     }
     atomic_write_json(destination / "summary.json", summary_payload)
@@ -558,7 +574,9 @@ def rebuild_multilayer_j_index(
                         f"J candidate-score identity mismatch: {candidate_path}"
                     )
                 validate_generation_artifacts(
-                    shard.parent, shard_payload["generation_files"]
+                    shard.parent,
+                    shard_payload["generation_files"],
+                    contract=shard_payload["generation_contract"],
                 )
             indices = {row.get("grid_index") for row in shard_payloads}
             if (
@@ -580,11 +598,13 @@ def rebuild_multilayer_j_index(
                     f"{concept_id}: J shards used different selected layers"
                 )
             zero_by_prompt: dict[str, list[float]] = defaultdict(list)
+            zero_generation_paths: list[Path] = []
             for shard, shard_payload in zip(
                 shard_paths, shard_payloads, strict=True
             ):
                 if float(shard_payload["grid_condition"]["strength"]) != 0.0:
                     continue
+                zero_generation_paths.append(shard.parent / "generations.jsonl")
                 with (shard.parent / "candidate_scores.jsonl").open(
                     encoding="utf-8"
                 ) as handle:
@@ -600,6 +620,9 @@ def rebuild_multilayer_j_index(
                 raise MultiLayerJError(
                     f"{concept_id}: zero-strength J shards differ by {zero_spread}"
                 )
+            zero_generation_consistency = validate_equivalent_generation_outputs(
+                zero_generation_paths
+            )
             first = shard_payloads[0]
             payload = {
                 "schema_version": 1,
@@ -613,7 +636,9 @@ def rebuild_multilayer_j_index(
                 "strengths": list(strengths),
                 "source_provenance": first["source_provenance"],
                 "zero_strength_max_logprob_spread": zero_spread,
+                "zero_generation_consistency": zero_generation_consistency,
                 "generation_artifacts_sharded": True,
+                "generation_contract": first["generation_contract"],
                 "grid_size": expected_grid_size,
                 "shards": [
                     {

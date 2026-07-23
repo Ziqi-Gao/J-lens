@@ -437,6 +437,37 @@ def layer_matched_head_order(
     )
 
 
+def layer_matched_random_head_order(
+    native_random_order: np.ndarray,
+    *,
+    num_layers: int,
+    num_heads: int,
+) -> np.ndarray:
+    """Adapt an original ITI random permutation to cover every layer first."""
+
+    order = np.asarray(native_random_order, dtype=np.int64)
+    total_heads = num_layers * num_heads
+    if (
+        order.shape != (total_heads,)
+        or sorted(order.tolist()) != list(range(total_heads))
+    ):
+        raise ITIError("random head order must be a complete head permutation")
+    mandatory: list[int] = []
+    covered_layers: set[int] = set()
+    for value in order:
+        layer = int(value) // num_heads
+        if layer not in covered_layers:
+            covered_layers.add(layer)
+            mandatory.append(int(value))
+        if len(mandatory) == num_layers:
+            break
+    selected = set(mandatory)
+    return np.asarray(
+        [*mandatory, *[int(value) for value in order if int(value) not in selected]],
+        dtype=np.int64,
+    )
+
+
 def fit_iti_concept_directions(
     *,
     activation_dir: str | Path,
@@ -802,48 +833,63 @@ def fit_shared_iti_concept_directions(
             files[mode] = filename
         variant_files[variant] = files
 
-    random_files: dict[str, str] = {}
+    random_files: dict[str, dict[str, str]] = {
+        variant: {} for variant in selected_variants
+    }
     original_random_state = np.random.get_state()
     try:
         for random_seed in random_seeds:
-            np.random.seed(int(random_seed))
-            random_flat = np.random.choice(
-                total_heads, total_heads, replace=False
-            )[:max_top_k]
-            random_heads = [
-                (int(value) // num_heads, int(value) % num_heads)
-                for value in random_flat
-            ]
-            random_fitted = get_interventions_dict(
-                random_heads,
-                probes,
-                activations,
-                num_heads,
-                False,
-                True,
-                None,
-                head_dim=head_dim,
-            )
-            random_rows = _flatten_interventions(
-                random_fitted,
-                actual_layers=layers,
-                accuracies=accuracies,
-                num_heads=num_heads,
-            )
-            random_rank = {
-                (int(value) // num_heads, int(value) % num_heads): rank
-                for rank, value in enumerate(random_flat)
-            }
-            random_rows.sort(
-                key=lambda row: random_rank[
-                    (layers.index(int(row["layer"])), int(row["head"]))
+            for variant in selected_variants:
+                # Reset for each variant. The native branch therefore retains
+                # the author's exact seeded random permutation/direction path.
+                np.random.seed(int(random_seed))
+                native_order = np.random.choice(
+                    total_heads, total_heads, replace=False
+                )
+                order = (
+                    native_order
+                    if variant == "native"
+                    else layer_matched_random_head_order(
+                        native_order,
+                        num_layers=len(layers),
+                        num_heads=num_heads,
+                    )
+                )
+                selected_order = order[:max_top_k]
+                random_heads = [
+                    (int(value) // num_heads, int(value) % num_heads)
+                    for value in selected_order
                 ]
-            )
-            for rank, row in enumerate(random_rows):
-                row["rank"] = rank
-            filename = f"random_{int(random_seed)}.npz"
-            _save_shift_rows(destination / filename, random_rows)
-            random_files[str(int(random_seed))] = filename
+                random_fitted = get_interventions_dict(
+                    random_heads,
+                    probes,
+                    activations,
+                    num_heads,
+                    False,
+                    True,
+                    None,
+                    head_dim=head_dim,
+                )
+                random_rows = _flatten_interventions(
+                    random_fitted,
+                    actual_layers=layers,
+                    accuracies=accuracies,
+                    num_heads=num_heads,
+                )
+                random_rank = {
+                    (int(value) // num_heads, int(value) % num_heads): rank
+                    for rank, value in enumerate(selected_order)
+                }
+                random_rows.sort(
+                    key=lambda row: random_rank[
+                        (layers.index(int(row["layer"])), int(row["head"]))
+                    ]
+                )
+                for rank, row in enumerate(random_rows):
+                    row["rank"] = rank
+                filename = f"random_{variant}_{int(random_seed)}.npz"
+                _save_shift_rows(destination / filename, random_rows)
+                random_files[variant][str(int(random_seed))] = filename
     finally:
         np.random.set_state(original_random_state)
 
@@ -884,6 +930,15 @@ def fit_shared_iti_concept_directions(
             "layer_matched_adaptation": (
                 "best head from each shared layer first, then original global order"
             ),
+            "native_random_control": (
+                "original seeded random head permutation and author random "
+                "direction construction"
+            ),
+            "layer_matched_random_control": (
+                "same seeded native permutation, reordered so its first "
+                "encountered head from every shared layer precedes the "
+                "remaining native order; author random direction construction"
+            ),
         },
     }
     atomic_write_json(destination / "metrics.json", metrics)
@@ -906,9 +961,20 @@ def load_iti_head_shifts(
     if mode == "random":
         if random_seed is None:
             raise ITIError("random ITI shifts require a seed")
-        filename = metrics["files"]["random"].get(str(int(random_seed)))
+        random_files = metrics["files"]["random"]
+        if (
+            metrics.get("method") == ITI_METHOD_UNVERSIONED
+            and variant is not None
+            and isinstance(random_files.get(variant), dict)
+        ):
+            filename = random_files[variant].get(str(int(random_seed)))
+        else:
+            filename = random_files.get(str(int(random_seed)))
         if filename is None:
-            raise ITIError(f"random seed absent from ITI artifact: {random_seed}")
+            raise ITIError(
+                f"random seed/variant absent from ITI artifact: "
+                f"{random_seed}/{variant}"
+            )
     elif mode in {"mass_mean", "probe_weight"}:
         if variant is None:
             filename = metrics["files"][mode]
@@ -974,6 +1040,7 @@ def iti_intervention_session(
     }
     handles = []
     state = ITIInterventionState(events=[])
+    forward_calls = {layer: 0 for layer in vectors}
     for layer, vector in vectors.items():
         spec = specs[layer]
 
@@ -995,10 +1062,17 @@ def iti_intervention_session(
             changed = last_token_modulated_vector_add(
                 inputs[0], tensor_direction, multiplier
             )
+            forward_call = forward_calls[layer_id]
+            forward_calls[layer_id] += 1
             state.events.append(
                 {
                     "layer": int(layer_id),
+                    "forward_call": forward_call,
+                    "generation_step": forward_call,
+                    "batch_size": int(inputs[0].shape[0]),
+                    "sequence_length": int(inputs[0].shape[1]),
                     "active_positions": int(inputs[0].shape[0]),
+                    "multiplier": float(multiplier),
                     "injected_norm": abs(float(multiplier))
                     * float(np.linalg.norm(direction)),
                 }

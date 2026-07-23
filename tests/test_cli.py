@@ -123,6 +123,34 @@ def test_top_level_help_succeeds(capsys: pytest.CaptureFixture[str]) -> None:
     assert "concept" in capsys.readouterr().out
 
 
+def test_installed_vcs_commit_reads_pep610_direct_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    distribution = SimpleNamespace(
+        read_text=lambda name: (
+            json.dumps(
+                {
+                    "vcs_info": {
+                        "commit_id": "581d398613e5602a5af361e1c34d3a92ea82ba8e"
+                    }
+                }
+            )
+            if name == "direct_url.json"
+            else None
+        )
+    )
+    monkeypatch.setattr(
+        cli.importlib.metadata,
+        "distribution",
+        lambda _name: distribution,
+    )
+
+    assert (
+        cli._installed_vcs_commit("jlens")
+        == "581d398613e5602a5af361e1c34d3a92ea82ba8e"
+    )
+
+
 def test_config_validate_is_json_and_torch_free(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

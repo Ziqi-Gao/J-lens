@@ -590,6 +590,14 @@ def run_shared_layer_selection(
             "layers": list(layers),
             "concept_ids": list(concepts),
             "probe_coordinate": "resid_post",
+            "layer_selection": "../layer_selection.json",
+            "layer_selection_sha256": sha256_file(
+                destination / "layer_selection.json"
+            ),
+            "row_manifest": "../row_manifest.json",
+            "row_manifest_sha256": sha256_file(
+                destination / "row_manifest.json"
+            ),
             "selection": {
                 "C_grid": [float(value) for value in c_grid],
                 "cv_folds": cv_folds,

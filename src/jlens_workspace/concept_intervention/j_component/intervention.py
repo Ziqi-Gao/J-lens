@@ -66,7 +66,13 @@ class ResidualIntervention:
             self.events.append(
                 {
                     "forward_call": self._calls - 1,
+                    "generation_step": self._calls - 1,
+                    "batch_size": int(hidden.shape[0]),
+                    "sequence_length": int(hidden.shape[1]),
                     "active_positions": int(mask.sum()),
+                    "strength": float(self.strength),
+                    "residual_norm": float(self.residual_norm),
+                    "kind": self.kind,
                     "injected_norm": 0.0,
                 }
             )
@@ -89,7 +95,13 @@ class ResidualIntervention:
         self.events.append(
             {
                 "forward_call": self._calls - 1,
+                "generation_step": self._calls - 1,
+                "batch_size": int(hidden.shape[0]),
+                "sequence_length": int(hidden.shape[1]),
                 "active_positions": int(mask.sum()),
+                "strength": float(self.strength),
+                "residual_norm": float(self.residual_norm),
+                "kind": self.kind,
                 "injected_norm": injected_norm,
             }
         )

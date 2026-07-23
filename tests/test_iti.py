@@ -18,6 +18,7 @@ from jlens_workspace.concept_intervention.iti import (
     fit_iti_concept_directions,
     iti_intervention_session,
     layer_matched_head_order,
+    layer_matched_random_head_order,
     load_iti_head_shifts,
 )
 
@@ -73,6 +74,29 @@ def test_layer_matched_order_covers_every_layer_before_global_remainder() -> Non
     assert order[:3].tolist() == [0, 4, 2]
     assert {int(value) // 2 for value in order[:3]} == {0, 1, 2}
     assert order[3:].tolist() == [1, 5, 3]
+
+
+@pytest.mark.parametrize("seed", [101, 202, 303, 404, 505])
+def test_layer_matched_random_order_covers_all_layers_at_k8(seed: int) -> None:
+    np.random.seed(seed)
+    native_order = np.random.choice(96, 96, replace=False)
+
+    order = layer_matched_random_head_order(
+        native_order,
+        num_layers=6,
+        num_heads=16,
+    )
+
+    assert len(set((order[:8] // 16).tolist())) == 6
+    first_by_native_encounter = []
+    seen_layers = set()
+    for value in native_order:
+        layer = int(value) // 16
+        if layer not in seen_layers:
+            seen_layers.add(layer)
+            first_by_native_encounter.append(int(value))
+    assert order[:6].tolist() == first_by_native_encounter
+    assert sorted(order.tolist()) == list(range(96))
 
 
 def test_fit_iti_uses_train_validation_only_and_writes_original_modes(
@@ -239,7 +263,7 @@ def test_iti_hook_changes_only_last_token_and_is_removed() -> None:
     source = torch.zeros((2, 4, 6))
     with iti_intervention_session(
         model, shifts=[shift], multiplier=3.0, num_heads=2, head_dim=3
-    ):
+    ) as state:
         projection(source)
         changed = projection.observed
     projection(source)
@@ -248,3 +272,15 @@ def test_iti_hook_changes_only_last_token_and_is_removed() -> None:
     expected[:, -1, 3] = 6.0
     torch.testing.assert_close(changed, expected)
     torch.testing.assert_close(restored, source)
+    assert state.events == [
+        {
+            "layer": 0,
+            "forward_call": 0,
+            "generation_step": 0,
+            "batch_size": 2,
+            "sequence_length": 4,
+            "active_positions": 2,
+            "multiplier": 3.0,
+            "injected_norm": pytest.approx(6.0),
+        }
+    ]

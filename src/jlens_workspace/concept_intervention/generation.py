@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass, is_dataclass
@@ -54,6 +55,50 @@ class GenerationSettings:
             raise InterventionGenerationError(
                 "temperature and top_p must define valid sampling"
             )
+
+
+def prompt_ids_sha256(prompt_ids: Sequence[str]) -> str:
+    """Hash an ordered prompt-ID sequence using the shared JSON convention."""
+
+    encoded = json.dumps(
+        [str(value) for value in prompt_ids],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def build_generation_contract(
+    prompts: Sequence[PromptRecord | OpenPromptRecord],
+    settings: GenerationSettings,
+) -> dict[str, Any]:
+    """Freeze the exact prompt-by-decoding cardinality for one grid shard."""
+
+    prompt_ids = [str(prompt.prompt_id) for prompt in prompts]
+    if not prompt_ids or len(set(prompt_ids)) != len(prompt_ids):
+        raise InterventionGenerationError(
+            "generation prompts must be non-empty with unique IDs"
+        )
+    return {
+        "schema_version": 1,
+        "prompt_ids": prompt_ids,
+        "prompt_ids_sha256": prompt_ids_sha256(prompt_ids),
+        "prompt_count": len(prompt_ids),
+        "candidate_prompt_ids": [
+            str(prompt.prompt_id)
+            for prompt in prompts
+            if isinstance(prompt, PromptRecord)
+        ],
+        "open_prompt_ids": [
+            str(prompt.prompt_id)
+            for prompt in prompts
+            if isinstance(prompt, OpenPromptRecord)
+        ],
+        "sample_seeds": list(settings.sample_seeds),
+        "decodings_per_prompt": 1 + len(settings.sample_seeds),
+        "expected_rows": len(prompt_ids) * (1 + len(settings.sample_seeds)),
+        "generation_settings": asdict(settings),
+    }
 
 
 def _format_chat(tokenizer: Any, text: str) -> str:
@@ -225,6 +270,11 @@ def generate_full_grid(
                 settings=settings,
             )
             generation_id = _identifier(identity, prefix="generation")
+            injected_by_layer: dict[str, float] = {}
+            for event in telemetry:
+                norm = float(event.get("injected_norm", 0.0))
+                layer = str(event.get("layer", "unscoped"))
+                injected_by_layer[layer] = injected_by_layer.get(layer, 0.0) + norm
             rows.append(
                 {
                     "generation_id": generation_id,
@@ -252,6 +302,8 @@ def generate_full_grid(
                         else None
                     ),
                     "telemetry": telemetry,
+                    "injected_norm_by_layer": injected_by_layer,
+                    "total_injected_norm": float(sum(injected_by_layer.values())),
                     "generation_settings": asdict(settings),
                 }
             )
@@ -302,9 +354,12 @@ def write_generation_artifacts(
 
 
 def validate_generation_artifacts(
-    output_dir: str | Path, files: Mapping[str, Any]
-) -> None:
-    """Fail closed when a generation or blind-export shard changed."""
+    output_dir: str | Path,
+    files: Mapping[str, Any],
+    *,
+    contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate hashes, cardinality, IDs, token logprobs, and blind alignment."""
 
     root = Path(output_dir)
     checks = (
@@ -318,3 +373,247 @@ def validate_generation_artifacts(
             raise InterventionGenerationError(
                 f"generation artifact identity mismatch: {path}"
             )
+    if int(contract.get("schema_version", -1)) != 1:
+        raise InterventionGenerationError("unsupported generation contract")
+    prompt_ids = [str(value) for value in contract.get("prompt_ids", [])]
+    sample_seeds = [int(value) for value in contract.get("sample_seeds", [])]
+    expected_rows = int(contract.get("expected_rows", -1))
+    if (
+        not prompt_ids
+        or len(set(prompt_ids)) != len(prompt_ids)
+        or int(contract.get("prompt_count", -1)) != len(prompt_ids)
+        or contract.get("prompt_ids_sha256") != prompt_ids_sha256(prompt_ids)
+        or not sample_seeds
+        or len(set(sample_seeds)) != len(sample_seeds)
+        or int(contract.get("decodings_per_prompt", -1))
+        != 1 + len(sample_seeds)
+        or expected_rows != len(prompt_ids) * (1 + len(sample_seeds))
+    ):
+        raise InterventionGenerationError("invalid generation contract cardinality")
+
+    def read_rows(filename: str) -> list[dict[str, Any]]:
+        with (root / filename).open(encoding="utf-8") as handle:
+            try:
+                return [
+                    json.loads(line)
+                    for line in handle
+                    if line.strip()
+                ]
+            except json.JSONDecodeError as error:
+                raise InterventionGenerationError(
+                    f"invalid generation JSONL: {root / filename}"
+                ) from error
+
+    generations = read_rows("generations.jsonl")
+    blind = read_rows("judge_blind_generations.jsonl")
+    mapping = read_rows("judge_blind_map.jsonl")
+    if {len(generations), len(blind), len(mapping)} != {expected_rows}:
+        raise InterventionGenerationError(
+            "generation artifact row count differs from prompt-by-decoding contract"
+        )
+
+    expected_keys = {
+        *[(prompt_id, "greedy", None) for prompt_id in prompt_ids],
+        *[
+            (prompt_id, "sample", seed)
+            for prompt_id in prompt_ids
+            for seed in sample_seeds
+        ],
+    }
+    observed_keys: set[tuple[str, str, int | None]] = set()
+    generation_ids: set[str] = set()
+    blind_ids: set[str] = set()
+    by_blind: dict[str, dict[str, Any]] = {}
+    expected_settings = json.dumps(
+        contract.get("generation_settings"), sort_keys=True
+    )
+    for row in generations:
+        seed = row.get("seed")
+        key = (
+            str(row.get("prompt_id")),
+            str(row.get("decoding")),
+            None if seed is None else int(seed),
+        )
+        if key in observed_keys:
+            raise InterventionGenerationError(f"duplicate generation key: {key}")
+        observed_keys.add(key)
+        generation_id = str(row.get("generation_id", ""))
+        blind_id = str(row.get("blind_id", ""))
+        if (
+            not generation_id
+            or generation_id in generation_ids
+            or not blind_id
+            or blind_id in blind_ids
+        ):
+            raise InterventionGenerationError("generation/blind IDs must be unique")
+        generation_ids.add(generation_id)
+        blind_ids.add(blind_id)
+        by_blind[blind_id] = row
+        token_ids = row.get("generated_token_ids")
+        token_logprobs = row.get("token_log_probabilities")
+        if (
+            not isinstance(token_ids, list)
+            or not token_ids
+            or any(not isinstance(value, int) for value in token_ids)
+            or not isinstance(token_logprobs, list)
+            or len(token_ids) != len(token_logprobs)
+            or any(
+                not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                for value in token_logprobs
+            )
+            or not isinstance(row.get("generated_text"), str)
+        ):
+            raise InterventionGenerationError(
+                f"incomplete token/logprob output for generation {generation_id}"
+            )
+        telemetry = row.get("telemetry")
+        injected_by_layer = row.get("injected_norm_by_layer")
+        total_injected_norm = row.get("total_injected_norm")
+        if (
+            not isinstance(telemetry, list)
+            or not isinstance(injected_by_layer, dict)
+            or any(
+                not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) < 0.0
+                for value in injected_by_layer.values()
+            )
+            or not isinstance(total_injected_norm, (int, float))
+            or not math.isfinite(float(total_injected_norm))
+            or float(total_injected_norm) < 0.0
+            or not math.isclose(
+                float(total_injected_norm),
+                sum(float(value) for value in injected_by_layer.values()),
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            )
+        ):
+            raise InterventionGenerationError(
+                f"incomplete injection telemetry for generation {generation_id}"
+            )
+        required_event_fields = {
+            "layer",
+            "forward_call",
+            "generation_step",
+            "batch_size",
+            "sequence_length",
+            "injected_norm",
+        }
+        for event in telemetry:
+            if (
+                not isinstance(event, Mapping)
+                or not required_event_fields.issubset(event)
+                or not math.isfinite(float(event["injected_norm"]))
+                or float(event["injected_norm"]) < 0.0
+            ):
+                raise InterventionGenerationError(
+                    f"malformed per-forward telemetry for generation {generation_id}"
+                )
+        if (
+            json.dumps(row.get("generation_settings"), sort_keys=True)
+            != expected_settings
+        ):
+            raise InterventionGenerationError(
+                f"generation settings differ for {generation_id}"
+            )
+    if observed_keys != expected_keys:
+        raise InterventionGenerationError(
+            "generation prompt/decoding IDs differ from the contract"
+        )
+
+    blind_by_id = {str(row.get("blind_id", "")): row for row in blind}
+    map_by_id = {str(row.get("blind_id", "")): row for row in mapping}
+    if (
+        len(blind_by_id) != expected_rows
+        or len(map_by_id) != expected_rows
+        or set(blind_by_id) != blind_ids
+        or set(map_by_id) != blind_ids
+    ):
+        raise InterventionGenerationError(
+            "blind export/map IDs do not align with full generations"
+        )
+    for blind_id, full in by_blind.items():
+        public = blind_by_id[blind_id]
+        private = map_by_id[blind_id]
+        if (
+            public.get("prompt_id") != full.get("prompt_id")
+            or public.get("decoding") != full.get("decoding")
+            or public.get("generated_text") != full.get("generated_text")
+            or private.get("generation_id") != full.get("generation_id")
+            or private.get("method") != full.get("method")
+            or private.get("concept_id") != full.get("concept_id")
+            or private.get("condition_id") != full.get("condition_id")
+            or private.get("grid_point") != full.get("grid_point")
+        ):
+            raise InterventionGenerationError(
+                f"blind export alignment mismatch for {blind_id}"
+            )
+    return {
+        "rows": expected_rows,
+        "prompt_count": len(prompt_ids),
+        "decodings_per_prompt": 1 + len(sample_seeds),
+        "unique_generation_ids": len(generation_ids),
+        "unique_blind_ids": len(blind_ids),
+    }
+
+
+def validate_equivalent_generation_outputs(
+    paths: Sequence[str | Path],
+) -> dict[str, Any]:
+    """Require zero/no-hook generations to match token-for-token."""
+
+    sources = [Path(path) for path in paths]
+    if len(sources) < 2:
+        raise InterventionGenerationError(
+            "generation equivalence requires at least two artifacts"
+        )
+    reference: dict[tuple[str, str, int | None], str] | None = None
+    for source in sources:
+        rows: dict[tuple[str, str, int | None], str] = {}
+        with source.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                seed = row.get("seed")
+                key = (
+                    str(row["prompt_id"]),
+                    str(row["decoding"]),
+                    None if seed is None else int(seed),
+                )
+                if key in rows:
+                    raise InterventionGenerationError(
+                        f"duplicate generation key in {source}: {key}"
+                    )
+                rows[key] = json.dumps(
+                    {
+                        "generated_token_ids": row["generated_token_ids"],
+                        "generated_text": row["generated_text"],
+                        "token_log_probabilities": row[
+                            "token_log_probabilities"
+                        ],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+        if not rows:
+            raise InterventionGenerationError(
+                f"generation equivalence artifact is empty: {source}"
+            )
+        if reference is None:
+            reference = rows
+        elif rows != reference:
+            raise InterventionGenerationError(
+                f"zero/no-hook generation outputs differ: {source}"
+            )
+    assert reference is not None
+    digest = hashlib.sha256()
+    for key, value in sorted(reference.items(), key=lambda item: str(item[0])):
+        digest.update(repr(key).encode())
+        digest.update(value.encode())
+    return {
+        "artifact_count": len(sources),
+        "rows_per_artifact": len(reference),
+        "content_sha256": digest.hexdigest(),
+    }
