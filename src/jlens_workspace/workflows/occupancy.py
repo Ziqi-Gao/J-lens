@@ -51,6 +51,7 @@ SIGN_LABELS = {"+": "pos", "-": "neg"}
 OCCUPANCY_METHODS = (
     "concept_occupancy_method_v1",
     "concept_occupancy_method_v2",
+    "concept_occupancy_method",
 )
 
 

@@ -30,6 +30,10 @@ Two versioned active-support coefficient solvers are provided:
   support-local Lipschitz step. It is the documented-method reproduction used
   by v2 because the Workspace paper names Gradient Pursuit but does not release
   its sparse-decomposition implementation.
+- ``nonnegative_gradient_pursuit_standard`` performs the standard Gradient
+  Pursuit one-dimensional optimal update along the active-support gradient,
+  followed by a non-negative projection.  It does not solve active-support
+  NNLS and is the primary solver for the unversioned intervention experiments.
 
 Neither name claims a globally exact solution of the non-convex L0 problem.
 ``full-vocabulary`` means only that atom selection re-scans every token row at
@@ -49,7 +53,11 @@ FloatArray = NDArray[np.float64]
 IntArray = NDArray[np.int64]
 
 SELECTION_MODES = ("positive_cosine", "raw_positive_dot")
-SOLVER_METHODS = ("nnomp_nnls_v1", "nonnegative_gradient_pursuit_v2")
+SOLVER_METHODS = (
+    "nnomp_nnls_v1",
+    "nonnegative_gradient_pursuit_v2",
+    "nonnegative_gradient_pursuit_standard",
+)
 SOLVER_METHOD = SOLVER_METHODS[0]
 
 # Guard for the mathematically guaranteed monotonicity of NNLS-over-superset;
@@ -183,6 +191,30 @@ def _refit_coefficients(
             tolerance=gradient_tolerance,
             max_iterations=gradient_max_iterations,
         )
+    if solver_method == "nonnegative_gradient_pursuit_standard":
+        support_size = int(atoms.shape[0])
+        if previous is None:
+            coefficients = np.zeros(support_size, dtype=np.float64)
+        else:
+            prior = np.asarray(previous, dtype=np.float64)
+            if prior.shape != (support_size - 1,):
+                raise PursuitSolverError(
+                    "standard gradient-pursuit warm start shape mismatch"
+                )
+            coefficients = np.concatenate(
+                (prior, np.zeros(1, dtype=np.float64))
+            )
+        residual = target - coefficients @ atoms
+        gradient = atoms @ residual
+        reconstruction_direction = gradient @ atoms
+        denominator = float(reconstruction_direction @ reconstruction_direction)
+        numerator = float(gradient @ gradient)
+        if denominator <= 0.0 or not np.isfinite(denominator):
+            return coefficients
+        step_size = numerator / denominator
+        if not np.isfinite(step_size) or step_size < 0.0:
+            raise PursuitSolverError("standard gradient-pursuit step is invalid")
+        return np.maximum(0.0, coefficients + step_size * gradient)
     raise PursuitSolverError(f"unknown solver method {solver_method!r}")
 
 

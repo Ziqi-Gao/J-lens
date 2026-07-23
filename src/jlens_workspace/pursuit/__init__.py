@@ -11,6 +11,7 @@ from .dictionaries import (
     DictionaryError,
     MatchedNormRandomDictionary,
     TokenFrameDictionary,
+    UnitNormDictionary,
     build_token_frame_dictionary,
 )
 from .occupancy import (
@@ -37,6 +38,7 @@ __all__ = [
     "PursuitResult",
     "PursuitSolverError",
     "TokenFrameDictionary",
+    "UnitNormDictionary",
     "absolute_threshold_ks",
     "build_token_frame_dictionary",
     "crossing_k",

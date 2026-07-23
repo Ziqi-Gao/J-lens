@@ -20,6 +20,9 @@ import numpy as np
 
 from jlens_workspace.activations import load_activation_layer
 from jlens_workspace.artifacts import atomic_write_json, sha256_file
+from jlens_workspace.concept_intervention.shared_protocol import (
+    load_balanced_indices,
+)
 from jlens_workspace.probes import fit_fixed_logistic_direction
 from jlens_workspace.workflows.concept import (
     _concept_labels,
@@ -112,6 +115,7 @@ def build_probe_bootstrap_replicates(
     standardize: bool = True,
     class_weight: str | None = "balanced",
     max_iter: int = 5_000,
+    row_manifest_path: str | Path | None = None,
     overwrite: bool = False,
 ) -> dict[str, object]:
     """Fit fixed-C group-bootstrap directions and write an immutable manifest."""
@@ -154,10 +158,20 @@ def build_probe_bootstrap_replicates(
                 )
             chosen_c = float(primary["chosen_C"])
             labels = _concept_labels(artifact, concept_id)
-            split_indices = _indices_by_split(artifact, concept_id)
-            fit_indices = np.concatenate(
-                (split_indices["train"], split_indices["validation"])
-            )
+            if row_manifest_path is None:
+                split_indices = _indices_by_split(artifact, concept_id)
+                fit_indices = np.concatenate(
+                    (split_indices["train"], split_indices["validation"])
+                )
+            else:
+                fit_indices = np.concatenate(
+                    [
+                        load_balanced_indices(
+                            row_manifest_path, concept_id, split
+                        )
+                        for split in ("train", "validation")
+                    ]
+                )
             fit_groups = np.asarray(_groups(artifact.rows, fit_indices), dtype=object)
             fit_labels = np.asarray(labels[fit_indices], dtype=np.int64)
             fit_activations = activations[fit_indices]
@@ -197,6 +211,7 @@ def build_probe_bootstrap_replicates(
                     class_weight=class_weight,
                     random_state=seed,
                     max_iter=max_iter,
+                    solver=str(primary.get("solver", "liblinear")),
                 )
                 _atomic_save_npy(vector_path, fitted.coef_raw)
                 vector_sha = sha256_file(vector_path)
@@ -212,9 +227,20 @@ def build_probe_bootstrap_replicates(
                     "bootstrap_stratified_by_label": True,
                     "fit_split": "train+validation",
                     "test_accessed": False,
+                    "row_manifest_path": (
+                        None
+                        if row_manifest_path is None
+                        else str(row_manifest_path)
+                    ),
+                    "row_manifest_sha256": (
+                        None
+                        if row_manifest_path is None
+                        else sha256_file(row_manifest_path)
+                    ),
                     "chosen_C_from_primary_train_cv": chosen_c,
                     "standardize": standardize,
                     "class_weight": class_weight,
+                    "solver": str(primary.get("solver", "liblinear")),
                     "activation_artifact_hash": artifact.artifact_hash,
                     "primary_probe_metrics": str(primary_path),
                     "positive_group_draws": int(
@@ -253,6 +279,12 @@ def build_probe_bootstrap_replicates(
         "replicate_ids": [f"bootstrap_{seed}" for seed in selected_seeds],
         "seeds": list(selected_seeds),
         "test_accessed": False,
+        "row_manifest_path": (
+            None if row_manifest_path is None else str(row_manifest_path)
+        ),
+        "row_manifest_sha256": (
+            None if row_manifest_path is None else sha256_file(row_manifest_path)
+        ),
         "entries": entries,
     }
     destination.mkdir(parents=True, exist_ok=True)

@@ -39,8 +39,11 @@ quality checks, and stability over seeds or prompt samples.
 The registered sparse-composition stage that measures how many J-directions
 are supported for each concept vector is documented in
 [`docs/concept_occupancy_v2.md`](docs/concept_occupancy_v2.md).
-The same-model, same-data ITI baseline and its held-out evaluation are
-registered in [`docs/iti_comparison_v1.md`](docs/iti_comparison_v1.md).
+The current same-model, same-data J-component/ITI/RAPTOR experiment is
+registered in
+[`docs/three_method_interventions.md`](docs/three_method_interventions.md).
+The earlier single-layer J/ITI protocol remains available as historical
+documentation in [`docs/iti_comparison_v1.md`](docs/iti_comparison_v1.md).
 
 ## Inputs
 
@@ -123,22 +126,21 @@ as the first argument to `run_qwen35_4b.sh`. Never point a rerun at an existing
 scientific output; copy the YAML and give it a new `experiment_name` and
 `output_dir`.
 
-The current formal run stops after probe/J-direction alignment. The
-generation-time hook exists in
-`jlens_workspace.concept_intervention.j_component`, but no
-intervention is run by this launcher; do not report alignment as causal
-steering evidence.
-
-The separate ITI comparison is submitted from an immutable checkout with:
+The legacy `run_qwen35_4b.sh` workflow stops after probe/J-direction alignment.
+It must not be reported as causal steering evidence. The current three-method
+experiment is submitted from an immutable checkout with:
 
 ```bash
-Concept_intervention/scripts/submit_qwen35_4b_iti_comparison_v1.sh
+Concept_intervention/scripts/submit_three_method_interventions.sh
 ```
 
-It reuses the pinned Qwen checkpoint, all 53,861 GoEmotions source rows, and
-the same candidate-label prompt bank as the J-component intervention. ITI K
-and alpha are selected on two prompt-template families and evaluated on two
-held-out families; no LLM judge is used for this controlled one-token task.
+It prepares one shared deterministic balanced-row manifest and selects six
+layers per concept from `[3,7,11,15,19,23,27]` using validation accuracy of
+RAPTOR-style probes. J-component, ITI, and RAPTOR then run in separate code
+paths over those same inputs. Every scientific grid point saves greedy output
+and three fixed-seed samples. A fail-closed gate submits the full arrays only
+after positive single-concept smoke shards for all methods succeed and their
+artifact hashes validate. No LLM judge is called.
 
 ## Outputs
 
@@ -157,14 +159,23 @@ include:
   CV/validation/test metrics and an activation-identity manifest;
 - `alignment/`: signed cosine-ranked token IDs/tokens, matched-norm orthogonal
   random controls, and exact probe/lens identities for semantic inspection;
-- `interventions/`: prompts, generations, strengths, target/off-target scores,
-  and matched controls when the intervention stage is run.
+- stable method roots `j_component_intervention/`, `iti_intervention/`, and
+  `raptor_intervention/`: grid shards with scores, token IDs, text, per-token
+  log probabilities, dynamic injection telemetry, and future blind-judge
+  exports;
+- `intervention_comparison/index.json`: the completion marker after all three
+  method indexes pass identity and completeness checks.
 
 Treat the config and each artifact's metadata/manifest as a unit. A probe or
 lens must never be reused after changing the model revision, tokenizer, BOS
 policy, hook coordinate, or coordinate-changing model wrapper.
 
 ## Recorded runs
+
+- [Three-method intervention protocol](docs/three_method_interventions.md)
+  defines the stable J-component, ITI, and RAPTOR artifact roots. Completion
+  requires `intervention_comparison/index.json`; launchers alone are not a
+  measured result.
 
 - [Qwen3.5-4B ITI comparison v1 protocol](docs/iti_comparison_v1.md) pins the
   original implementation commit, records the Qwen hybrid-attention adapter,

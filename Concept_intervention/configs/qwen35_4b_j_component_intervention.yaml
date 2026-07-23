@@ -1,0 +1,90 @@
+schema_version: 1
+direction: concept_intervention
+experiment_name: j_component_intervention
+output_dir: artifacts/concept_intervention/j_component_intervention
+seed: 42
+model:
+  model_id: Qwen/Qwen3.5-4B
+  revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  tokenizer_id: Qwen/Qwen3.5-4B
+  tokenizer_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  dtype: bfloat16
+  device: auto
+  trust_remote_code: false
+  force_bos: false
+dataset:
+  source: jsonl
+  path: artifacts/data/go_emotions_7concept_full_ovr_v2
+  dataset_id: google-research-datasets/go_emotions
+  revision: add492243ff905527e67aeb8b80c082af02207c3
+  allowlist_path: Concept_intervention/data/go_emotions_7concept_full_allowlist.json
+  streaming: false
+  min_per_label_per_split: 150
+  min_per_concept: 50000
+lens:
+  source: local
+  path_or_repo: artifacts/lenses/qwen35_4b_shared_intervention_protocol_fp32.pt
+  layers: [3, 7, 11, 15, 19, 23, 27]
+  n_fit_prompts: 1000
+  target_layer: 31
+  storage_dtype: float32
+activations:
+  layers: [3, 7, 11, 15, 19, 23, 27]
+  batch_size: 16
+  max_length: 256
+  share_examples_by_group: true
+  require_complete_concept_matrix: true
+probe:
+  penalty: l2
+  c_grid: [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+  cv_folds: 5
+  scoring: roc_auc
+  standardize: true
+  class_weight: balanced
+  max_iter: 5000
+  seed: 42
+alignment:
+  metric: cosine
+  convention: rmsnorm_weighted
+  top_k: 50
+  vocabulary_chunk_size: 4096
+  decompose: false
+  require_nonnegative: true
+j_component:
+  method: j_component_intervention
+  selected_layers_path: artifacts/concept_intervention/shared_intervention_protocol/selection/layer_selection.json
+  source_occupancy_dir: artifacts/concept_intervention/shared_intervention_protocol/j_occupancy
+  source_probes_dir: artifacts/concept_intervention/shared_intervention_protocol/selection/raptor_probes
+  source_activations_dir: artifacts/concept_intervention/shared_intervention_protocol/activations
+  concept_ids:
+    - "goemotions:admiration"
+    - "goemotions:approval"
+    - "goemotions:curiosity"
+    - "goemotions:disapproval"
+    - "goemotions:gratitude"
+    - "goemotions:love"
+    - "goemotions:optimism"
+  convention: rmsnorm_weighted
+  strengths: [-0.5, -0.25, -0.125, 0.0, 0.125, 0.25, 0.5]
+  random_control_seeds: [101, 202, 303, 404, 505]
+  probe_replicates: [primary, bootstrap_1101, bootstrap_2202, bootstrap_3303, bootstrap_4404]
+  k_max: 64
+  candidate_labels:
+    "goemotions:admiration": admiration
+    "goemotions:approval": approval
+    "goemotions:curiosity": curiosity
+    "goemotions:disapproval": rejection
+    "goemotions:gratitude": gratitude
+    "goemotions:love": love
+    "goemotions:optimism": optimism
+  generation:
+    candidate_prompts_path: Concept_intervention/data/concept_intervention_prompts_v2.json
+    open_prompts_path: Concept_intervention/data/open_intervention_prompts.json
+    greedy: true
+    sample_seeds: [1001, 2002, 3003]
+    max_new_tokens: 128
+    temperature: 0.75
+    top_p: 0.95
+    repetition_penalty: 1.1
+    no_repeat_ngram_size: 3
+  score_batch_size: 8

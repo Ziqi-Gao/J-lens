@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from jlens_workspace.modeling import (
@@ -28,6 +28,7 @@ class ResidualIntervention:
     position: PositionPolicy = "last_prompt_and_generated"
     residual_norm: float = 1.0
     _calls: int = 0
+    events: list[dict[str, Any]] = field(default_factory=list)
 
     def reset(self) -> None:
         self._calls = 0
@@ -62,6 +63,13 @@ class ResidualIntervention:
         mask = self._position_mask(hidden)
         self._calls += 1
         if not mask.any() or self.strength == 0:
+            self.events.append(
+                {
+                    "forward_call": self._calls - 1,
+                    "active_positions": int(mask.sum()),
+                    "injected_norm": 0.0,
+                }
+            )
             return output
         updated = hidden.clone()
         selected = updated[mask]
@@ -73,6 +81,18 @@ class ResidualIntervention:
         else:  # pragma: no cover - Literal plus runtime protection
             raise ValueError(f"unknown intervention kind: {self.kind}")
         updated[mask] = selected
+        injected_norm = (
+            abs(float(self.strength)) * float(self.residual_norm)
+            if self.kind == "addition"
+            else float(torch.linalg.vector_norm((updated - hidden).float()).item())
+        )
+        self.events.append(
+            {
+                "forward_call": self._calls - 1,
+                "active_positions": int(mask.sum()),
+                "injected_norm": injected_norm,
+            }
+        )
         return replace_hidden_in_block_output(output, updated)
 
 
@@ -99,6 +119,38 @@ def intervention_session(
         yield intervention
     finally:
         handle.remove()
+
+
+@contextmanager
+def multilayer_intervention_session(
+    model: Any,
+    *,
+    directions: dict[int, Any],
+    strength: float,
+    residual_norms: dict[int, float],
+    kind: InterventionKind = "addition",
+    position: PositionPolicy = "last_prompt_and_generated",
+) -> Iterator[dict[int, ResidualIntervention]]:
+    """Apply one independently normalized direction at every selected block."""
+
+    layers = tuple(sorted(directions))
+    if not layers or set(layers) != set(residual_norms):
+        raise ValueError("directions and residual_norms must share non-empty layers")
+    interventions: dict[int, ResidualIntervention] = {}
+    with ExitStack() as stack:
+        for layer in layers:
+            interventions[layer] = stack.enter_context(
+                intervention_session(
+                    model,
+                    layer,
+                    directions[layer],
+                    strength,
+                    kind=kind,
+                    position=position,
+                    residual_norm=residual_norms[layer],
+                )
+            )
+        yield interventions
 
 
 def generate_with_intervention(

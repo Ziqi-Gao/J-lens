@@ -39,11 +39,16 @@ from jlens_workspace.artifacts import (
     sha256_file,
     stable_hash,
 )
+from jlens_workspace.concept_intervention.shared_protocol import (
+    load_balanced_indices,
+    load_selected_layers,
+)
 from jlens_workspace.modeling import model_input_device, transformer_blocks
 
 HONEST_LLAMA_REPO = "https://github.com/likenneth/honest_llama"
 HONEST_LLAMA_COMMIT = "2c6b2179be7b5aa8f0a171688cf9e01b812ca327"
 ITI_METHOD = "honest_llama_mass_mean_qwen_full_attention_v1"
+ITI_METHOD_UNVERSIONED = "honest_llama_mass_mean_qwen_full_attention"
 
 FloatArray = NDArray[np.float64]
 
@@ -72,6 +77,13 @@ class ITIHeadShift:
     validation_accuracy: float
     direction: FloatArray
     projection_std: float
+
+
+@dataclass
+class ITIInterventionState:
+    """Telemetry collected without changing the original ITI vector addition."""
+
+    events: list[dict[str, Any]]
 
 
 def full_attention_head_specs(
@@ -401,6 +413,30 @@ def _save_shift_rows(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     )
 
 
+def layer_matched_head_order(
+    flat_accuracies: np.ndarray,
+    *,
+    num_layers: int,
+    num_heads: int,
+) -> np.ndarray:
+    """Place one best head per layer first, then preserve native global order."""
+
+    values = np.asarray(flat_accuracies, dtype=np.float64)
+    if values.shape != (num_layers * num_heads,):
+        raise ITIError("flat accuracies do not match layer/head layout")
+    global_order = np.argsort(-values, kind="stable")
+    mandatory: list[int] = []
+    for layer in range(num_layers):
+        start = layer * num_heads
+        mandatory.append(start + int(np.argmax(values[start : start + num_heads])))
+    mandatory.sort(key=lambda index: (-float(values[index]), int(index)))
+    selected = set(mandatory)
+    return np.asarray(
+        [*mandatory, *[int(value) for value in global_order if int(value) not in selected]],
+        dtype=np.int64,
+    )
+
+
 def fit_iti_concept_directions(
     *,
     activation_dir: str | Path,
@@ -622,6 +658,238 @@ def fit_iti_concept_directions(
     return metrics
 
 
+def fit_shared_iti_concept_directions(
+    *,
+    activation_dir: str | Path,
+    output_dir: str | Path,
+    concept_id: str,
+    selected_layers_path: str | Path,
+    row_manifest_path: str | Path,
+    max_top_k: int,
+    random_seeds: Sequence[int],
+    seed: int,
+    variants: Sequence[str] = ("native", "layer_matched"),
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Fit ITI on the shared rows/layers and persist both head-order variants."""
+
+    root = Path(activation_dir)
+    metadata = json.loads((root / "metadata.json").read_text(encoding="utf-8"))
+    if metadata.get("method") not in {ITI_METHOD, ITI_METHOD_UNVERSIONED}:
+        raise ITIError("unsupported ITI activation artifact")
+    captured_layers = tuple(int(value) for value in metadata["layers"])
+    layers = load_selected_layers(selected_layers_path, concept_id)
+    missing = sorted(set(layers) - set(captured_layers))
+    if missing:
+        raise ITIError(f"selected layers were not captured: {missing}")
+    num_heads = int(metadata["num_heads"])
+    head_dim = int(metadata["head_dim"])
+    total_heads = len(layers) * num_heads
+    if not 0 < max_top_k <= total_heads:
+        raise ITIError(f"max_top_k must lie in [1, {total_heads}]")
+    selected_variants = tuple(str(value) for value in variants)
+    if (
+        not selected_variants
+        or len(set(selected_variants)) != len(selected_variants)
+        or set(selected_variants) - {"native", "layer_matched"}
+    ):
+        raise ITIError("ITI variants must be unique native/layer_matched values")
+
+    concepts_payload = json.loads((root / "concepts.json").read_text(encoding="utf-8"))
+    concept_by_id = {
+        str(row["concept_id"]): row for row in concepts_payload["concepts"]
+    }
+    if concept_id not in concept_by_id:
+        raise ITIError(f"concept absent from ITI labels: {concept_id}")
+    column = int(concept_by_id[concept_id]["column"])
+    labels_matrix = np.load(root / "labels.npy", allow_pickle=False)
+    labels = np.asarray(labels_matrix[:, column], dtype=np.int8)
+    train_source = load_balanced_indices(row_manifest_path, concept_id, "train")
+    validation_source = load_balanced_indices(
+        row_manifest_path, concept_id, "validation"
+    )
+    source_indices = np.concatenate((train_source, validation_source))
+    activations = _gather_activations(root, layers, source_indices)
+    development_labels = labels[source_indices]
+    separated_activations = [
+        activations[index : index + 1] for index in range(len(activations))
+    ]
+    separated_labels = [
+        development_labels[index : index + 1]
+        for index in range(len(development_labels))
+    ]
+    train_idxs = np.arange(len(train_source), dtype=np.int64)
+    val_idxs = np.arange(len(train_source), len(source_indices), dtype=np.int64)
+    probes, flat_accuracies = train_probes(
+        seed,
+        train_idxs,
+        val_idxs,
+        separated_activations,
+        separated_labels,
+        num_layers=len(layers),
+        num_heads=num_heads,
+    )
+    accuracies = flat_accuracies.reshape(len(layers), num_heads)
+    com_directions = get_com_directions(
+        len(layers),
+        num_heads,
+        train_idxs,
+        val_idxs,
+        separated_activations,
+        separated_labels,
+    )
+    orders = {
+        "native": np.argsort(-flat_accuracies, kind="stable"),
+        "layer_matched": layer_matched_head_order(
+            flat_accuracies,
+            num_layers=len(layers),
+            num_heads=num_heads,
+        ),
+    }
+
+    destination = Path(output_dir) / quote(concept_id, safe="")
+    if destination.exists() and not overwrite:
+        metrics_path = destination / "metrics.json"
+        if metrics_path.is_file():
+            return json.loads(metrics_path.read_text(encoding="utf-8"))
+        raise FileExistsError(f"incomplete ITI direction artifact exists: {destination}")
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.mkdir(parents=True)
+    np.savez(
+        destination / "development_indices.npz",
+        train_source_indices=train_source,
+        validation_source_indices=validation_source,
+    )
+
+    variant_files: dict[str, dict[str, str]] = {}
+    for variant in selected_variants:
+        order = orders[variant][:max_top_k]
+        heads = [
+            (int(value) // num_heads, int(value) % num_heads) for value in order
+        ]
+        rank_order = {
+            (int(value) // num_heads, int(value) % num_heads): rank
+            for rank, value in enumerate(order)
+        }
+        files: dict[str, str] = {}
+        for mode, use_mass_mean in (("mass_mean", True), ("probe_weight", False)):
+            fitted = get_interventions_dict(
+                heads,
+                probes,
+                activations,
+                num_heads,
+                use_mass_mean,
+                False,
+                com_directions if use_mass_mean else None,
+                head_dim=head_dim,
+            )
+            shift_rows = _flatten_interventions(
+                fitted,
+                actual_layers=layers,
+                accuracies=accuracies,
+                num_heads=num_heads,
+            )
+            shift_rows.sort(
+                key=lambda row: rank_order[
+                    (layers.index(int(row["layer"])), int(row["head"]))
+                ]
+            )
+            for rank, row in enumerate(shift_rows):
+                row["rank"] = rank
+            filename = f"{mode}_{variant}.npz"
+            _save_shift_rows(destination / filename, shift_rows)
+            files[mode] = filename
+        variant_files[variant] = files
+
+    random_files: dict[str, str] = {}
+    original_random_state = np.random.get_state()
+    try:
+        for random_seed in random_seeds:
+            np.random.seed(int(random_seed))
+            random_flat = np.random.choice(
+                total_heads, total_heads, replace=False
+            )[:max_top_k]
+            random_heads = [
+                (int(value) // num_heads, int(value) % num_heads)
+                for value in random_flat
+            ]
+            random_fitted = get_interventions_dict(
+                random_heads,
+                probes,
+                activations,
+                num_heads,
+                False,
+                True,
+                None,
+                head_dim=head_dim,
+            )
+            random_rows = _flatten_interventions(
+                random_fitted,
+                actual_layers=layers,
+                accuracies=accuracies,
+                num_heads=num_heads,
+            )
+            random_rank = {
+                (int(value) // num_heads, int(value) % num_heads): rank
+                for rank, value in enumerate(random_flat)
+            }
+            random_rows.sort(
+                key=lambda row: random_rank[
+                    (layers.index(int(row["layer"])), int(row["head"]))
+                ]
+            )
+            for rank, row in enumerate(random_rows):
+                row["rank"] = rank
+            filename = f"random_{int(random_seed)}.npz"
+            _save_shift_rows(destination / filename, random_rows)
+            random_files[str(int(random_seed))] = filename
+    finally:
+        np.random.set_state(original_random_state)
+
+    metrics = {
+        "schema_version": 1,
+        "method": ITI_METHOD_UNVERSIONED,
+        "concept_id": concept_id,
+        "coordinate": "attention_head_output_pre_o_proj",
+        "captured_layers": list(captured_layers),
+        "layers": list(layers),
+        "num_heads": num_heads,
+        "head_dim": head_dim,
+        "max_top_k": max_top_k,
+        "variants": list(selected_variants),
+        "head_selection_metric": "validation_accuracy_on_shared_balanced_rows",
+        "train_examples": len(train_source),
+        "validation_examples": len(validation_source),
+        "test_examples_used": 0,
+        "files": {
+            "variants": variant_files,
+            "random": random_files,
+            "development_indices": "development_indices.npz",
+        },
+        "development_indices_sha256": sha256_file(
+            destination / "development_indices.npz"
+        ),
+        "activation_metadata_sha256": sha256_file(root / "metadata.json"),
+        "labels_sha256": sha256_file(root / "labels.npy"),
+        "selected_layers_path": str(selected_layers_path),
+        "selected_layers_sha256": sha256_file(selected_layers_path),
+        "row_manifest_path": str(row_manifest_path),
+        "row_manifest_sha256": sha256_file(row_manifest_path),
+        "upstream": {
+            "repository": HONEST_LLAMA_REPO,
+            "commit": HONEST_LLAMA_COMMIT,
+            "license": "MIT",
+            "native_variant": "original global validation-accuracy head ranking",
+            "layer_matched_adaptation": (
+                "best head from each shared layer first, then original global order"
+            ),
+        },
+    }
+    atomic_write_json(destination / "metrics.json", metrics)
+    return metrics
+
+
 def load_iti_head_shifts(
     direction_dir: str | Path,
     *,
@@ -629,10 +897,11 @@ def load_iti_head_shifts(
     mode: str,
     top_k: int,
     random_seed: int | None = None,
+    variant: str | None = None,
 ) -> list[ITIHeadShift]:
     concept = Path(direction_dir) / quote(concept_id, safe="")
     metrics = json.loads((concept / "metrics.json").read_text(encoding="utf-8"))
-    if metrics.get("method") != ITI_METHOD:
+    if metrics.get("method") not in {ITI_METHOD, ITI_METHOD_UNVERSIONED}:
         raise ITIError("unsupported ITI direction artifact")
     if mode == "random":
         if random_seed is None:
@@ -641,7 +910,15 @@ def load_iti_head_shifts(
         if filename is None:
             raise ITIError(f"random seed absent from ITI artifact: {random_seed}")
     elif mode in {"mass_mean", "probe_weight"}:
-        filename = metrics["files"][mode]
+        if variant is None:
+            filename = metrics["files"][mode]
+        else:
+            try:
+                filename = metrics["files"]["variants"][variant][mode]
+            except KeyError as error:
+                raise ITIError(
+                    f"ITI variant/mode absent from artifact: {variant}/{mode}"
+                ) from error
     else:
         raise ITIError(f"unknown ITI direction mode: {mode}")
     payload = np.load(concept / filename, allow_pickle=False)
@@ -687,7 +964,7 @@ def iti_intervention_session(
     multiplier: float,
     num_heads: int,
     head_dim: int,
-) -> Iterator[None]:
+) -> Iterator[ITIInterventionState]:
     """Apply original ITI addition to the last token on every model forward call."""
 
     vectors = layer_shift_vectors(shifts, num_heads=num_heads, head_dim=head_dim)
@@ -696,6 +973,7 @@ def iti_intervention_session(
         for spec in full_attention_head_specs(model, sorted(vectors))
     }
     handles = []
+    state = ITIInterventionState(events=[])
     for layer, vector in vectors.items():
         spec = specs[layer]
 
@@ -703,6 +981,7 @@ def iti_intervention_session(
             _module: Any,
             inputs: tuple[Any, ...],
             *,
+            layer_id: int = layer,
             direction: FloatArray = vector,
             expected: int = spec.num_heads * spec.head_dim,
         ) -> tuple[Any, ...]:
@@ -716,11 +995,19 @@ def iti_intervention_session(
             changed = last_token_modulated_vector_add(
                 inputs[0], tensor_direction, multiplier
             )
+            state.events.append(
+                {
+                    "layer": int(layer_id),
+                    "active_positions": int(inputs[0].shape[0]),
+                    "injected_norm": abs(float(multiplier))
+                    * float(np.linalg.norm(direction)),
+                }
+            )
             return (changed, *inputs[1:])
 
         handles.append(spec.projection.register_forward_pre_hook(hook))
     try:
-        yield
+        yield state
     finally:
         for handle in handles:
             handle.remove()

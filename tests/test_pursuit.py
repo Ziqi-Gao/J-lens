@@ -9,6 +9,7 @@ from jlens_workspace.pursuit import (
     DictionaryError,
     MatchedNormRandomDictionary,
     PursuitSolverError,
+    UnitNormDictionary,
     absolute_threshold_ks,
     crossing_k,
     k_90_attainable,
@@ -56,6 +57,33 @@ def test_v2_gradient_pursuit_recovers_known_sparse_target() -> None:
     assert result.errors[3] < 1e-16
     assert np.all(np.diff(result.errors) <= 1e-12)
     assert all(np.all(coefficients >= 0) for coefficients in result.coefficients_per_k)
+
+
+def test_standard_gradient_pursuit_is_nonnegative_and_monotone() -> None:
+    atoms = _orthogonal_dictionary()
+    target = 1.7 * atoms[5] + 0.6 * atoms[11] + 0.25 * atoms[2]
+    result = streaming_nonnegative_pursuit(
+        UnitNormDictionary(DenseDictionary(atoms)),
+        target[None, :],
+        k_max=6,
+        solver_method="nonnegative_gradient_pursuit_standard",
+    )[0]
+
+    assert result.solver_method == "nonnegative_gradient_pursuit_standard"
+    assert set(result.support[:3].tolist()) == {5, 11, 2}
+    assert np.all(np.diff(result.errors) <= 1e-12)
+    assert all(np.all(coefficients >= 0) for coefficients in result.coefficients_per_k)
+
+
+def test_unit_norm_dictionary_preserves_streaming_operations() -> None:
+    atoms = np.asarray([[3.0, 4.0], [0.0, 2.0], [0.0, 0.0]])
+    dictionary = UnitNormDictionary(DenseDictionary(atoms))
+    residuals = np.asarray([[2.0, -1.0], [-3.0, 4.0]])
+    expected = np.asarray([[0.6, 0.8], [0.0, 1.0], [0.0, 0.0]])
+
+    np.testing.assert_allclose(dictionary.atom_norms(), [1.0, 1.0, 0.0])
+    np.testing.assert_allclose(dictionary.dots_batch(residuals), expected @ residuals.T)
+    np.testing.assert_allclose(dictionary.materialize(np.asarray([0, 1])), expected[:2])
 
 
 @pytest.mark.parametrize("mode", ["positive_cosine", "raw_positive_dot"])

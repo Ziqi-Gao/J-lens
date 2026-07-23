@@ -17,6 +17,7 @@ from jlens_workspace.concept_intervention.iti import (
     capture_iti_head_activations,
     fit_iti_concept_directions,
     iti_intervention_session,
+    layer_matched_head_order,
     load_iti_head_shifts,
 )
 
@@ -50,6 +51,28 @@ def test_vendored_iti_core_ranks_and_scales_synthetic_head_signal() -> None:
     assert head == 0
     np.testing.assert_allclose(np.linalg.norm(direction), 1.0)
     assert projection_std > 0
+
+
+def test_layer_matched_order_covers_every_layer_before_global_remainder() -> None:
+    accuracies = np.asarray(
+        [
+            0.99,
+            0.98,
+            0.60,
+            0.59,
+            0.70,
+            0.69,
+        ]
+    )
+    order = layer_matched_head_order(
+        accuracies,
+        num_layers=3,
+        num_heads=2,
+    )
+
+    assert order[:3].tolist() == [0, 4, 2]
+    assert {int(value) // 2 for value in order[:3]} == {0, 1, 2}
+    assert order[3:].tolist() == [1, 5, 3]
 
 
 def test_fit_iti_uses_train_validation_only_and_writes_original_modes(

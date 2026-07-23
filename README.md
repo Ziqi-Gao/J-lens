@@ -103,9 +103,12 @@ Concept_intervention/   data, configs, launchers, and reports for steering
 J_space/                configs, launchers, and reports for matrix geometry
 src/jlens_workspace/    packaged, tested implementation
 └── concept_intervention/
+    ├── shared_protocol.py  common rows, probes, and layer selection
     ├── evaluation.py   method-neutral prompt and score contract
+    ├── generation.py   exhaustive generation and blind export
     ├── j_component/    resid_post J/full/non-J/random method
-    └── iti/            pre-o_proj head-probe and ITI method
+    ├── iti/            pre-o_proj head-probe and ITI method
+    └── raptor/         pinned external adaptive steering adapter
 tests/                  fast offline tests plus opt-in LLM/GPU tests
 scripts/                tiny public-model integration checks
 docs/                   shared design and experiment protocol
@@ -232,20 +235,25 @@ jlens-workspace config validate CONFIG.yaml
 jlens-workspace data validate DATA.jsonl
 jlens-workspace lens fit CONFIG.yaml
 jlens-workspace concept capture CONFIG.yaml
+jlens-workspace concept layer-select CONFIG.yaml
 jlens-workspace iti capture CONFIG.yaml
 jlens-workspace iti fit CONFIG.yaml --concept-id CONCEPT
-jlens-workspace iti run CONFIG.yaml --concept-id CONCEPT
+jlens-workspace iti run CONFIG.yaml --concept-id CONCEPT --grid-index GRID
 jlens-workspace iti index CONFIG.yaml
+jlens-workspace intervention j-component CONFIG.yaml --concept-id CONCEPT --grid-index GRID
+jlens-workspace intervention raptor CONFIG.yaml --concept-id CONCEPT --grid-index GRID
+jlens-workspace intervention compare-index --help
 jlens-workspace concept fit-probes CONFIG.yaml
 jlens-workspace concept align CONFIG.yaml
 jlens-workspace concept run CONFIG.yaml
 jlens-workspace matrix run CONFIG.yaml
 ```
 
-Use the staged concept commands to inspect intermediate artifacts. The current
+Use the staged concept commands to inspect intermediate artifacts. The legacy
 `concept run` launcher executes capture, probe fitting, and J/non-J alignment;
-generation-time intervention is available as a library primitive and is not
-silently implied by that command.
+it does not silently run an intervention. The registered three-method
+experiment has separate J-component, ITI, and RAPTOR commands and is documented
+in [its protocol](Concept_intervention/docs/three_method_interventions.md).
 
 ## Formal and smoke concept data
 
@@ -275,13 +283,19 @@ by Git. The logical layout is:
 
 ```text
 artifacts/
-├── concept_intervention/<run>/
-│   ├── manifest.json      immutable pins, config hash, environment provenance
-│   ├── run.json           completed stage index
-│   ├── activations/       layer_XX.npy, labels.npy, rows.jsonl, metadata
-│   ├── probes/            raw-coordinate probe vectors and held-out metrics
-│   ├── alignment/         token rankings and J/non-J decompositions
-│   └── interventions/     generations, controls, and dose-response results
+├── concept_intervention/
+│   ├── shared_intervention_protocol/
+│   ├── j_component_intervention/
+│   ├── iti_intervention/
+│   ├── raptor_intervention/
+│   ├── intervention_comparison/
+│   └── <legacy-run>/
+│       ├── manifest.json  immutable pins, config hash, environment provenance
+│       ├── run.json       completed stage index
+│       ├── activations/   layer_XX.npy, labels.npy, rows.jsonl, metadata
+│       ├── probes/        raw-coordinate probe vectors and held-out metrics
+│       ├── alignment/     token rankings and J/non-J decompositions
+│       └── interventions/ generations, controls, and dose-response results
 └── j_space/<run>/
     ├── manifest.json
     ├── metrics.json

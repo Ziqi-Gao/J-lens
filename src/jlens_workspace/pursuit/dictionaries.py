@@ -87,6 +87,52 @@ class DenseDictionary:
         return np.array(self._atoms[indices], dtype=np.float64)
 
 
+class UnitNormDictionary:
+    """Scale every non-zero atom of another dictionary to unit Euclidean norm.
+
+    The wrapper preserves streaming behavior: full atom matrices are never
+    materialized, and only the selected rows are divided during
+    :meth:`materialize`.
+    """
+
+    def __init__(self, dictionary: Any) -> None:
+        self._dictionary = dictionary
+        norms = np.asarray(dictionary.atom_norms(), dtype=np.float64)
+        if norms.shape != (int(dictionary.n_atoms),):
+            raise DictionaryError("wrapped dictionary atom_norms shape mismatch")
+        if not np.isfinite(norms).all() or np.any(norms < 0):
+            raise DictionaryError("wrapped dictionary atom norms are invalid")
+        self._norms = norms
+
+    @property
+    def n_atoms(self) -> int:
+        return int(self._dictionary.n_atoms)
+
+    @property
+    def d_model(self) -> int:
+        return int(self._dictionary.d_model)
+
+    def atom_norms(self) -> FloatArray:
+        return np.where(self._norms > 0.0, 1.0, 0.0)
+
+    def dots(self, residual: object) -> FloatArray:
+        return self.dots_batch(np.asarray(residual, dtype=np.float64)[None, :])[:, 0]
+
+    def dots_batch(self, residuals: object) -> FloatArray:
+        dots = np.asarray(self._dictionary.dots_batch(residuals), dtype=np.float64)
+        return np.divide(
+            dots,
+            self._norms[:, None],
+            out=np.zeros_like(dots),
+            where=self._norms[:, None] > 0.0,
+        )
+
+    def materialize(self, ids: object) -> FloatArray:
+        indices = np.asarray(ids, dtype=np.int64)
+        atoms = np.asarray(self._dictionary.materialize(indices), dtype=np.float64)
+        return atoms / self._norms[indices, None]
+
+
 class TokenFrameDictionary:
     """Atoms are the UN-CENTERED rows of ``A_l = U_eff J_l`` (Torch-backed).
 

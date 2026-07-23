@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -139,6 +140,207 @@ class AlignmentConfig(StrictModel):
         return self
 
 
+class GenerationConfig(StrictModel):
+    """Shared exhaustive generation contract for all intervention methods."""
+
+    candidate_prompts_path: str
+    open_prompts_path: str
+    greedy: bool = True
+    sample_seeds: list[int] = Field(default_factory=lambda: [1001, 2002, 3003])
+    max_new_tokens: int = Field(default=128, ge=1)
+    temperature: float = Field(default=0.75, gt=0)
+    top_p: float = Field(default=0.95, gt=0, le=1)
+    repetition_penalty: float = Field(default=1.1, gt=0)
+    no_repeat_ngram_size: int = Field(default=3, ge=0)
+
+    @model_validator(mode="after")
+    def validate_generation(self) -> GenerationConfig:
+        if (
+            not self.greedy
+            or not self.sample_seeds
+            or len(set(self.sample_seeds)) != len(self.sample_seeds)
+            or any(seed < 0 for seed in self.sample_seeds)
+        ):
+            raise ValueError(
+                "generation requires greedy output and unique non-negative sample seeds"
+            )
+        return self
+
+
+class SharedLayerSelectionConfig(StrictModel):
+    """Method-neutral RAPTOR-style residual-probe layer selection."""
+
+    method: Literal["raptor_validation_accuracy"] = "raptor_validation_accuracy"
+    upstream_checkout: str = "third_party_external/RAPTOR"
+    upstream_commit: Literal["cf7405899174af39f3970e093e4b86bf0972ff87"] = (
+        "cf7405899174af39f3970e093e4b86bf0972ff87"
+    )
+    candidate_layers: list[int] = Field(min_length=2)
+    selected_layer_count: int = Field(default=6, ge=1)
+    source_activations_dir: str
+    output_dir: str
+    concept_ids: list[str] = Field(min_length=1)
+    c_grid: list[float] = Field(
+        default_factory=lambda: np.logspace(-4, 2, 100).tolist()
+    )
+    cv_folds: int = Field(default=5, ge=2)
+    max_iter: int = Field(default=5000, ge=100)
+    seed: int = 42
+
+    @model_validator(mode="after")
+    def validate_layer_selection(self) -> SharedLayerSelectionConfig:
+        if (
+            sorted(set(self.candidate_layers)) != self.candidate_layers
+            or any(layer < 0 for layer in self.candidate_layers)
+        ):
+            raise ValueError(
+                "shared candidate_layers must be sorted, unique, and non-negative"
+            )
+        if self.selected_layer_count >= len(self.candidate_layers):
+            raise ValueError(
+                "selected_layer_count must be smaller than the candidate layer count"
+            )
+        if len(set(self.concept_ids)) != len(self.concept_ids):
+            raise ValueError("shared concept_ids must be unique")
+        if (
+            len(self.c_grid) != 100
+            or any(not math.isfinite(value) or value <= 0 for value in self.c_grid)
+            or not math.isclose(self.c_grid[0], 1e-4, rel_tol=1e-9)
+            or not math.isclose(self.c_grid[-1], 100.0, rel_tol=1e-9)
+        ):
+            raise ValueError(
+                "shared RAPTOR C grid must contain 100 positive values from 1e-4 to 100"
+            )
+        return self
+
+
+class JComponentInterventionConfig(StrictModel):
+    """Multi-layer J/full/non-J/random intervention experiment."""
+
+    method: Literal["j_component_intervention"] = "j_component_intervention"
+    selected_layers_path: str
+    source_occupancy_dir: str
+    source_probes_dir: str
+    source_activations_dir: str
+    concept_ids: list[str] = Field(min_length=1)
+    convention: Literal["rmsnorm_weighted"] = "rmsnorm_weighted"
+    strengths: list[float] = Field(
+        default_factory=lambda: [-0.5, -0.25, -0.125, 0.0, 0.125, 0.25, 0.5]
+    )
+    random_control_seeds: list[int] = Field(
+        default_factory=lambda: [101, 202, 303, 404, 505]
+    )
+    probe_replicates: list[str] = Field(
+        default_factory=lambda: [
+            "primary",
+            "bootstrap_1101",
+            "bootstrap_2202",
+            "bootstrap_3303",
+            "bootstrap_4404",
+        ]
+    )
+    k_max: int = Field(default=64, ge=1)
+    candidate_labels: dict[str, str]
+    generation: GenerationConfig
+    score_batch_size: int = Field(default=8, ge=1)
+
+    @model_validator(mode="after")
+    def validate_j_component(self) -> JComponentInterventionConfig:
+        if (
+            len(set(self.concept_ids)) != len(self.concept_ids)
+            or set(self.candidate_labels) != set(self.concept_ids)
+        ):
+            raise ValueError(
+                "J-component candidate_labels must exactly match unique concept_ids"
+            )
+        _validate_signed_grid(self.strengths, name="J-component strengths")
+        _validate_seed_grid(
+            self.random_control_seeds, name="J-component random_control_seeds"
+        )
+        if (
+            len(set(self.probe_replicates)) != len(self.probe_replicates)
+            or self.probe_replicates[0] != "primary"
+        ):
+            raise ValueError(
+                "J-component probe_replicates must be unique and start with primary"
+            )
+        return self
+
+
+class RaptorInterventionConfig(StrictModel):
+    """Pinned external RAPTOR adaptive multi-layer intervention."""
+
+    method: Literal["raptor_intervention"] = "raptor_intervention"
+    upstream_repository: Literal["https://github.com/Ziqi-Gao/RAPTOR.git"] = (
+        "https://github.com/Ziqi-Gao/RAPTOR.git"
+    )
+    upstream_commit: Literal["cf7405899174af39f3970e093e4b86bf0972ff87"] = (
+        "cf7405899174af39f3970e093e4b86bf0972ff87"
+    )
+    upstream_checkout: str
+    selected_layers_path: str
+    source_probes_dir: str
+    source_activations_dir: str
+    concept_ids: list[str] = Field(min_length=1)
+    target_probabilities: list[float] = Field(
+        default_factory=lambda: [
+            0.0001,
+            0.001,
+            0.01,
+            0.1,
+            0.9,
+            0.99,
+            0.999,
+            0.9999,
+        ]
+    )
+    candidate_labels: dict[str, str]
+    generation: GenerationConfig
+    score_batch_size: int = Field(default=1, ge=1, le=1)
+
+    @model_validator(mode="after")
+    def validate_raptor(self) -> RaptorInterventionConfig:
+        if (
+            len(set(self.concept_ids)) != len(self.concept_ids)
+            or set(self.candidate_labels) != set(self.concept_ids)
+        ):
+            raise ValueError(
+                "RAPTOR candidate_labels must exactly match unique concept_ids"
+            )
+        probabilities = self.target_probabilities
+        if (
+            len(set(probabilities)) != len(probabilities)
+            or any(not 0 < value < 1 for value in probabilities)
+            or not any(value < 0.5 for value in probabilities)
+            or not any(value > 0.5 for value in probabilities)
+        ):
+            raise ValueError(
+                "RAPTOR target_probabilities must be unique in (0,1) and cover both signs"
+            )
+        return self
+
+
+def _validate_signed_grid(values: list[float], *, name: str) -> None:
+    if (
+        not values
+        or len(set(values)) != len(values)
+        or any(not math.isfinite(value) for value in values)
+        or 0.0 not in values
+        or not any(value < 0 for value in values)
+        or not any(value > 0 for value in values)
+    ):
+        raise ValueError(f"{name} must be finite, unique, and include zero and both signs")
+
+
+def _validate_seed_grid(values: list[int], *, name: str) -> None:
+    if (
+        not values
+        or len(set(values)) != len(values)
+        or any(value < 0 for value in values)
+    ):
+        raise ValueError(f"{name} must be non-empty, unique, and non-negative")
+
+
 class InterventionConfig(StrictModel):
     method: Literal[
         "generic_residual_intervention_v1",
@@ -260,7 +462,10 @@ class InterventionConfig(StrictModel):
 class ITIConfig(StrictModel):
     """Pinned honest_llama ITI comparison on full-attention head outputs."""
 
-    method: Literal["honest_llama_mass_mean_qwen_full_attention_v1"] = (
+    method: Literal[
+        "honest_llama_mass_mean_qwen_full_attention_v1",
+        "honest_llama_mass_mean_qwen_full_attention",
+    ] = (
         "honest_llama_mass_mean_qwen_full_attention_v1"
     )
     upstream_repository: Literal["https://github.com/likenneth/honest_llama"] = (
@@ -297,6 +502,15 @@ class ITIConfig(StrictModel):
     score_batch_size: int = Field(default=8, ge=1)
     generation_prompt_count: int = Field(default=4, ge=0)
     max_new_tokens: int = Field(default=4, ge=1)
+    selected_layers_path: str | None = None
+    variants: list[Literal["native", "layer_matched"]] = Field(
+        default_factory=lambda: ["native"]
+    )
+    layer_matched_top_k_grid: list[int] = Field(
+        default_factory=lambda: [8, 16, 32, 48]
+    )
+    selected_layer_count: int = Field(default=6, ge=1)
+    generation: GenerationConfig | None = None
 
     @model_validator(mode="after")
     def validate_iti(self) -> ITIConfig:
@@ -333,6 +547,24 @@ class ITIConfig(StrictModel):
             raise ValueError("ITI concept_ids must be unique")
         if set(self.candidate_labels) != set(self.concept_ids):
             raise ValueError("ITI candidate_labels keys must exactly match concept_ids")
+        if len(set(self.variants)) != len(self.variants):
+            raise ValueError("ITI variants must be unique")
+        if "layer_matched" in self.variants:
+            if self.selected_layers_path is None:
+                raise ValueError(
+                    "layer-matched ITI requires selected_layers_path"
+                )
+            matched = self.layer_matched_top_k_grid
+            if (
+                not matched
+                or sorted(set(matched)) != matched
+                or matched[0] < self.selected_layer_count
+                or matched[-1] > total_heads
+            ):
+                raise ValueError(
+                    "layer_matched_top_k_grid must be sorted, unique, cover every "
+                    "selected layer, and not exceed total heads"
+                )
         validation = self.validation_prompt_prefixes
         test = self.test_prompt_prefixes
         if (
@@ -391,11 +623,15 @@ class OccupancyConfig(StrictModel):
     """Concept-vector J-space occupancy with versioned sparse solvers."""
 
     method: Literal[
-        "concept_occupancy_method_v1", "concept_occupancy_method_v2"
+        "concept_occupancy_method_v1",
+        "concept_occupancy_method_v2",
+        "concept_occupancy_method",
     ] = "concept_occupancy_method_v1"
     mode: Literal["exact"] = "exact"
     solver_method: Literal[
-        "nnomp_nnls_v1", "nonnegative_gradient_pursuit_v2"
+        "nnomp_nnls_v1",
+        "nonnegative_gradient_pursuit_v2",
+        "nonnegative_gradient_pursuit_standard",
     ] = "nnomp_nnls_v1"
     primary_crossing_rule: Literal[
         "first_nonexceed_v1", "consecutive3_nonexceed_v1"
@@ -421,13 +657,14 @@ class OccupancyConfig(StrictModel):
     )
     vocabulary_chunk_size: int = Field(default=4096, ge=1)
     device: str = "cpu"
-    expected_lens_sha256: str
+    expected_lens_sha256: str | None = None
     control_atom_fractions: list[float] = Field(default_factory=lambda: [1.0])
     probe_replicates: list[str] | None = None
     bootstrap_seeds: list[int] = Field(
         default_factory=lambda: [1101, 2202, 3303, 4404]
     )
     bootstrap_k_max: int = Field(default=25, ge=1)
+    row_manifest_path: str | None = None
 
     @model_validator(mode="after")
     def validate_occupancy(self) -> OccupancyConfig:
@@ -454,9 +691,12 @@ class OccupancyConfig(StrictModel):
             raise ValueError("absolute_thresholds must lie in (0, 1)")
         if len(set(self.absolute_thresholds)) != len(self.absolute_thresholds):
             raise ValueError("absolute_thresholds must be unique")
-        if len(self.expected_lens_sha256) != 64:
-            raise ValueError("expected_lens_sha256 must be a 64-character SHA-256")
-        int(self.expected_lens_sha256, 16)
+        if self.expected_lens_sha256 is not None:
+            if len(self.expected_lens_sha256) != 64:
+                raise ValueError(
+                    "expected_lens_sha256 must be a 64-character SHA-256"
+                )
+            int(self.expected_lens_sha256, 16)
         fractions = self.control_atom_fractions
         if not fractions or len(set(fractions)) != len(fractions):
             raise ValueError("control_atom_fractions must be non-empty and unique")
@@ -491,6 +731,13 @@ class OccupancyConfig(StrictModel):
                 "concept_occupancy_method_v2 requires "
                 "solver_method=nonnegative_gradient_pursuit_v2"
             )
+        if self.method == "concept_occupancy_method" and (
+            self.solver_method != "nonnegative_gradient_pursuit_standard"
+        ):
+            raise ValueError(
+                "concept_occupancy_method requires "
+                "solver_method=nonnegative_gradient_pursuit_standard"
+            )
         return self
 
 
@@ -507,6 +754,9 @@ class ExperimentConfig(StrictModel):
     probe: ProbeConfig | None = None
     alignment: AlignmentConfig | None = None
     intervention: InterventionConfig | None = None
+    shared_layer_selection: SharedLayerSelectionConfig | None = None
+    j_component: JComponentInterventionConfig | None = None
+    raptor: RaptorInterventionConfig | None = None
     iti: ITIConfig | None = None
     occupancy: OccupancyConfig | None = None
     matrix: MatrixConfig | None = None
@@ -529,6 +779,14 @@ class ExperimentConfig(StrictModel):
                 )
             if self.matrix is not None:
                 raise ValueError("concept_intervention must not define matrix")
+            if (
+                self.occupancy is not None
+                and self.lens.source in {"local", "huggingface"}
+                and self.occupancy.expected_lens_sha256 is None
+            ):
+                raise ValueError(
+                    "occupancy with a pre-existing lens requires expected_lens_sha256"
+                )
         else:
             if self.matrix is None:
                 raise ValueError("j_space requires matrix")
@@ -539,6 +797,12 @@ class ExperimentConfig(StrictModel):
             ]
             if self.intervention is not None:
                 forbidden.append("intervention")
+            if self.shared_layer_selection is not None:
+                forbidden.append("shared_layer_selection")
+            if self.j_component is not None:
+                forbidden.append("j_component")
+            if self.raptor is not None:
+                forbidden.append("raptor")
             if self.iti is not None:
                 forbidden.append("iti")
             if self.occupancy is not None:

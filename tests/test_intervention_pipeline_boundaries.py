@@ -15,21 +15,29 @@ def _imports(path: Path) -> set[str]:
     return modules
 
 
-def test_j_component_and_iti_workflows_do_not_import_each_other() -> None:
+def test_three_intervention_workflows_do_not_import_each_other() -> None:
     root = Path(__file__).parents[1] / "src/jlens_workspace/concept_intervention"
-    j_imports = set().union(*(_imports(path) for path in (root / "j_component").glob("*.py")))
-    iti_imports = set().union(*(_imports(path) for path in (root / "iti").glob("*.py")))
+    methods = ("j_component", "iti", "raptor")
+    imports = {
+        method: set().union(
+            *(_imports(path) for path in (root / method).glob("*.py"))
+        )
+        for method in methods
+    }
+    for method, modules in imports.items():
+        siblings = set(methods) - {method}
+        assert not any(
+            module.startswith(f"jlens_workspace.concept_intervention.{sibling}")
+            for sibling in siblings
+            for module in modules
+        )
 
-    assert not any(
-        module.startswith("jlens_workspace.concept_intervention.iti")
-        for module in j_imports
-    )
-    assert not any(
-        module.startswith("jlens_workspace.concept_intervention.j_component")
-        for module in iti_imports
-    )
+    j_imports = imports["j_component"]
+    iti_imports = imports["iti"]
+    raptor_imports = imports["raptor"]
     assert "jlens_workspace.concept_intervention.evaluation" in j_imports
     assert "jlens_workspace.concept_intervention.evaluation" in iti_imports
+    assert "jlens_workspace.concept_intervention.evaluation" in raptor_imports
 
 
 def test_legacy_flat_intervention_modules_are_absent() -> None:

@@ -6,26 +6,35 @@
 share stable implementation code from `src/jlens_workspace/`, but one direction
 must not import scripts or outputs from the other.
 
-Within `Concept_intervention/`, J-component intervention and ITI are independent
-method pipelines. J-component code owns residual-space direction loading and
-`resid_post` hooks; ITI code owns head-probe fitting, head selection, and
-pre-`o_proj` shifts. The method workflows must not import each other. They may
-depend on a neutral evaluation interface for the common prompt schema,
-candidate-label tokens, batching, and artifact writes, and they must
-identity-check the shared model, tokenizer, source examples, and data splits.
-Sharing inputs is not permission to share method-specific fitting or hook code.
+Within `Concept_intervention/`, J-component, ITI, and RAPTOR are independent
+method pipelines. J-component owns sparse J fitting and `resid_post` additions;
+ITI owns head probes, head selection, and pre-`o_proj` shifts; RAPTOR owns the
+adapter that invokes the pinned author's sequential adaptive `resid_post`
+hooks. The method workflows must not import each other. They may depend on
+method-neutral shared-row, layer-selection, prompt, generation, score, and
+artifact interfaces, and they must identity-check the shared model, tokenizer,
+source examples, data splits, and selected-layer artifact. Sharing inputs is
+not permission to share method-specific fitting or hook code.
 
 The Python package mirrors that ownership:
 
 ```text
 jlens_workspace/concept_intervention/
-├── evaluation.py
-├── j_component/
-│   ├── intervention.py
-│   └── workflow.py
-└── iti/
-    ├── intervention.py
-    └── workflow.py
+|-- evaluation.py
+|-- generation.py
+|-- shared_protocol.py
+|-- comparison.py
+|-- j_component/
+|   |-- intervention.py
+|   |-- multilayer.py
+|   `-- workflow.py
+|-- iti/
+|   |-- intervention.py
+|   |-- experiment.py
+|   `-- workflow.py
+`-- raptor/
+    |-- intervention.py
+    `-- workflow.py
 ```
 
 The top-level `Concept_intervention/` directory remains the experiment surface
@@ -50,6 +59,8 @@ under `src/jlens_workspace/` so they are packaged and tested normally.
 ## Statistical gates
 
 - Dataset groups never cross train/validation/test boundaries.
+- All intervention methods use the same deterministic exact row-balanced
+  manifest and the same per-concept Top-6 layer artifact.
 - Logistic-probe penalty strength is selected using training-only grouped or
   stratified cross-validation. The held-out test split is evaluated once.
 - Every concept must have both labels in every required split; the production

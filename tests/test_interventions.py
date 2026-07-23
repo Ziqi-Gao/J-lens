@@ -5,6 +5,7 @@ import pytest
 from jlens_workspace.concept_intervention.j_component import (
     ResidualIntervention,
     matched_random_direction,
+    multilayer_intervention_session,
 )
 
 torch = pytest.importorskip("torch")
@@ -37,6 +38,29 @@ def test_random_control_is_unit_and_orthogonal() -> None:
     control = matched_random_direction(direction, seed=7)
     assert torch.allclose(control.norm(), torch.tensor(1.0), atol=1e-6)
     assert abs(float(control @ (direction / direction.norm()))) < 1e-6
+
+
+def test_multilayer_addition_uses_full_per_layer_norm_and_cleans_hooks() -> None:
+    from types import SimpleNamespace
+
+    blocks = torch.nn.ModuleList([torch.nn.Identity(), torch.nn.Identity()])
+    model = SimpleNamespace(model=SimpleNamespace(layers=blocks))
+    source = torch.zeros((1, 1, 2))
+    with multilayer_intervention_session(
+        model,
+        directions={
+            0: torch.tensor([1.0, 0.0]),
+            1: torch.tensor([0.0, 1.0]),
+        },
+        strength=0.5,
+        residual_norms={0: 2.0, 1: 4.0},
+    ) as states:
+        changed = blocks[1](blocks[0](source))
+
+    torch.testing.assert_close(changed, torch.tensor([[[1.0, 2.0]]]))
+    assert states[0].events[-1]["injected_norm"] == pytest.approx(1.0)
+    assert states[1].events[-1]["injected_norm"] == pytest.approx(2.0)
+    torch.testing.assert_close(blocks[1](blocks[0](source)), source)
 
 
 def test_manifest_commit_can_be_supplied_without_git(

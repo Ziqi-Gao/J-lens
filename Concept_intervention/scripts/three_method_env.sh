@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Shared immutable execution environment for the three intervention methods.
+set -euo pipefail
+
+CODE_ROOT="${CODE_ROOT:?submit with CODE_ROOT set to the immutable code checkout}"
+RUN_ROOT="${RUN_ROOT:?submit with RUN_ROOT set to the artifact/data checkout}"
+JLENS_GIT_COMMIT="${JLENS_GIT_COMMIT:?submit with JLENS_GIT_COMMIT frozen}"
+PYTHON="${JLENS_PYTHON:-/gpfs/projects/p32737/del6500_home/J_lens/.venv/bin/python}"
+
+OBSERVED_COMMIT="$(git -C "${CODE_ROOT}" rev-parse HEAD)"
+if [[ "${OBSERVED_COMMIT}" != "${JLENS_GIT_COMMIT}" ]]; then
+  echo "error: code checkout moved: ${OBSERVED_COMMIT} != ${JLENS_GIT_COMMIT}" >&2
+  exit 2
+fi
+if [[ ! -x "${PYTHON}" ]]; then
+  echo "error: experiment Python is not executable: ${PYTHON}" >&2
+  exit 2
+fi
+
+export CODE_ROOT RUN_ROOT JLENS_GIT_COMMIT
+export PYTHONPATH="${CODE_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
+export HF_HOME="${HF_HOME:-${RUN_ROOT}/.cache/huggingface}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-${HF_HOME}}"
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 PYTHONHASHSEED=42
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+
+SHARED_CONFIG="${CODE_ROOT}/Concept_intervention/configs/qwen35_4b_shared_intervention_protocol.yaml"
+J_CONFIG="${CODE_ROOT}/Concept_intervention/configs/qwen35_4b_j_component_intervention.yaml"
+ITI_CONFIG="${CODE_ROOT}/Concept_intervention/configs/qwen35_4b_iti_intervention.yaml"
+RAPTOR_CONFIG="${CODE_ROOT}/Concept_intervention/configs/qwen35_4b_raptor_intervention.yaml"
+export SHARED_CONFIG J_CONFIG ITI_CONFIG RAPTOR_CONFIG
+
+cd "${RUN_ROOT}"
+
+jlens() {
+  "${PYTHON}" -m jlens_workspace.cli "$@"
+}
