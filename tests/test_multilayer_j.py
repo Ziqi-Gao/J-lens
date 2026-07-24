@@ -17,12 +17,24 @@ from jlens_workspace.concept_intervention.j_component.multilayer import (
     rebuild_multilayer_j_index,
 )
 
+_CANDIDATE_LABELS = {
+    f"concept:{letter}": letter for letter in "abcdefg"
+}
+_CANDIDATE_LOGPROBS = {
+    concept_id: (-1.0 if concept_id == "concept:a" else -2.0)
+    for concept_id in _CANDIDATE_LABELS
+}
+_CANDIDATE_PROBABILITIES = {
+    concept_id: (0.4 if concept_id == "concept:a" else 0.1)
+    for concept_id in _CANDIDATE_LABELS
+}
+
 
 def _write_generation_manifest(
     root: Path,
     *,
     settings: dict[str, object],
-    prompt_id: str = "prompt",
+    prompt_id: str = "classify_0",
 ) -> dict[str, object]:
     payload = {
         "schema_version": 1,
@@ -51,6 +63,8 @@ def _write_generation_manifest(
             "row_manifest_sha256": "d" * 64,
             "generation": {
                 **settings,
+                "candidate_labels": _CANDIDATE_LABELS,
+                "candidate_prompt_splits": {prompt_id: "test"},
                 "candidate_prompt_count": 1,
                 "open_prompt_count": 0,
                 "prompt_count": 1,
@@ -190,22 +204,18 @@ def test_j_shard_index_requires_complete_grid_and_checks_zero_consistency(
         candidate_path.write_text(
             json.dumps(
                 {
-                    "prompt_id": "prompt",
+                    "prompt_id": "classify_0",
                     "method": "j_component_intervention",
                     "condition_id": condition_id,
                     "strength": 0.0,
                     "evaluation_split": "test",
                     "target_concept_id": "concept:a",
-                    "candidate_log_probabilities": {
-                        "concept:a": -1.0,
-                        "other": -2.0,
-                    },
-                    "candidate_probabilities_normalized": {
-                        "concept:a": 0.7,
-                        "other": 0.3,
-                    },
+                    "candidate_log_probabilities": _CANDIDATE_LOGPROBS,
+                    "candidate_probabilities_normalized": (
+                        _CANDIDATE_PROBABILITIES
+                    ),
                     "target_log_probability": -1.0,
-                    "target_candidate_probability": 0.7,
+                    "target_candidate_probability": 0.4,
                     "target_margin": 1.0,
                     "target_rank": 1,
                 }
@@ -222,15 +232,28 @@ def test_j_shard_index_requires_complete_grid_and_checks_zero_consistency(
                 "condition_id": condition_id,
                 "grid_point": {"strength": 0.0},
                 "intervention_metadata": {"selected_layers": [3]},
-                "prompt_id": "prompt",
+                "prompt_id": "classify_0",
                 "prompt_text": "Prompt.",
                 "decoding": decoding,
                 "seed": seed,
                 "generated_token_ids": [1],
                 "generated_text": "Result.",
                 "token_log_probabilities": [-0.5],
-                "telemetry": [],
-                "injected_norm_by_layer": {},
+                "telemetry": [
+                    {
+                        "layer": 3,
+                        "forward_call": 0,
+                        "generation_step": 0,
+                        "batch_size": 1,
+                        "sequence_length": 1,
+                        "active_positions": 1,
+                        "strength": 0.0,
+                        "residual_norm": 2.0,
+                        "kind": "addition",
+                        "injected_norm": 0.0,
+                    }
+                ],
+                "injected_norm_by_layer": {"3": 0.0},
                 "total_injected_norm": 0.0,
                 "generation_settings": settings,
             }
@@ -254,10 +277,12 @@ def test_j_shard_index_requires_complete_grid_and_checks_zero_consistency(
                 "generation_files": generation_files,
                 "generation_contract": {
                     "schema_version": 1,
-                    "prompt_ids": ["prompt"],
-                    "prompt_ids_sha256": prompt_ids_sha256(["prompt"]),
+                    "prompt_ids": ["classify_0"],
+                    "prompt_ids_sha256": prompt_ids_sha256(["classify_0"]),
                     "prompt_count": 1,
-                    "candidate_prompt_ids": ["prompt"],
+                    "candidate_prompt_ids": ["classify_0"],
+                    "candidate_prompt_splits": {"classify_0": "test"},
+                    "candidate_labels": _CANDIDATE_LABELS,
                     "open_prompt_ids": [],
                     "sample_seeds": [1001],
                     "decodings_per_prompt": 2,
@@ -315,29 +340,25 @@ def test_j_index_rejects_mixed_contract_and_empty_nonzero_scores(
         )
         shard = target / "shards" / f"grid_{grid_index:04d}"
         shard.mkdir(parents=True)
-        prompt_id = "other-prompt" if grid_index == 3 else "prompt"
+        prompt_id = "other-prompt" if grid_index == 3 else "classify_0"
         candidate_path = shard / "candidate_scores.jsonl"
         candidate_rows = (
             []
             if grid_index == 5
             else [
                 {
-                    "prompt_id": "prompt",
+                    "prompt_id": prompt_id,
                     "method": "j_component_intervention",
                     "condition_id": condition_id,
                     "strength": strength,
                     "evaluation_split": "test",
                     "target_concept_id": "concept:a",
-                    "candidate_log_probabilities": {
-                        "concept:a": -1.0,
-                        "other": -2.0,
-                    },
-                    "candidate_probabilities_normalized": {
-                        "concept:a": 0.7,
-                        "other": 0.3,
-                    },
+                    "candidate_log_probabilities": _CANDIDATE_LOGPROBS,
+                    "candidate_probabilities_normalized": (
+                        _CANDIDATE_PROBABILITIES
+                    ),
                     "target_log_probability": -1.0,
-                    "target_candidate_probability": 0.7,
+                    "target_candidate_probability": 0.4,
                     "target_margin": 1.0,
                     "target_rank": 1,
                 }
@@ -347,20 +368,21 @@ def test_j_index_rejects_mixed_contract_and_empty_nonzero_scores(
             "".join(json.dumps(row) + "\n" for row in candidate_rows),
             encoding="utf-8",
         )
-        telemetry = (
-            []
-            if strength == 0.0
-            else [
-                {
-                    "layer": 3,
-                    "forward_call": 0,
-                    "generation_step": 0,
-                    "batch_size": 1,
-                    "sequence_length": 1,
-                    "injected_norm": 1.0,
-                }
-            ]
-        )
+        injected_norm = 0.0 if strength == 0.0 else 1.0
+        telemetry = [
+            {
+                "layer": 3,
+                "forward_call": 0,
+                "generation_step": 0,
+                "batch_size": 1,
+                "sequence_length": 1,
+                "active_positions": 1,
+                "strength": strength,
+                "residual_norm": 2.0,
+                "kind": "addition",
+                "injected_norm": injected_norm,
+            }
+        ]
         generation_rows = [
             {
                 "generation_id": f"generation-{grid_index}-{decoding}",
@@ -378,10 +400,8 @@ def test_j_index_rejects_mixed_contract_and_empty_nonzero_scores(
                 "generated_text": "Result.",
                 "token_log_probabilities": [-0.5],
                 "telemetry": telemetry,
-                "injected_norm_by_layer": (
-                    {} if strength == 0.0 else {"3": 1.0}
-                ),
-                "total_injected_norm": 0.0 if strength == 0.0 else 1.0,
+                "injected_norm_by_layer": {"3": injected_norm},
+                "total_injected_norm": injected_norm,
                 "generation_settings": settings,
             }
             for decoding, seed in (("greedy", None), ("sample", 1001))
@@ -408,6 +428,8 @@ def test_j_index_rejects_mixed_contract_and_empty_nonzero_scores(
                     "prompt_ids_sha256": prompt_ids_sha256([prompt_id]),
                     "prompt_count": 1,
                     "candidate_prompt_ids": [prompt_id],
+                    "candidate_prompt_splits": {prompt_id: "test"},
+                    "candidate_labels": _CANDIDATE_LABELS,
                     "open_prompt_ids": [],
                     "sample_seeds": [1001],
                     "decodings_per_prompt": 2,

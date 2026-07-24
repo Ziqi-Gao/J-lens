@@ -283,7 +283,11 @@ def run_raptor_intervention(
     ]
     candidate_ids = candidate_token_ids(tokenizer, config.candidate_labels)
     settings = _settings(config.generation)
-    generation_contract = build_generation_contract(all_prompts, settings)
+    generation_contract = build_generation_contract(
+        all_prompts,
+        settings,
+        candidate_labels=config.candidate_labels,
+    )
     scores: list[dict[str, Any]] = []
     generations: list[dict[str, Any]] = []
 
@@ -483,6 +487,9 @@ def rebuild_raptor_index(
                         shard.parent,
                         shard_payload["generation_files"],
                         contract=shard_payload["generation_contract"],
+                        expected_selected_layers=shard_payload[
+                            "selected_layers"
+                        ],
                     )
                 except InterventionGenerationError as error:
                     raise RaptorError(

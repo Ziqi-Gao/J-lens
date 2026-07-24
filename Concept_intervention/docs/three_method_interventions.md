@@ -16,10 +16,18 @@ child roots so their artifacts can be maintained and cited separately:
 
 Every child is located below
 `artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/`.
-The older unversioned roots are historical and are never consulted. Grid
-manifests are immutable: a pre-existing shard without the exact same commit,
-config, model/data, prompt, row, and layer identity is rejected rather than
-reused.
+The Slurm environment loads only:
+
+- `qwen35_4b_three_method_intervention_v1_shared.yaml`;
+- `qwen35_4b_three_method_intervention_v1_j_component.yaml`;
+- `qwen35_4b_three_method_intervention_v1_iti.yaml`;
+- `qwen35_4b_three_method_intervention_v1_raptor.yaml`.
+
+The four earlier unversioned scientific YAMLs and their artifact roots are
+preserved unchanged as historical experiments and are never consulted by this
+DAG. Grid manifests are immutable: a pre-existing shard without the exact same
+commit, config, model/data, prompt, row, and layer identity is rejected rather
+than reused.
 
 ## Common model, data, rows, layers, and prompts
 
@@ -43,10 +51,12 @@ The fixed C is then refit on train+validation. Test metrics are reported but do
 not choose C or layers. The authoritative layer set is
 `shared_intervention_protocol/selection/layer_selection.json`.
 
-The 28 candidate-label prompts use `choose_*` and `complete_*` for validation
-selection and `classify_*` and `report_*` for held-out direct evaluation. An
-additional frozen bank has 16 validation and 16 test neutral open-ended
-prompts. Every grid point saves greedy generation plus samples with seeds
+The 28 candidate-label prompts contain exactly the frozen seven label IDs.
+They use `choose_*` and `complete_*` for validation selection and `classify_*`
+and `report_*` for held-out direct evaluation; the method indexes reject any
+missing/extra label or family/split mismatch. An additional frozen bank has 16
+validation and 16 test neutral open-ended prompts. Every grid point saves
+greedy generation plus samples with seeds
 `[1001,2002,3003]`, 128 new tokens, temperature 0.75, top-p 0.95, repetition
 penalty 1.1, and no-repeat-ngram size 3. The prompt-bank content hashes,
 ordered prompt-ID hash, expected prompt count, and expected row count are
@@ -122,14 +132,20 @@ Generation is sharded by concept and scientific grid point:
 Each shard contains candidate scores, full generations, method-blind
 generations, a private blind-ID map, token IDs, text, per-token log
 probabilities, direction/head/K metadata, and per-forward injection telemetry.
-Telemetry contains the generation/forward step, layer, sequence shape, dynamic
-strength or epsilon, per-event injected norm, per-layer accumulated norm, and
-explicit total injected norm. Method indexes reject missing or duplicated grid
+Telemetry must contain exactly one event for every generated-token × selected-
+layer pair. It includes the generation/forward step, layer, sequence shape,
+per-event injected norm, per-layer accumulated norm, and explicit total
+injected norm; J additionally records strength/residual norm/kind, ITI records
+the multiplier, and RAPTOR records target probability, pre-intervention
+probability/logit, epsilon, and whether steering occurred. Method indexes
+reject missing or duplicated grid
 indices, wrong grid conditions, empty or cardinality-mismatched
 candidate/generation files, duplicate IDs, incomplete token/logprob records,
 malformed telemetry, mixed prompt contracts or provenance, inconsistent layer
 sets, and non-identical zero-strength token IDs, text, or per-token log
-probabilities. Each method index seals every target summary, shard summary,
+probabilities. ITI direction metrics contain a recursive SHA-256 registry for
+every `.npz`; loading, method indexing, and final comparison each revalidate
+the registered bytes. Each method index seals every target summary, shard summary,
 candidate score, generation, and blind-export hash. The final comparison
 revalidates those seals before reading any score and additionally requires the
 J full/zero, RAPTOR no-hook, and ITI native/zero outputs and candidate log

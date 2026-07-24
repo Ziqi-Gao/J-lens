@@ -1,7 +1,7 @@
 schema_version: 1
 direction: concept_intervention
-experiment_name: qwen35_4b_three_method_intervention_v1
-output_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/iti_intervention
+experiment_name: iti_intervention
+output_dir: artifacts/concept_intervention/iti_intervention
 seed: 42
 model:
   model_id: Qwen/Qwen3.5-4B
@@ -23,7 +23,7 @@ dataset:
   min_per_concept: 50000
 lens:
   source: local
-  path_or_repo: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/lens/qwen35_4b_fp32.pt
+  path_or_repo: artifacts/lenses/qwen35_4b_shared_intervention_protocol_fp32.pt
   layers: [3, 7, 11, 15, 19, 23, 27]
   n_fit_prompts: 1000
   target_layer: 31
@@ -71,11 +71,11 @@ iti:
     - "goemotions:gratitude"
     - "goemotions:love"
     - "goemotions:optimism"
-  source_residual_activations_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/activations
-  head_activations_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/iti_intervention/head_activations
-  directions_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/iti_intervention/directions
-  reference_j_intervention_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/j_component_intervention
-  selected_layers_path: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/selection/layer_selection.json
+  source_residual_activations_dir: artifacts/concept_intervention/shared_intervention_protocol/activations
+  head_activations_dir: artifacts/concept_intervention/iti_intervention/head_activations
+  directions_dir: artifacts/concept_intervention/iti_intervention/directions
+  reference_j_intervention_dir: artifacts/concept_intervention/j_component_intervention
+  selected_layers_path: artifacts/concept_intervention/shared_intervention_protocol/selection/layer_selection.json
   prompts_path: Concept_intervention/data/concept_intervention_prompts_v2.json
   candidate_labels:
     "goemotions:admiration": admiration

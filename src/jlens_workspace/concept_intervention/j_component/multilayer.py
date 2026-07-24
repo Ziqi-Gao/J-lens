@@ -426,7 +426,11 @@ def run_multilayer_j_intervention(
         ),
     ]
     settings = _settings(config.generation)
-    generation_contract = build_generation_contract(all_prompts, settings)
+    generation_contract = build_generation_contract(
+        all_prompts,
+        settings,
+        candidate_labels=config.candidate_labels,
+    )
     for condition_id, strength in selected_grid:
         layer_directions = directions[condition_id]
         condition = (
@@ -648,6 +652,9 @@ def rebuild_multilayer_j_index(
                         shard.parent,
                         shard_payload["generation_files"],
                         contract=shard_payload["generation_contract"],
+                        expected_selected_layers=shard_payload[
+                            "selected_layers"
+                        ],
                     )
                 except InterventionGenerationError as error:
                     raise MultiLayerJError(

@@ -163,7 +163,9 @@ include:
   independent `j_component_intervention/`, `iti_intervention/`, and
   `raptor_intervention/` children with grid scores, token IDs, text, per-token
   log probabilities, dynamic injection telemetry, and future blind-judge
-  exports;
+  exports. Its launchers use only the four
+  `qwen35_4b_three_method_intervention_v1_{shared,j_component,iti,raptor}.yaml`
+  configs; the older unversioned scientific YAMLs remain unchanged;
 - `qwen35_4b_three_method_intervention_v1/intervention_comparison/index.json`:
   the completion marker after all three method indexes pass identity and
   completeness checks.

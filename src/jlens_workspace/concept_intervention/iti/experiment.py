@@ -30,8 +30,10 @@ from jlens_workspace.concept_intervention.generation import (
     write_generation_artifacts,
 )
 from jlens_workspace.concept_intervention.iti.intervention import (
+    ITIError,
     iti_intervention_session,
     load_iti_head_shifts,
+    validate_iti_direction_artifact,
 )
 from jlens_workspace.concept_intervention.iti.workflow import (
     ITIWorkflowError,
@@ -143,7 +145,11 @@ def run_iti_intervention_experiment(
     ]
     token_ids = candidate_token_ids(tokenizer, config.candidate_labels)
     settings = _settings(config.generation)
-    generation_contract = build_generation_contract(all_prompts, settings)
+    generation_contract = build_generation_contract(
+        all_prompts,
+        settings,
+        candidate_labels=config.candidate_labels,
+    )
     score_rows: list[dict[str, Any]] = []
     generation_rows: list[dict[str, Any]] = []
     validation_by_variant: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -394,6 +400,9 @@ def rebuild_iti_experiment_index(
                         shard.parent,
                         shard_payload["generation_files"],
                         contract=shard_payload["generation_contract"],
+                        expected_selected_layers=shard_payload[
+                            "selected_layers"
+                        ],
                     )
                 except InterventionGenerationError as error:
                     raise ITIWorkflowError(
@@ -559,6 +568,18 @@ def rebuild_iti_experiment_index(
             raise ITIWorkflowError(f"unsupported ITI summary: {path}")
         if str(payload["target_concept_id"]) != concept_id:
             raise ITIWorkflowError(f"ITI concept identity mismatch: {path}")
+        direction_metrics = Path(str(payload.get("direction_metrics", "")))
+        try:
+            if (
+                payload.get("direction_metrics_sha256")
+                != sha256_file(direction_metrics)
+            ):
+                raise ITIError("ITI direction metrics identity mismatch")
+            validate_iti_direction_artifact(direction_metrics)
+        except (ITIError, OSError) as error:
+            raise ITIWorkflowError(
+                f"ITI direction artifact identity mismatch: {direction_metrics}"
+            ) from error
         observed.add(concept_id)
         entries.append(
             {

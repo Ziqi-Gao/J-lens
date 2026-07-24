@@ -30,10 +30,10 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 
-SHARED_CONFIG="${CODE_ROOT}/Concept_intervention/configs/qwen35_4b_shared_intervention_protocol.yaml"
-J_CONFIG="${CODE_ROOT}/Concept_intervention/configs/qwen35_4b_j_component_intervention.yaml"
-ITI_CONFIG="${CODE_ROOT}/Concept_intervention/configs/qwen35_4b_iti_intervention.yaml"
-RAPTOR_CONFIG="${CODE_ROOT}/Concept_intervention/configs/qwen35_4b_raptor_intervention.yaml"
+SHARED_CONFIG="${CODE_ROOT}/Concept_intervention/configs/qwen35_4b_three_method_intervention_v1_shared.yaml"
+J_CONFIG="${CODE_ROOT}/Concept_intervention/configs/qwen35_4b_three_method_intervention_v1_j_component.yaml"
+ITI_CONFIG="${CODE_ROOT}/Concept_intervention/configs/qwen35_4b_three_method_intervention_v1_iti.yaml"
+RAPTOR_CONFIG="${CODE_ROOT}/Concept_intervention/configs/qwen35_4b_three_method_intervention_v1_raptor.yaml"
 export SHARED_CONFIG J_CONFIG ITI_CONFIG RAPTOR_CONFIG
 
 cd "${RUN_ROOT}"

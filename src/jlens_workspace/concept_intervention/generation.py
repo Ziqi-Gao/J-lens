@@ -23,6 +23,14 @@ class InterventionGenerationError(ValueError):
     """Raised when a generation grid violates the shared output contract."""
 
 
+_CANDIDATE_PROMPT_FAMILY_SPLITS = {
+    "choose": "validation",
+    "complete": "validation",
+    "classify": "test",
+    "report": "test",
+}
+
+
 @dataclass(frozen=True)
 class OpenPromptRecord:
     prompt_id: str
@@ -68,9 +76,26 @@ def prompt_ids_sha256(prompt_ids: Sequence[str]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def candidate_prompt_splits(prompt_ids: Sequence[str]) -> dict[str, str]:
+    """Map every registered candidate prompt family to its frozen split."""
+
+    output: dict[str, str] = {}
+    for prompt_id in prompt_ids:
+        family = str(prompt_id).partition("_")[0]
+        try:
+            output[str(prompt_id)] = _CANDIDATE_PROMPT_FAMILY_SPLITS[family]
+        except KeyError as error:
+            raise InterventionGenerationError(
+                f"unknown candidate prompt family for {prompt_id!r}"
+            ) from error
+    return output
+
+
 def build_generation_contract(
     prompts: Sequence[PromptRecord | OpenPromptRecord],
     settings: GenerationSettings,
+    *,
+    candidate_labels: Mapping[str, str],
 ) -> dict[str, Any]:
     """Freeze the exact prompt-by-decoding cardinality for one grid shard."""
 
@@ -79,16 +104,35 @@ def build_generation_contract(
         raise InterventionGenerationError(
             "generation prompts must be non-empty with unique IDs"
         )
+    candidate_prompts = [
+        prompt for prompt in prompts if isinstance(prompt, PromptRecord)
+    ]
+    candidate_label_ids = tuple(str(value) for value in candidate_labels)
+    if (
+        len(candidate_label_ids) != 7
+        or len(set(candidate_label_ids)) != 7
+        or any(
+            len(prompt.label_order) != 7
+            or set(prompt.label_order) != set(candidate_label_ids)
+            for prompt in candidate_prompts
+        )
+    ):
+        raise InterventionGenerationError(
+            "candidate generation contract requires the same seven labels "
+            "on every candidate prompt"
+        )
+    candidate_ids = [str(prompt.prompt_id) for prompt in candidate_prompts]
     return {
         "schema_version": 1,
         "prompt_ids": prompt_ids,
         "prompt_ids_sha256": prompt_ids_sha256(prompt_ids),
         "prompt_count": len(prompt_ids),
-        "candidate_prompt_ids": [
-            str(prompt.prompt_id)
-            for prompt in prompts
-            if isinstance(prompt, PromptRecord)
-        ],
+        "candidate_prompt_ids": candidate_ids,
+        "candidate_prompt_splits": candidate_prompt_splits(candidate_ids),
+        "candidate_labels": {
+            str(concept_id): str(label)
+            for concept_id, label in candidate_labels.items()
+        },
         "open_prompt_ids": [
             str(prompt.prompt_id)
             for prompt in prompts
@@ -99,6 +143,101 @@ def build_generation_contract(
         "expected_rows": len(prompt_ids) * (1 + len(settings.sample_seeds)),
         "generation_settings": asdict(settings),
     }
+
+
+def _validate_method_telemetry_event(
+    *,
+    method: str,
+    event: Mapping[str, Any],
+    grid_point: Mapping[str, Any],
+    generation_id: str,
+) -> None:
+    """Validate method-owned telemetry fields against the scientific grid."""
+
+    required = {
+        "j_component_intervention": {
+            "active_positions",
+            "strength",
+            "residual_norm",
+            "kind",
+        },
+        "iti_intervention": {
+            "active_positions",
+            "multiplier",
+        },
+        "raptor_intervention": {
+            "target_probability",
+            "pre_intervention_logit",
+            "pre_intervention_probability",
+            "epsilon",
+            "steered",
+        },
+    }[method]
+    if not required.issubset(event):
+        raise InterventionGenerationError(
+            f"method-specific telemetry is incomplete for {generation_id}"
+        )
+    if method == "j_component_intervention":
+        strength = float(event["strength"])
+        residual_norm = float(event["residual_norm"])
+        if (
+            not math.isfinite(strength)
+            or not math.isclose(
+                strength,
+                float(grid_point["strength"]),
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            )
+            or not math.isfinite(residual_norm)
+            or residual_norm <= 0.0
+            or event["kind"] not in {"addition", "project_out"}
+            or int(event["active_positions"]) < 1
+        ):
+            raise InterventionGenerationError(
+                f"method-specific J telemetry is invalid for {generation_id}"
+            )
+    elif method == "iti_intervention":
+        multiplier = float(event["multiplier"])
+        if (
+            not math.isfinite(multiplier)
+            or not math.isclose(
+                multiplier,
+                float(grid_point["strength"]),
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            )
+            or int(event["active_positions"]) < 1
+        ):
+            raise InterventionGenerationError(
+                f"method-specific ITI telemetry is invalid for {generation_id}"
+            )
+    else:
+        target_probability = float(event["target_probability"])
+        pre_logit = float(event["pre_intervention_logit"])
+        pre_probability = float(event["pre_intervention_probability"])
+        epsilon = float(event["epsilon"])
+        if (
+            not all(
+                math.isfinite(value)
+                for value in (
+                    target_probability,
+                    pre_logit,
+                    pre_probability,
+                    epsilon,
+                )
+            )
+            or not math.isclose(
+                target_probability,
+                float(grid_point["target_probability"]),
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            )
+            or not 0.0 <= pre_probability <= 1.0
+            or not isinstance(event["steered"], bool)
+        ):
+            raise InterventionGenerationError(
+                f"method-specific RAPTOR telemetry is invalid for {generation_id}"
+            )
 
 
 def _format_chat(tokenizer: Any, text: str) -> str:
@@ -358,6 +497,7 @@ def validate_generation_artifacts(
     files: Mapping[str, Any],
     *,
     contract: Mapping[str, Any],
+    expected_selected_layers: Sequence[int] | None = None,
 ) -> dict[str, Any]:
     """Validate hashes, cardinality, IDs, token logprobs, and blind alignment."""
 
@@ -543,6 +683,7 @@ def validate_generation_artifacts(
         }
         recomputed_by_layer: dict[str, float] = {}
         calls_by_layer: dict[str, list[int]] = {}
+        observed_event_coordinates: set[tuple[str, int]] = set()
         for event in telemetry:
             if (
                 not isinstance(event, Mapping)
@@ -567,6 +708,18 @@ def validate_generation_artifacts(
                 raise InterventionGenerationError(
                     f"invalid telemetry coordinates for generation {generation_id}"
                 )
+            coordinate = (layer, generation_step)
+            if coordinate in observed_event_coordinates:
+                raise InterventionGenerationError(
+                    f"duplicate telemetry coordinate for generation {generation_id}"
+                )
+            observed_event_coordinates.add(coordinate)
+            _validate_method_telemetry_event(
+                method=method,
+                event=event,
+                grid_point=grid_point,
+                generation_id=generation_id,
+            )
             recomputed_by_layer[layer] = recomputed_by_layer.get(layer, 0.0) + float(
                 event["injected_norm"]
             )
@@ -607,15 +760,63 @@ def validate_generation_artifacts(
             if method == "iti_intervention"
             else "selected_layers"
         )
+        selected_layers = {
+            str(int(value))
+            for value in intervention_metadata.get("selected_layers", [])
+        }
         expected_layers = {
             str(int(value))
             for value in intervention_metadata.get(expected_layers_key, [])
         }
-        if intervention_enabled and (
+        if not selected_layers or (
+            expected_selected_layers is not None
+            and selected_layers
+            != {str(int(value)) for value in expected_selected_layers}
+        ):
+            raise InterventionGenerationError(
+                f"intervention selected-layer identity mismatch: {generation_id}"
+            )
+        if method == "iti_intervention":
+            selected_heads = intervention_metadata.get("selected_heads")
+            if not isinstance(selected_heads, list) or not selected_heads:
+                raise InterventionGenerationError(
+                    f"ITI selected-head metadata is missing: {generation_id}"
+                )
+            head_layers = {
+                str(int(head["layer"]))
+                for head in selected_heads
+                if isinstance(head, Mapping) and "layer" in head
+            }
+            if (
+                len(head_layers) == 0
+                or head_layers != expected_layers
+                or not expected_layers.issubset(selected_layers)
+            ):
+                raise InterventionGenerationError(
+                    f"ITI active-layer metadata is invalid: {generation_id}"
+                )
+        telemetry_required = (
+            method in {"j_component_intervention", "iti_intervention"}
+            or intervention_enabled
+        )
+        if telemetry_required and (
             not expected_layers or set(recomputed_by_layer) != expected_layers
         ):
             raise InterventionGenerationError(
                 f"intervention telemetry layer coverage mismatch: {generation_id}"
+            )
+        expected_event_coordinates = {
+            (layer, generation_step)
+            for layer in expected_layers
+            for generation_step in range(len(token_ids))
+        }
+        if (
+            telemetry_required
+            and observed_event_coordinates != expected_event_coordinates
+        ):
+            raise InterventionGenerationError(
+                "telemetry generated-token coverage mismatch for "
+                f"{generation_id}"
             )
         if (
             intervention_enabled
@@ -701,9 +902,22 @@ def validate_candidate_score_artifact(
     prompt_ids = [
         str(value) for value in contract.get("candidate_prompt_ids", [])
     ]
-    if not prompt_ids or len(set(prompt_ids)) != len(prompt_ids):
+    prompt_splits = contract.get("candidate_prompt_splits")
+    candidate_labels = contract.get("candidate_labels")
+    expected_prompt_splits = candidate_prompt_splits(prompt_ids)
+    if (
+        not prompt_ids
+        or len(set(prompt_ids)) != len(prompt_ids)
+        or not isinstance(prompt_splits, Mapping)
+        or set(prompt_splits) != set(prompt_ids)
+        or dict(prompt_splits) != expected_prompt_splits
+        or not isinstance(candidate_labels, Mapping)
+        or len(candidate_labels) != 7
+        or len(set(candidate_labels)) != 7
+        or expected_concept_id not in candidate_labels
+    ):
         raise InterventionGenerationError(
-            "generation contract lacks unique candidate prompt IDs"
+            "generation contract lacks fixed prompt splits or seven candidate labels"
         )
     with source.open(encoding="utf-8") as handle:
         try:
@@ -733,6 +947,10 @@ def validate_candidate_score_artifact(
             raise InterventionGenerationError(
                 f"candidate-score scientific identity mismatch: {source}"
             )
+        if row.get("evaluation_split") != prompt_splits[str(row["prompt_id"])]:
+            raise InterventionGenerationError(
+                f"candidate prompt family/split mismatch: {source}"
+            )
         for key, value in expected_grid_condition.items():
             row_key = condition_field_map.get(key, key)
             if row.get(row_key) != value:
@@ -746,8 +964,8 @@ def validate_candidate_score_artifact(
             not isinstance(log_probabilities, Mapping)
             or not isinstance(probabilities, Mapping)
             or set(log_probabilities) != set(probabilities)
+            or set(log_probabilities) != set(candidate_labels)
             or target not in log_probabilities
-            or len(log_probabilities) < 2
             or any(
                 not isinstance(value, (int, float))
                 or not math.isfinite(float(value))
@@ -755,7 +973,7 @@ def validate_candidate_score_artifact(
             )
         ):
             raise InterventionGenerationError(
-                f"incomplete candidate probabilities: {source}"
+                f"candidate labels/probabilities differ from frozen contract: {source}"
             )
         scalar_fields = (
             "target_log_probability",
@@ -828,9 +1046,17 @@ def validate_generation_contract_identity(
         str(value) for value in contract.get("candidate_prompt_ids", [])
     ]
     open_ids = [str(value) for value in contract.get("open_prompt_ids", [])]
+    candidate_labels = contract.get("candidate_labels")
+    candidate_splits = contract.get("candidate_prompt_splits")
     settings = contract.get("generation_settings")
     if (
         not isinstance(settings, Mapping)
+        or not isinstance(candidate_labels, Mapping)
+        or not isinstance(candidate_splits, Mapping)
+        or dict(candidate_labels)
+        != generation_identity.get("candidate_labels")
+        or dict(candidate_splits)
+        != generation_identity.get("candidate_prompt_splits")
         or contract.get("prompt_ids_sha256")
         != generation_identity.get("prompt_ids_sha256")
         or int(contract.get("prompt_count", -1))

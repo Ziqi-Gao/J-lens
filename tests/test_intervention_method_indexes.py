@@ -29,6 +29,50 @@ _SETTINGS = {
     "repetition_penalty": 1.1,
     "no_repeat_ngram_size": 3,
 }
+_CANDIDATE_LABELS = {
+    f"concept:{letter}": letter for letter in "abcdefg"
+}
+
+
+def _write_iti_direction_metrics(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    files = {
+        "variants": {
+            variant: {
+                mode: f"{variant}_{mode}.npz"
+                for mode in ("mass_mean", "probe_weight")
+            }
+            for variant in ("native", "layer_matched")
+        },
+        "random": {},
+        "development_indices": "development_indices.npz",
+    }
+    for variant_files in files["variants"].values():
+        for filename in variant_files.values():
+            (path.parent / filename).write_bytes(filename.encode())
+    (path.parent / files["development_indices"]).write_bytes(b"indices")
+    hashes = {
+        "variants": {
+            variant: {
+                mode: sha256_file(path.parent / filename)
+                for mode, filename in variant_files.items()
+            }
+            for variant, variant_files in files["variants"].items()
+        },
+        "random": {},
+        "development_indices": sha256_file(
+            path.parent / files["development_indices"]
+        ),
+    }
+    atomic_write_json(
+        path,
+        {
+            "method": "honest_llama_mass_mean_qwen_full_attention",
+            "files": files,
+            "files_sha256": hashes,
+        },
+    )
+    return path
 
 
 def _contract(prompt_ids: list[str]) -> dict[str, object]:
@@ -38,6 +82,15 @@ def _contract(prompt_ids: list[str]) -> dict[str, object]:
         "prompt_ids_sha256": prompt_ids_sha256(prompt_ids),
         "prompt_count": len(prompt_ids),
         "candidate_prompt_ids": prompt_ids,
+        "candidate_prompt_splits": {
+            prompt_id: (
+                "validation"
+                if prompt_id.partition("_")[0] in {"choose", "complete"}
+                else "test"
+            )
+            for prompt_id in prompt_ids
+        },
+        "candidate_labels": _CANDIDATE_LABELS,
         "open_prompt_ids": [],
         "sample_seeds": [1001],
         "decodings_per_prompt": 2,
@@ -74,6 +127,16 @@ def _manifest(method: str, prompt_ids: list[str]) -> dict[str, object]:
             "row_manifest_sha256": "d" * 64,
             "generation": {
                 **_SETTINGS,
+                "candidate_labels": _CANDIDATE_LABELS,
+                "candidate_prompt_splits": {
+                    prompt_id: (
+                        "validation"
+                        if prompt_id.partition("_")[0]
+                        in {"choose", "complete"}
+                        else "test"
+                    )
+                    for prompt_id in prompt_ids
+                },
                 "candidate_prompt_count": len(prompt_ids),
                 "open_prompt_count": 0,
                 "prompt_count": len(prompt_ids),
@@ -109,14 +172,22 @@ def _candidate_row(
         "evaluation_split": split,
         "candidate_log_probabilities": {
             "concept:a": -1.0,
-            "other": -2.0,
+            **{
+                concept_id: -2.0
+                for concept_id in _CANDIDATE_LABELS
+                if concept_id != "concept:a"
+            },
         },
         "candidate_probabilities_normalized": {
-            "concept:a": 0.7,
-            "other": 0.3,
+            "concept:a": 0.4,
+            **{
+                concept_id: 0.1
+                for concept_id in _CANDIDATE_LABELS
+                if concept_id != "concept:a"
+            },
         },
         "target_log_probability": -1.0,
-        "target_candidate_probability": 0.7,
+        "target_candidate_probability": 0.4,
         "target_margin": 1.0,
         "target_rank": 1,
         **row_condition,
@@ -135,18 +206,34 @@ def _generation_rows(
         if method == "raptor_intervention"
         else float(condition["strength"]) != 0.0
     )
+    requires_events = method == "iti_intervention" or enabled
+    injected_norm = 1.0 if enabled else 0.0
+    event: dict[str, object] = {
+        "layer": 3,
+        "forward_call": 0,
+        "generation_step": 0,
+        "batch_size": 1,
+        "sequence_length": 1,
+        "injected_norm": injected_norm,
+    }
+    if method == "iti_intervention":
+        event.update(
+            active_positions=1,
+            multiplier=float(condition["strength"]),
+        )
+    elif method == "raptor_intervention" and enabled:
+        event.update(
+            target_probability=float(condition["target_probability"]),
+            pre_intervention_logit=0.0,
+            pre_intervention_probability=0.5,
+            epsilon=0.25,
+            steered=True,
+        )
     telemetry = (
         [
-            {
-                "layer": 3,
-                "forward_call": 0,
-                "generation_step": 0,
-                "batch_size": 1,
-                "sequence_length": 1,
-                "injected_norm": 1.0,
-            }
+            event
         ]
-        if enabled
+        if requires_events
         else []
     )
     grid_point = (
@@ -171,6 +258,7 @@ def _generation_rows(
             "intervention_metadata": {
                 "selected_layers": [3],
                 "active_layers": [3],
+                "selected_heads": [{"layer": 3, "head": 0}],
             },
             "prompt_id": prompt_id,
             "prompt_text": "Prompt.",
@@ -180,8 +268,10 @@ def _generation_rows(
             "generated_text": "Result.",
             "token_log_probabilities": [-0.5],
             "telemetry": telemetry,
-            "injected_norm_by_layer": {"3": 1.0} if enabled else {},
-            "total_injected_norm": 1.0 if enabled else 0.0,
+            "injected_norm_by_layer": (
+                {"3": injected_norm} if requires_events else {}
+            ),
+            "total_injected_norm": injected_norm,
             "generation_settings": _SETTINGS,
         }
         for prompt_id in prompt_ids
@@ -206,7 +296,7 @@ def _write_shard_manifest(
 
 def test_raptor_index_rejects_mixed_shard_provenance(tmp_path: Path) -> None:
     method = "raptor_intervention"
-    prompt_ids = ["prompt"]
+    prompt_ids = ["classify_0"]
     manifest = _manifest(method, prompt_ids)
     atomic_write_json(tmp_path / "manifest.json", manifest)
     grid = [
@@ -229,7 +319,7 @@ def test_raptor_index_rejects_mixed_shard_provenance(tmp_path: Path) -> None:
         candidate_rows = [
             _candidate_row(
                 method=method,
-                prompt_id="prompt",
+                prompt_id="classify_0",
                 split="test",
                 condition=condition,
             )
@@ -305,7 +395,7 @@ def test_raptor_index_rejects_mixed_shard_provenance(tmp_path: Path) -> None:
 
 def test_iti_index_rejects_mixed_shard_provenance(tmp_path: Path) -> None:
     method = "iti_intervention"
-    prompt_ids = ["v", "t"]
+    prompt_ids = ["choose_0", "classify_0"]
     manifest = _manifest(method, prompt_ids)
     atomic_write_json(tmp_path / "manifest.json", manifest)
     config = SimpleNamespace(
@@ -316,8 +406,9 @@ def test_iti_index_rejects_mixed_shard_provenance(tmp_path: Path) -> None:
         strengths=[0.0, 1.0],
     )
     grid = iti_experiment_grid(config)
-    direction_metrics = tmp_path / "directions/concept%3Aa/metrics.json"
-    atomic_write_json(direction_metrics, {"method": "iti"})
+    direction_metrics = _write_iti_direction_metrics(
+        tmp_path / "directions/concept%3Aa/metrics.json"
+    )
     summaries = []
     for grid_index, condition in enumerate(grid):
         shard = (
@@ -335,7 +426,10 @@ def test_iti_index_rejects_mixed_shard_provenance(tmp_path: Path) -> None:
                 split=split,
                 condition=condition,
             )
-            for prompt_id, split in (("v", "validation"), ("t", "test"))
+            for prompt_id, split in (
+                ("choose_0", "validation"),
+                ("classify_0", "test"),
+            )
         ]
         candidate_path = shard / "candidate_scores.jsonl"
         _write_jsonl(candidate_path, candidate_rows)
@@ -385,6 +479,17 @@ def test_iti_index_rejects_mixed_shard_provenance(tmp_path: Path) -> None:
         config=config,
     )
     assert index["complete"] is True
+
+    direction_file = direction_metrics.parent / "native_mass_mean.npz"
+    original_direction = direction_file.read_bytes()
+    direction_file.write_bytes(b"changed direction")
+    with pytest.raises(ITIWorkflowError, match="direction artifact"):
+        rebuild_iti_experiment_index(
+            tmp_path,
+            concept_ids=["concept:a"],
+            config=config,
+        )
+    direction_file.write_bytes(original_direction)
 
     summary_path, mixed = summaries[-1]
     mixed["direction_metrics_sha256"] = "0" * 64

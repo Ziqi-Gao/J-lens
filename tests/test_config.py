@@ -101,18 +101,34 @@ def test_config_rejects_hybrid_research_directions() -> None:
         )
 
 
-def test_three_method_configs_share_the_immutable_registered_protocol() -> None:
+def test_versioned_three_method_configs_preserve_legacy_scientific_yaml() -> None:
     root = Path(__file__).parents[1]
+    config_root = root / "Concept_intervention/configs"
     names = (
         "j_component_intervention",
         "iti_intervention",
         "raptor_intervention",
     )
-    configs = {
-        name: load_experiment_config(
-            root / "Concept_intervention/configs" / f"qwen35_4b_{name}.yaml"
-        )
+    legacy = {
+        name: load_experiment_config(config_root / f"qwen35_4b_{name}.yaml")
         for name in names
+    }
+    for name, config in legacy.items():
+        assert config.experiment_name == name
+        assert config.output_dir == f"artifacts/concept_intervention/{name}"
+
+    versioned_files = {
+        "j_component_intervention": (
+            "qwen35_4b_three_method_intervention_v1_j_component.yaml"
+        ),
+        "iti_intervention": "qwen35_4b_three_method_intervention_v1_iti.yaml",
+        "raptor_intervention": (
+            "qwen35_4b_three_method_intervention_v1_raptor.yaml"
+        ),
+    }
+    configs = {
+        name: load_experiment_config(config_root / versioned_files[name])
+        for name in versioned_files
     }
     for name, config in configs.items():
         assert (
@@ -139,6 +155,24 @@ def test_three_method_configs_share_the_immutable_registered_protocol() -> None:
         configs["raptor_intervention"].raptor.generation,
     )
     assert generations[0] == generations[1] == generations[2]
+    expected_labels = {
+        "goemotions:admiration": "admiration",
+        "goemotions:approval": "approval",
+        "goemotions:curiosity": "curiosity",
+        "goemotions:disapproval": "rejection",
+        "goemotions:gratitude": "gratitude",
+        "goemotions:love": "love",
+        "goemotions:optimism": "optimism",
+    }
+    assert reference.j_component.candidate_labels == expected_labels
+    assert (
+        configs["iti_intervention"].iti.candidate_labels
+        == expected_labels
+    )
+    assert (
+        configs["raptor_intervention"].raptor.candidate_labels
+        == expected_labels
+    )
     layer_paths = {
         reference.j_component.selected_layers_path,
         configs["iti_intervention"].iti.selected_layers_path,
@@ -147,8 +181,7 @@ def test_three_method_configs_share_the_immutable_registered_protocol() -> None:
     assert len(layer_paths) == 1
 
     shared = load_experiment_config(
-        root
-        / "Concept_intervention/configs/qwen35_4b_shared_intervention_protocol.yaml"
+        config_root / "qwen35_4b_three_method_intervention_v1_shared.yaml"
     )
     assert (
         shared.experiment_name
@@ -162,3 +195,12 @@ def test_three_method_configs_share_the_immutable_registered_protocol() -> None:
     assert shared.shared_layer_selection.selected_layer_count == 6
     assert len(shared.shared_layer_selection.c_grid) == 100
     assert len(iti_experiment_grid(configs["iti_intervention"].iti)) == 441
+
+    legacy_shared = load_experiment_config(
+        config_root / "qwen35_4b_shared_intervention_protocol.yaml"
+    )
+    assert legacy_shared.experiment_name == "shared_intervention_protocol"
+    assert (
+        legacy_shared.output_dir
+        == "artifacts/concept_intervention/shared_intervention_protocol"
+    )

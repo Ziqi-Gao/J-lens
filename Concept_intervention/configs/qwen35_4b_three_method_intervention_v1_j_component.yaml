@@ -1,7 +1,7 @@
 schema_version: 1
 direction: concept_intervention
-experiment_name: raptor_intervention
-output_dir: artifacts/concept_intervention/raptor_intervention
+experiment_name: qwen35_4b_three_method_intervention_v1
+output_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/j_component_intervention
 seed: 42
 model:
   model_id: Qwen/Qwen3.5-4B
@@ -23,7 +23,7 @@ dataset:
   min_per_concept: 50000
 lens:
   source: local
-  path_or_repo: artifacts/lenses/qwen35_4b_shared_intervention_protocol_fp32.pt
+  path_or_repo: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/lens/qwen35_4b_fp32.pt
   layers: [3, 7, 11, 15, 19, 23, 27]
   n_fit_prompts: 1000
   target_layer: 31
@@ -50,14 +50,12 @@ alignment:
   vocabulary_chunk_size: 4096
   decompose: false
   require_nonnegative: true
-raptor:
-  method: raptor_intervention
-  upstream_repository: https://github.com/Ziqi-Gao/RAPTOR.git
-  upstream_commit: cf7405899174af39f3970e093e4b86bf0972ff87
-  upstream_checkout: third_party_external/RAPTOR
-  selected_layers_path: artifacts/concept_intervention/shared_intervention_protocol/selection/layer_selection.json
-  source_probes_dir: artifacts/concept_intervention/shared_intervention_protocol/selection/raptor_probes
-  source_activations_dir: artifacts/concept_intervention/shared_intervention_protocol/activations
+j_component:
+  method: j_component_intervention
+  selected_layers_path: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/selection/layer_selection.json
+  source_occupancy_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/j_occupancy
+  source_probes_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/selection/raptor_probes
+  source_activations_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/activations
   concept_ids:
     - "goemotions:admiration"
     - "goemotions:approval"
@@ -66,7 +64,11 @@ raptor:
     - "goemotions:gratitude"
     - "goemotions:love"
     - "goemotions:optimism"
-  target_probabilities: [0.0001, 0.001, 0.01, 0.1, 0.9, 0.99, 0.999, 0.9999]
+  convention: rmsnorm_weighted
+  strengths: [-0.5, -0.25, -0.125, 0.0, 0.125, 0.25, 0.5]
+  random_control_seeds: [101, 202, 303, 404, 505]
+  probe_replicates: [primary, bootstrap_1101, bootstrap_2202, bootstrap_3303, bootstrap_4404]
+  k_max: 64
   candidate_labels:
     "goemotions:admiration": admiration
     "goemotions:approval": approval
@@ -85,4 +87,4 @@ raptor:
     top_p: 0.95
     repetition_penalty: 1.1
     no_repeat_ngram_size: 3
-  score_batch_size: 1
+  score_batch_size: 8

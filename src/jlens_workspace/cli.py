@@ -652,11 +652,15 @@ def _activation_dataset_hash(path: str | Path) -> str:
     return value
 
 
-def _generation_identity(value: Any) -> dict[str, Any]:
+def _generation_identity(
+    value: Any,
+    candidate_labels: Mapping[str, str],
+) -> dict[str, Any]:
     """Content-address both prompt banks together with decoding parameters."""
 
     from jlens_workspace.artifacts import sha256_file
     from jlens_workspace.concept_intervention.generation import (
+        candidate_prompt_splits,
         prompt_ids_sha256,
     )
 
@@ -677,12 +681,21 @@ def _generation_identity(value: Any) -> dict[str, Any]:
         or not candidate_ids
         or not open_ids
         or len(set(prompt_ids)) != len(prompt_ids)
+        or len(candidate_labels) != 7
+        or len(set(candidate_labels)) != 7
     ):
-        raise ValueError("generation prompt banks have invalid or duplicate IDs")
+        raise ValueError(
+            "generation prompt banks require unique IDs and seven candidate labels"
+        )
     sample_seeds = list(value.sample_seeds)
 
     return {
         **value.model_dump(),
+        "candidate_labels": {
+            str(concept_id): str(label)
+            for concept_id, label in candidate_labels.items()
+        },
+        "candidate_prompt_splits": candidate_prompt_splits(candidate_ids),
         "candidate_prompts_sha256": sha256_file(value.candidate_prompts_path),
         "open_prompts_sha256": sha256_file(value.open_prompts_path),
         "candidate_prompt_count": len(candidate_ids),
@@ -2306,7 +2319,10 @@ def _cmd_j_component_intervention(args: argparse.Namespace) -> int:
             "selected_layers_path": section.selected_layers_path,
             "source_occupancy_dir": section.source_occupancy_dir,
             "concept_ids": list(concepts),
-            "generation": _generation_identity(section.generation),
+            "generation": _generation_identity(
+                section.generation,
+                section.candidate_labels,
+            ),
             **_shared_protocol_identity(section.selected_layers_path),
         },
     )
@@ -2372,7 +2388,10 @@ def _cmd_j_component_index(args: argparse.Namespace) -> int:
             "workflow": "j_component_intervention",
             "selected_layers_path": section.selected_layers_path,
             "lens_sha256": sha256_file(config.lens.path_or_repo),
-            "generation": _generation_identity(section.generation),
+            "generation": _generation_identity(
+                section.generation,
+                section.candidate_labels,
+            ),
             **_shared_protocol_identity(section.selected_layers_path),
         },
     )
@@ -2420,7 +2439,10 @@ def _cmd_raptor_intervention(args: argparse.Namespace) -> int:
             "upstream_repository": section.upstream_repository,
             "upstream_commit": section.upstream_commit,
             "concept_ids": list(concepts),
-            "generation": _generation_identity(section.generation),
+            "generation": _generation_identity(
+                section.generation,
+                section.candidate_labels,
+            ),
             **_shared_protocol_identity(section.selected_layers_path),
         },
     )
@@ -2484,7 +2506,10 @@ def _cmd_raptor_index(args: argparse.Namespace) -> int:
             "workflow": "raptor_intervention",
             "selected_layers_path": section.selected_layers_path,
             "lens_sha256": sha256_file(config.lens.path_or_repo),
-            "generation": _generation_identity(section.generation),
+            "generation": _generation_identity(
+                section.generation,
+                section.candidate_labels,
+            ),
             "upstream_commit": section.upstream_commit,
             **_shared_protocol_identity(section.selected_layers_path),
         },
@@ -2732,7 +2757,7 @@ def _cmd_iti_run(args: argparse.Namespace) -> int:
             "validation_prompt_prefixes": list(iti.validation_prompt_prefixes),
             "test_prompt_prefixes": list(iti.test_prompt_prefixes),
             "generation": (
-                _generation_identity(iti.generation)
+                _generation_identity(iti.generation, iti.candidate_labels)
                 if iti.generation is not None
                 else None
             ),
@@ -2872,7 +2897,7 @@ def _cmd_iti_index(args: argparse.Namespace) -> int:
             "selected_layers_path": iti.selected_layers_path,
             "lens_sha256": sha256_file(config.lens.path_or_repo),
             "generation": (
-                _generation_identity(iti.generation)
+                _generation_identity(iti.generation, iti.candidate_labels)
                 if iti.generation is not None
                 else None
             ),

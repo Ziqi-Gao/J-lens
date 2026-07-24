@@ -19,6 +19,7 @@ from .intervention import (
     layer_matched_random_head_order,
     layer_shift_vectors,
     load_iti_head_shifts,
+    validate_iti_direction_artifact,
 )
 from .workflow import ITIWorkflowError, rebuild_iti_index, run_iti_intervention
 
@@ -42,4 +43,5 @@ __all__ = [
     "rebuild_iti_index",
     "run_iti_intervention",
     "run_iti_intervention_experiment",
+    "validate_iti_direction_artifact",
 ]

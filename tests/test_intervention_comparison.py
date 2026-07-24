@@ -25,12 +25,26 @@ _GENERATION_SETTINGS = {
     "repetition_penalty": 1.1,
     "no_repeat_ngram_size": 3,
 }
+_SYNTHETIC_LABELS = {
+    f"concept:{letter}": letter for letter in "abcdefg"
+}
+_GOEMOTION_LABELS = {
+    "goemotions:admiration": "admiration",
+    "goemotions:approval": "approval",
+    "goemotions:curiosity": "curiosity",
+    "goemotions:disapproval": "rejection",
+    "goemotions:gratitude": "gratitude",
+    "goemotions:love": "love",
+    "goemotions:optimism": "optimism",
+}
 _GENERATION_CONTRACT = {
     "schema_version": 1,
-    "prompt_ids": ["prompt-a"],
-    "prompt_ids_sha256": prompt_ids_sha256(["prompt-a"]),
+    "prompt_ids": ["classify_0"],
+    "prompt_ids_sha256": prompt_ids_sha256(["classify_0"]),
     "prompt_count": 1,
-    "candidate_prompt_ids": ["prompt-a"],
+    "candidate_prompt_ids": ["classify_0"],
+    "candidate_prompt_splits": {"classify_0": "test"},
+    "candidate_labels": _SYNTHETIC_LABELS,
     "open_prompt_ids": [],
     "sample_seeds": [1001, 2002, 3003],
     "decodings_per_prompt": 4,
@@ -45,6 +59,52 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
         "".join(json.dumps(row) + "\n" for row in rows),
         encoding="utf-8",
     )
+
+
+def _write_iti_direction_metrics(
+    path: Path,
+    *,
+    selected_layers_sha256: str,
+    row_manifest_sha256: str,
+) -> Path:
+    direction_file = path.parent / "iti_native_mass_mean.npz"
+    probe_file = path.parent / "iti_native_probe_weight.npz"
+    development_file = path.parent / "iti_development_indices.npz"
+    direction_file.write_bytes(b"mass mean")
+    probe_file.write_bytes(b"probe weight")
+    development_file.write_bytes(b"indices")
+    files = {
+        "variants": {
+            "native": {
+                "mass_mean": direction_file.name,
+                "probe_weight": probe_file.name,
+            }
+        },
+        "random": {},
+        "development_indices": development_file.name,
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "method": "honest_llama_mass_mean_qwen_full_attention",
+                "selected_layers_sha256": selected_layers_sha256,
+                "row_manifest_sha256": row_manifest_sha256,
+                "files": files,
+                "files_sha256": {
+                    "variants": {
+                        "native": {
+                            "mass_mean": sha256_file(direction_file),
+                            "probe_weight": sha256_file(probe_file),
+                        }
+                    },
+                    "random": {},
+                    "development_indices": sha256_file(development_file),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _score(
@@ -79,7 +139,7 @@ def _write_baseline_generation(
             "concept_id": "concept:a",
             "condition_id": condition_id,
             "grid_point": grid_condition,
-            "prompt_id": "prompt-a",
+            "prompt_id": "classify_0",
             "prompt_text": "Prompt.",
             "decoding": decoding,
             "seed": seed,
@@ -146,20 +206,28 @@ def _write_smoke_shard(
     candidate.write_text(
         json.dumps(
             {
-                "prompt_id": "prompt-a",
+                "prompt_id": "classify_0",
                 "method": method,
                 "target_concept_id": "goemotions:admiration",
                 "evaluation_split": "test",
                 "candidate_log_probabilities": {
                     "goemotions:admiration": -1.0,
-                    "other": -2.0,
+                    **{
+                        concept_id: -2.0
+                        for concept_id in _GOEMOTION_LABELS
+                        if concept_id != "goemotions:admiration"
+                    },
                 },
                 "candidate_probabilities_normalized": {
-                    "goemotions:admiration": 0.7,
-                    "other": 0.3,
+                    "goemotions:admiration": 0.4,
+                    **{
+                        concept_id: 0.1
+                        for concept_id in _GOEMOTION_LABELS
+                        if concept_id != "goemotions:admiration"
+                    },
                 },
                 "target_log_probability": -1.0,
-                "target_candidate_probability": 0.7,
+                "target_candidate_probability": 0.4,
                 "target_margin": 1.0,
                 "target_rank": 1,
                 **score_condition,
@@ -178,6 +246,31 @@ def _write_smoke_shard(
             "batch_size": 1,
             "sequence_length": 1,
             "injected_norm": 1.0,
+            **(
+                {
+                    "active_positions": 1,
+                    "strength": float(condition["strength"]),
+                    "residual_norm": 2.0,
+                    "kind": "addition",
+                }
+                if method == "j_component_intervention"
+                else (
+                    {
+                        "active_positions": 1,
+                        "multiplier": float(condition["strength"]),
+                    }
+                    if method == "iti_intervention"
+                    else {
+                        "target_probability": float(
+                            condition["target_probability"]
+                        ),
+                        "pre_intervention_logit": 0.0,
+                        "pre_intervention_probability": 0.5,
+                        "epsilon": 0.25,
+                        "steered": True,
+                    }
+                )
+            ),
         }
         for layer in layers
     ]
@@ -199,8 +292,12 @@ def _write_smoke_shard(
                 "intervention_metadata": {
                     "selected_layers": layers,
                     "active_layers": layers,
+                    "selected_heads": [
+                        {"layer": layer, "head": 0}
+                        for layer in layers
+                    ],
                 },
-                "prompt_id": "prompt-a",
+                "prompt_id": "classify_0",
                 "prompt_text": "Prompt.",
                 "decoding": decoding,
                 "seed": seed,
@@ -223,9 +320,13 @@ def _write_smoke_shard(
                 "target_concept_id": "goemotions:admiration",
                 "grid_index": grid_index,
                 "grid_condition": condition,
+                "selected_layers": layers,
                 "candidate_scores_sha256": sha256_file(candidate),
                 "generation_files": generation_hashes,
-                "generation_contract": _GENERATION_CONTRACT,
+                "generation_contract": {
+                    **_GENERATION_CONTRACT,
+                    "candidate_labels": _GOEMOTION_LABELS,
+                },
             }
         ),
         encoding="utf-8",
@@ -335,14 +436,18 @@ def test_comparison_selects_on_validation_and_reports_paired_test_effect(
                     "git_commit": "a" * 40,
                     "notes": {
                         "generation": {
-                            "max_new_tokens": 128,
+                            **_GENERATION_SETTINGS,
                             "candidate_prompts_sha256": "c" * 64,
                             "open_prompts_sha256": "d" * 64,
+                            "candidate_labels": _SYNTHETIC_LABELS,
+                            "candidate_prompt_splits": {
+                                "classify_0": "test"
+                            },
                             "candidate_prompt_count": 1,
                             "open_prompt_count": 0,
                             "prompt_count": 1,
                             "prompt_ids_sha256": prompt_ids_sha256(
-                                ["prompt-a"]
+                                ["classify_0"]
                             ),
                             "expected_rows_per_grid_point": 4,
                         },
@@ -413,15 +518,10 @@ def test_comparison_selects_on_validation_and_reports_paired_test_effect(
         ),
         encoding="utf-8",
     )
-    direction_metrics = tmp_path / "iti_direction_metrics.json"
-    direction_metrics.write_text(
-        json.dumps(
-            {
-                "selected_layers_sha256": selection_hash,
-                "row_manifest_sha256": row_manifest_hash,
-            }
-        ),
-        encoding="utf-8",
+    direction_metrics = _write_iti_direction_metrics(
+        tmp_path / "iti_direction_metrics.json",
+        selected_layers_sha256=selection_hash,
+        row_manifest_sha256=row_manifest_hash,
     )
     (target_dirs["iti_intervention"] / "summary.json").write_text(
         json.dumps(
@@ -555,6 +655,20 @@ def test_comparison_selects_on_validation_and_reports_paired_test_effect(
     assert entry["iti_native"]["held_out_target_margin_effect"] == pytest.approx(5.0)
     assert entry["iti_layer_matched"]["held_out_target_margin_effect"] == pytest.approx(6.0)
     assert comparison["llm_as_judge_run"] is False
+
+    direction_file = tmp_path / "iti_native_mass_mean.npz"
+    original_direction = direction_file.read_bytes()
+    direction_file.write_bytes(b"changed direction")
+    with pytest.raises(InterventionComparisonError, match="direction artifact"):
+        rebuild_intervention_comparison(
+            output_dir=tmp_path / "tampered_direction_comparison",
+            shared_layer_selection=shared,
+            j_root=roots["j_component_intervention"],
+            iti_root=roots["iti_intervention"],
+            raptor_root=roots["raptor_intervention"],
+            concept_ids=["concept:a"],
+        )
+    direction_file.write_bytes(original_direction)
 
     j_scores = (
         target_dirs["j_component_intervention"] / "candidate_scores.jsonl"

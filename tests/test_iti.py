@@ -13,6 +13,7 @@ from jlens_workspace._vendor.honest_llama_core import (
     train_probes,
 )
 from jlens_workspace.concept_intervention.iti import (
+    ITIError,
     ITIHeadShift,
     capture_iti_head_activations,
     fit_iti_concept_directions,
@@ -20,6 +21,7 @@ from jlens_workspace.concept_intervention.iti import (
     layer_matched_head_order,
     layer_matched_random_head_order,
     load_iti_head_shifts,
+    validate_iti_direction_artifact,
 )
 
 
@@ -160,6 +162,20 @@ def test_fit_iti_uses_train_validation_only_and_writes_original_modes(
     )
     assert len(shifts) == 1
     assert shifts[0].direction.shape == (3,)
+
+    direction_path = output / "concept%3Aa" / "mass_mean.npz"
+    with np.load(direction_path, allow_pickle=False) as payload:
+        changed = {key: np.asarray(payload[key]).copy() for key in payload.files}
+    changed["direction"][0] = np.roll(changed["direction"][0], 1)
+    np.savez(direction_path, **changed)
+    with pytest.raises(ITIError, match="identity"):
+        validate_iti_direction_artifact(
+            output / "concept%3Aa" / "metrics.json"
+        )
+    with pytest.raises(ITIError, match="identity"):
+        load_iti_head_shifts(
+            output, concept_id="concept:a", mode="mass_mean", top_k=1
+        )
 
 
 def test_capture_iti_writes_last_nonpadding_pre_projection_heads(

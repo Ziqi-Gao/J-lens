@@ -17,7 +17,12 @@ from jlens_workspace.concept_intervention.generation import (
     validate_candidate_score_artifact,
     validate_equivalent_generation_outputs,
     validate_generation_artifacts,
+    validate_generation_contract_identity,
     validate_target_artifact_seal,
+)
+from jlens_workspace.concept_intervention.iti.intervention import (
+    ITIError,
+    validate_iti_direction_artifact,
 )
 
 
@@ -130,6 +135,7 @@ def validate_three_method_smokes(
             shard,
             summary["generation_files"],
             contract=summary["generation_contract"],
+            expected_selected_layers=summary["selected_layers"],
         )
         entries.append(
             {
@@ -598,22 +604,16 @@ def rebuild_intervention_comparison(
         for method, summary in summaries.items():
             generation_contract = summary.get("generation_contract", {})
             generation_identity = generation_identities[method]
-            if (
-                generation_contract.get("prompt_ids_sha256")
-                != generation_identity.get("prompt_ids_sha256")
-                or int(generation_contract.get("prompt_count", -1))
-                != int(generation_identity.get("prompt_count", -2))
-                or int(generation_contract.get("expected_rows", -1))
-                != int(
-                    generation_identity.get(
-                        "expected_rows_per_grid_point", -2
-                    )
+            try:
+                validate_generation_contract_identity(
+                    generation_contract,
+                    generation_identity,
                 )
-            ):
+            except InterventionGenerationError as error:
                 raise InterventionComparisonError(
                     f"{concept_id}: {method} generation contract differs "
                     "from the content-addressed prompt banks"
-                )
+                ) from error
         iti_direction_metrics = Path(
             summaries["iti_intervention"]["direction_metrics"]
         )
@@ -624,9 +624,14 @@ def rebuild_intervention_comparison(
             raise InterventionComparisonError(
                 f"{concept_id}: ITI direction metrics identity mismatch"
             )
-        iti_direction_payload = json.loads(
-            iti_direction_metrics.read_text(encoding="utf-8")
-        )
+        try:
+            iti_direction_payload = validate_iti_direction_artifact(
+                iti_direction_metrics
+            )
+        except ITIError as error:
+            raise InterventionComparisonError(
+                f"{concept_id}: ITI direction artifact identity mismatch"
+            ) from error
         selection_hashes = {
             str(
                 summaries["j_component_intervention"]["source_provenance"][

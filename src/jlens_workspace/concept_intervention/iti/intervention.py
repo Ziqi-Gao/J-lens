@@ -413,6 +413,93 @@ def _save_shift_rows(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     )
 
 
+def _resolve_registered_file(root: Path, filename: str) -> Path:
+    path = (root / filename).resolve()
+    try:
+        path.relative_to(root.resolve())
+    except ValueError as error:
+        raise ITIError(f"ITI direction file escapes its artifact root: {path}") from error
+    return path
+
+
+def _hash_registered_files(root: Path, files: Any) -> Any:
+    """Mirror a nested filename registry with SHA-256 content identities."""
+
+    if isinstance(files, str):
+        path = _resolve_registered_file(root, files)
+        if not path.is_file():
+            raise ITIError(f"registered ITI direction file is missing: {path}")
+        return sha256_file(path)
+    if isinstance(files, Mapping):
+        return {
+            str(key): _hash_registered_files(root, value)
+            for key, value in files.items()
+        }
+    raise ITIError("ITI file registry must contain only mappings and filenames")
+
+
+def _validate_registered_files(root: Path, files: Any, hashes: Any) -> int:
+    if isinstance(files, str):
+        path = _resolve_registered_file(root, files)
+        if (
+            not isinstance(hashes, str)
+            or not path.is_file()
+            or sha256_file(path) != hashes
+        ):
+            raise ITIError(f"ITI direction file identity mismatch: {path}")
+        return 1
+    if isinstance(files, Mapping):
+        if not isinstance(hashes, Mapping) or set(files) != set(hashes):
+            raise ITIError("ITI direction file and hash registries differ")
+        return sum(
+            _validate_registered_files(root, files[key], hashes[key])
+            for key in files
+        )
+    raise ITIError("ITI file registry must contain only mappings and filenames")
+
+
+def validate_iti_direction_artifact(
+    metrics_path: str | Path,
+) -> dict[str, Any]:
+    """Verify the metrics identity and every registered ITI direction file."""
+
+    path = Path(metrics_path)
+    if not path.is_file():
+        raise ITIError(f"ITI direction metrics are missing: {path}")
+    metrics = json.loads(path.read_text(encoding="utf-8"))
+    if metrics.get("method") not in {ITI_METHOD, ITI_METHOD_UNVERSIONED}:
+        raise ITIError("unsupported ITI direction artifact")
+    files = metrics.get("files")
+    file_hashes = metrics.get("files_sha256")
+    if not isinstance(files, Mapping) or not isinstance(file_hashes, Mapping):
+        raise ITIError("ITI direction metrics lack content-addressed files")
+    if metrics["method"] == ITI_METHOD:
+        if set(files) != {
+            "mass_mean",
+            "probe_weight",
+            "random",
+            "development_indices",
+        }:
+            raise ITIError("legacy ITI direction file registry is incomplete")
+    else:
+        if set(files) != {"variants", "random", "development_indices"}:
+            raise ITIError("shared ITI direction file registry is incomplete")
+        variants = files["variants"]
+        if (
+            not isinstance(variants, Mapping)
+            or not variants
+            or any(
+                not isinstance(value, Mapping)
+                or set(value) != {"mass_mean", "probe_weight"}
+                for value in variants.values()
+            )
+        ):
+            raise ITIError("shared ITI variant registry is incomplete")
+    if _validate_registered_files(path.parent, files, file_hashes) < 1:
+        raise ITIError("ITI direction artifact has no registered files")
+    return metrics
+
+
 def layer_matched_head_order(
     flat_accuracies: np.ndarray,
     *,
@@ -647,6 +734,12 @@ def fit_iti_concept_directions(
     finally:
         np.random.set_state(original_random_state)
 
+    registered_files = {
+        "mass_mean": "mass_mean.npz",
+        "probe_weight": "probe_weight.npz",
+        "random": random_files,
+        "development_indices": "development_indices.npz",
+    }
     metrics = {
         "schema_version": 1,
         "method": ITI_METHOD,
@@ -661,12 +754,11 @@ def fit_iti_concept_directions(
         "train_examples": len(train_source),
         "validation_examples": len(validation_source),
         "test_examples_used": 0,
-        "files": {
-            "mass_mean": "mass_mean.npz",
-            "probe_weight": "probe_weight.npz",
-            "random": random_files,
-            "development_indices": "development_indices.npz",
-        },
+        "files": registered_files,
+        "files_sha256": _hash_registered_files(
+            destination,
+            registered_files,
+        ),
         "development_indices_sha256": sha256_file(
             destination / "development_indices.npz"
         ),
@@ -893,6 +985,11 @@ def fit_shared_iti_concept_directions(
     finally:
         np.random.set_state(original_random_state)
 
+    registered_files = {
+        "variants": variant_files,
+        "random": random_files,
+        "development_indices": "development_indices.npz",
+    }
     metrics = {
         "schema_version": 1,
         "method": ITI_METHOD_UNVERSIONED,
@@ -908,11 +1005,11 @@ def fit_shared_iti_concept_directions(
         "train_examples": len(train_source),
         "validation_examples": len(validation_source),
         "test_examples_used": 0,
-        "files": {
-            "variants": variant_files,
-            "random": random_files,
-            "development_indices": "development_indices.npz",
-        },
+        "files": registered_files,
+        "files_sha256": _hash_registered_files(
+            destination,
+            registered_files,
+        ),
         "development_indices_sha256": sha256_file(
             destination / "development_indices.npz"
         ),
@@ -955,9 +1052,9 @@ def load_iti_head_shifts(
     variant: str | None = None,
 ) -> list[ITIHeadShift]:
     concept = Path(direction_dir) / quote(concept_id, safe="")
-    metrics = json.loads((concept / "metrics.json").read_text(encoding="utf-8"))
-    if metrics.get("method") not in {ITI_METHOD, ITI_METHOD_UNVERSIONED}:
-        raise ITIError("unsupported ITI direction artifact")
+    metrics = validate_iti_direction_artifact(concept / "metrics.json")
+    file_hashes = metrics.get("files_sha256")
+    assert isinstance(file_hashes, Mapping)
     if mode == "random":
         if random_seed is None:
             raise ITIError("random ITI shifts require a seed")
@@ -968,8 +1065,14 @@ def load_iti_head_shifts(
             and isinstance(random_files.get(variant), dict)
         ):
             filename = random_files[variant].get(str(int(random_seed)))
+            expected_sha256 = file_hashes["random"][variant].get(
+                str(int(random_seed))
+            )
         else:
             filename = random_files.get(str(int(random_seed)))
+            expected_sha256 = file_hashes["random"].get(
+                str(int(random_seed))
+            )
         if filename is None:
             raise ITIError(
                 f"random seed/variant absent from ITI artifact: "
@@ -978,30 +1081,43 @@ def load_iti_head_shifts(
     elif mode in {"mass_mean", "probe_weight"}:
         if variant is None:
             filename = metrics["files"][mode]
+            expected_sha256 = file_hashes.get(mode)
         else:
             try:
                 filename = metrics["files"]["variants"][variant][mode]
+                expected_sha256 = file_hashes["variants"][variant][mode]
             except KeyError as error:
                 raise ITIError(
                     f"ITI variant/mode absent from artifact: {variant}/{mode}"
                 ) from error
     else:
         raise ITIError(f"unknown ITI direction mode: {mode}")
-    payload = np.load(concept / filename, allow_pickle=False)
-    if not 0 < top_k <= len(payload["rank"]):
-        raise ITIError(f"top_k={top_k} outside fitted range")
-    output = []
-    for index in range(top_k):
-        output.append(
-            ITIHeadShift(
-                rank=int(payload["rank"][index]),
-                layer=int(payload["layer"][index]),
-                head=int(payload["head"][index]),
-                validation_accuracy=float(payload["validation_accuracy"][index]),
-                direction=np.asarray(payload["direction"][index], dtype=np.float64),
-                projection_std=float(payload["projection_std"][index]),
+    direction_path = _resolve_registered_file(concept, str(filename))
+    if (
+        not isinstance(expected_sha256, str)
+        or not direction_path.is_file()
+        or sha256_file(direction_path) != expected_sha256
+    ):
+        raise ITIError(f"ITI direction file identity mismatch: {direction_path}")
+    with np.load(direction_path, allow_pickle=False) as payload:
+        if not 0 < top_k <= len(payload["rank"]):
+            raise ITIError(f"top_k={top_k} outside fitted range")
+        output = []
+        for index in range(top_k):
+            output.append(
+                ITIHeadShift(
+                    rank=int(payload["rank"][index]),
+                    layer=int(payload["layer"][index]),
+                    head=int(payload["head"][index]),
+                    validation_accuracy=float(
+                        payload["validation_accuracy"][index]
+                    ),
+                    direction=np.asarray(
+                        payload["direction"][index], dtype=np.float64
+                    ),
+                    projection_std=float(payload["projection_std"][index]),
+                )
             )
-        )
     return output
 
 
