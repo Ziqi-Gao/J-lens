@@ -1,11 +1,12 @@
 # Three-method intervention protocol
 
-## Stable experiment identities
+## Immutable experiment identity
 
-This protocol uses stable, unversioned experiment names because later analyses
-will cite these artifact roots directly:
+The registered parent experiment is
+`qwen35_4b_three_method_intervention_v1`. The three methods retain independent
+child roots so their artifacts can be maintained and cited separately:
 
-| Scope | Experiment name and artifact root |
+| Scope | Child artifact root |
 | --- | --- |
 | Shared inputs | `shared_intervention_protocol` |
 | J-component | `j_component_intervention` |
@@ -13,10 +14,12 @@ will cite these artifact roots directly:
 | RAPTOR | `raptor_intervention` |
 | Final comparison | `intervention_comparison` |
 
-Earlier versioned runs and YAML files are historical artifacts and are not
-overwritten. These stable names are intentional (there is no `_v1` suffix);
-their writers are fail-closed and do not silently replace an existing
-scientific shard.
+Every child is located below
+`artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/`.
+The older unversioned roots are historical and are never consulted. Grid
+manifests are immutable: a pre-existing shard without the exact same commit,
+config, model/data, prompt, row, and layer identity is rejected rather than
+reused.
 
 ## Common model, data, rows, layers, and prompts
 
@@ -26,11 +29,11 @@ seven-concept artifact at upstream revision
 `add492243ff905527e67aeb8b80c082af02207c3`, the same chat-template/BOS policy,
 and the same generation settings.
 
-`shared_intervention_protocol/selection/row_manifest.json` records an exact
-positive/negative row balance for each concept and split. Selection is
-deterministic, keeps whole groups, and fails if a group crosses labels or
-train/validation/test. The shared residual activation coordinate is the final
-non-padding token at block output (`resid_post`).
+The child path `shared_intervention_protocol/selection/row_manifest.json`
+records an exact positive/negative row balance for each concept and split.
+Selection is deterministic, keeps whole groups, and fails if a group crosses
+labels or train/validation/test. The shared residual activation coordinate is
+the final non-padding token at block output (`resid_post`).
 
 RAPTOR-style StandardScaler plus L2-LBFGS probes are fit at layers
 `[3,7,11,15,19,23,27]`. Their 100-value logarithmic C grid spans
@@ -122,12 +125,15 @@ probabilities, direction/head/K metadata, and per-forward injection telemetry.
 Telemetry contains the generation/forward step, layer, sequence shape, dynamic
 strength or epsilon, per-event injected norm, per-layer accumulated norm, and
 explicit total injected norm. Method indexes reject missing or duplicated grid
-indices, empty or cardinality-mismatched generation files, duplicate IDs,
-incomplete token/logprob records, malformed telemetry, inconsistent layer
+indices, wrong grid conditions, empty or cardinality-mismatched
+candidate/generation files, duplicate IDs, incomplete token/logprob records,
+malformed telemetry, mixed prompt contracts or provenance, inconsistent layer
 sets, and non-identical zero-strength token IDs, text, or per-token log
-probabilities. The final comparison additionally requires the J full/zero,
-RAPTOR no-hook, and ITI native/zero outputs and candidate log probabilities to
-agree.
+probabilities. Each method index seals every target summary, shard summary,
+candidate score, generation, and blind-export hash. The final comparison
+revalidates those seals before reading any score and additionally requires the
+J full/zero, RAPTOR no-hook, and ITI native/zero outputs and candidate log
+probabilities to agree.
 
 No LLM-as-judge is called. Direct outputs are target log probability,
 candidate-normalized probability, target margin, rank, and off-target
@@ -164,8 +170,8 @@ An `afterok` CPU gate first validates the registered smoke conditions and the
 full prompt-by-decoding generation contract (not only file hashes), writes
 `intervention_comparison/smoke_gate.json`, and only then submits the exhaustive
 arrays. Thus the full jobs are not submitted before the GPU smokes have
-actually passed. The experiment is complete only when
-`artifacts/concept_intervention/intervention_comparison/index.json` exists,
-contains `"complete": true`, and was produced after all prompt, row-manifest,
-probe, layer, zero-output, and telemetry checks. Pending jobs, launchers, or
-partial method directories are not experimental results.
+actually passed. The experiment is complete only when the parent suite's
+`intervention_comparison/index.json` exists, contains `"complete": true`, and
+was produced after all prompt, row-manifest, probe, layer, zero-output, and
+telemetry checks. Pending jobs, launchers, or partial method directories are
+not experimental results.

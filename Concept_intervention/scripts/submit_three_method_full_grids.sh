@@ -4,12 +4,12 @@ set -euo pipefail
 
 source "${CODE_ROOT:?}/Concept_intervention/scripts/three_method_env.sh"
 SCRIPTS="${CODE_ROOT}/Concept_intervention/scripts"
-COMPARISON_ROOT="artifacts/concept_intervention/intervention_comparison"
+COMPARISON_ROOT="artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/intervention_comparison"
 
 jlens intervention smoke-check \
-  --j-output artifacts/concept_intervention/j_component_intervention \
-  --iti-output artifacts/concept_intervention/iti_intervention \
-  --raptor-output artifacts/concept_intervention/raptor_intervention \
+  --j-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/j_component_intervention \
+  --iti-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/iti_intervention \
+  --raptor-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/raptor_intervention \
   --output "${COMPARISON_ROOT}/smoke_gate.json"
 
 # The four completed smoke tasks are omitted from the exhaustive arrays.

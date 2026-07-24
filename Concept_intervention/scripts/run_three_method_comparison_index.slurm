@@ -7,18 +7,18 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=04:00:00
-#SBATCH --output=artifacts/concept_intervention/intervention_comparison/slurm/%x-%j.out
-#SBATCH --error=artifacts/concept_intervention/intervention_comparison/slurm/%x-%j.err
+#SBATCH --output=artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/intervention_comparison/slurm/%x-%j.out
+#SBATCH --error=artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/intervention_comparison/slurm/%x-%j.err
 
 set -euo pipefail
 source "${CODE_ROOT:?}/Concept_intervention/scripts/three_method_env.sh"
 
 jlens intervention compare-index \
-  --shared-layer-selection artifacts/concept_intervention/shared_intervention_protocol/selection/layer_selection.json \
-  --j-output artifacts/concept_intervention/j_component_intervention \
-  --iti-output artifacts/concept_intervention/iti_intervention \
-  --raptor-output artifacts/concept_intervention/raptor_intervention \
-  --output artifacts/concept_intervention/intervention_comparison \
+  --shared-layer-selection artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/selection/layer_selection.json \
+  --j-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/j_component_intervention \
+  --iti-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/iti_intervention \
+  --raptor-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/raptor_intervention \
+  --output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/intervention_comparison \
   --concept-id goemotions:admiration \
   --concept-id goemotions:approval \
   --concept-id goemotions:curiosity \

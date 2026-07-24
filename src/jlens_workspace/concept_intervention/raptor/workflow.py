@@ -1,4 +1,4 @@
-"""Unversioned same-model/data RAPTOR intervention experiment."""
+"""Immutable-suite same-model/data RAPTOR intervention experiment."""
 
 from __future__ import annotations
 
@@ -20,10 +20,15 @@ from jlens_workspace.concept_intervention.evaluation import (
 )
 from jlens_workspace.concept_intervention.generation import (
     GenerationSettings,
+    InterventionGenerationError,
     build_generation_contract,
+    build_target_artifact_seal,
     generate_full_grid,
     load_open_prompt_bank,
+    validate_candidate_score_artifact,
     validate_generation_artifacts,
+    validate_generation_contract_identity,
+    validate_shard_manifest_identity,
     write_generation_artifacts,
 )
 from jlens_workspace.concept_intervention.raptor.intervention import (
@@ -390,10 +395,34 @@ def rebuild_raptor_index(
     expected_grid_size = (
         None if target_probabilities is None else 1 + len(target_probabilities)
     )
+    expected_grid = (
+        None
+        if target_probabilities is None
+        else [
+            {
+                "condition_id": "no_hook",
+                "target_probability": None,
+            },
+            *[
+                {
+                    "condition_id": f"target_probability_{float(value):g}",
+                    "target_probability": float(value),
+                }
+                for value in target_probabilities
+            ],
+        ]
+    )
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        raise RaptorError("RAPTOR method manifest is missing")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    generation_identity = manifest.get("notes", {}).get("generation")
+    if not isinstance(generation_identity, Mapping):
+        raise RaptorError("RAPTOR manifest lacks generation identity")
     for concept_id in concept_ids:
         target = root / "targets" / quote(concept_id, safe="")
         path = target / "summary.json"
-        if path.is_file():
+        if path.is_file() and expected_grid is None:
             payload = json.loads(path.read_text(encoding="utf-8"))
         else:
             shard_paths = sorted((target / "shards").glob("grid_*/summary.json"))
@@ -404,18 +433,70 @@ def rebuild_raptor_index(
             for shard, shard_payload in zip(
                 shard_paths, shard_payloads, strict=True
             ):
-                candidate_path = shard.parent / "candidate_scores.jsonl"
-                if shard_payload.get("candidate_scores_sha256") != sha256_file(
-                    candidate_path
+                grid_index = int(shard_payload.get("grid_index", -1))
+                if (
+                    expected_grid is None
+                    or not 0 <= grid_index < len(expected_grid)
+                    or shard_payload.get("grid_condition")
+                    != expected_grid[grid_index]
+                    or shard_payload.get("method") != "raptor_intervention"
+                    or shard_payload.get("target_concept_id") != concept_id
                 ):
                     raise RaptorError(
-                        f"RAPTOR candidate-score identity mismatch: {candidate_path}"
+                        f"RAPTOR shard scientific grid identity mismatch: {shard}"
                     )
-                validate_generation_artifacts(
-                    shard.parent,
-                    shard_payload["generation_files"],
-                    contract=shard_payload["generation_contract"],
+                shard_manifest_path = (
+                    root
+                    / "manifests"
+                    / quote(concept_id, safe="")
+                    / f"grid_{grid_index:04d}.json"
                 )
+                if not shard_manifest_path.is_file():
+                    raise RaptorError(
+                        f"RAPTOR shard manifest is missing: {shard_manifest_path}"
+                    )
+                try:
+                    validate_shard_manifest_identity(
+                        manifest,
+                        json.loads(
+                            shard_manifest_path.read_text(encoding="utf-8")
+                        ),
+                    )
+                except InterventionGenerationError as error:
+                    raise RaptorError(
+                        "RAPTOR shard manifest identity mismatch: "
+                        f"{shard_manifest_path}"
+                    ) from error
+                candidate_path = shard.parent / "candidate_scores.jsonl"
+                try:
+                    candidate_check = validate_candidate_score_artifact(
+                        candidate_path,
+                        expected_sha256=str(
+                            shard_payload.get("candidate_scores_sha256", "")
+                        ),
+                        contract=shard_payload["generation_contract"],
+                        expected_method="raptor_intervention",
+                        expected_concept_id=concept_id,
+                        expected_grid_condition=expected_grid[grid_index],
+                    )
+                    generation_check = validate_generation_artifacts(
+                        shard.parent,
+                        shard_payload["generation_files"],
+                        contract=shard_payload["generation_contract"],
+                    )
+                except InterventionGenerationError as error:
+                    raise RaptorError(
+                        f"RAPTOR shard output contract failed: {shard}"
+                    ) from error
+                if (
+                    int(shard_payload.get("candidate_score_rows", -1))
+                    != candidate_check["rows"]
+                    or int(shard_payload.get("generation_rows", -1))
+                    != generation_check["rows"]
+                ):
+                    raise RaptorError(
+                        f"RAPTOR shard declared row counts differ: {shard}"
+                    )
             indices = {row.get("grid_index") for row in shard_payloads}
             if (
                 expected_grid_size is None
@@ -427,6 +508,49 @@ def rebuild_raptor_index(
                 )
             ):
                 continue
+            contract_identities = {
+                json.dumps(
+                    row["generation_contract"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                for row in shard_payloads
+            }
+            provenance_identities = {
+                json.dumps(
+                    {
+                        key: row[key]
+                        for key in (
+                            "selected_layers",
+                            "coordinate",
+                            "position",
+                            "normalization",
+                            "source_provenance",
+                            "upstream",
+                        )
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                for row in shard_payloads
+            }
+            if len(contract_identities) != 1:
+                raise RaptorError(
+                    f"{concept_id}: RAPTOR shards used different generation contracts"
+                )
+            if len(provenance_identities) != 1:
+                raise RaptorError(
+                    f"{concept_id}: RAPTOR shards used different provenance"
+                )
+            try:
+                validate_generation_contract_identity(
+                    shard_payloads[0]["generation_contract"],
+                    generation_identity,
+                )
+            except InterventionGenerationError as error:
+                raise RaptorError(
+                    f"{concept_id}: RAPTOR shard contract differs from manifest"
+                ) from error
             layers = {
                 tuple(int(value) for value in row["selected_layers"])
                 for row in shard_payloads
@@ -476,6 +600,7 @@ def rebuild_raptor_index(
                 "summary": str(path.relative_to(root)),
                 "summary_sha256": sha256_file(path),
                 "selected_layers": payload["selected_layers"],
+                "artifact_seal": build_target_artifact_seal(root, path),
             }
         )
     expected = set(concept_ids)

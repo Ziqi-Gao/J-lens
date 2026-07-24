@@ -159,12 +159,14 @@ include:
   CV/validation/test metrics and an activation-identity manifest;
 - `alignment/`: signed cosine-ranked token IDs/tokens, matched-norm orthogonal
   random controls, and exact probe/lens identities for semantic inspection;
-- stable method roots `j_component_intervention/`, `iti_intervention/`, and
-  `raptor_intervention/`: grid shards with scores, token IDs, text, per-token
+- immutable suite root `qwen35_4b_three_method_intervention_v1/`, containing
+  independent `j_component_intervention/`, `iti_intervention/`, and
+  `raptor_intervention/` children with grid scores, token IDs, text, per-token
   log probabilities, dynamic injection telemetry, and future blind-judge
   exports;
-- `intervention_comparison/index.json`: the completion marker after all three
-  method indexes pass identity and completeness checks.
+- `qwen35_4b_three_method_intervention_v1/intervention_comparison/index.json`:
+  the completion marker after all three method indexes pass identity and
+  completeness checks.
 
 Treat the config and each artifact's metadata/manifest as a unit. A probe or
 lens must never be reused after changing the model revision, tokenizer, BOS
@@ -173,9 +175,10 @@ policy, hook coordinate, or coordinate-changing model wrapper.
 ## Recorded runs
 
 - [Three-method intervention protocol](docs/three_method_interventions.md)
-  defines the stable J-component, ITI, and RAPTOR artifact roots. Completion
-  requires `intervention_comparison/index.json`; launchers alone are not a
-  measured result.
+  defines the immutable parent experiment and independent J-component, ITI,
+  and RAPTOR child roots. Completion requires the parent experiment's
+  `intervention_comparison/index.json`; launchers alone are not a measured
+  result.
 
 - [Qwen3.5-4B ITI comparison v1 protocol](docs/iti_comparison_v1.md) pins the
   original implementation commit, records the Qwen hybrid-attention adapter,

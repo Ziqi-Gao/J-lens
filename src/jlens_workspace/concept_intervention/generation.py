@@ -376,11 +376,18 @@ def validate_generation_artifacts(
     if int(contract.get("schema_version", -1)) != 1:
         raise InterventionGenerationError("unsupported generation contract")
     prompt_ids = [str(value) for value in contract.get("prompt_ids", [])]
+    candidate_prompt_ids = [
+        str(value) for value in contract.get("candidate_prompt_ids", [])
+    ]
+    open_prompt_ids = [
+        str(value) for value in contract.get("open_prompt_ids", [])
+    ]
     sample_seeds = [int(value) for value in contract.get("sample_seeds", [])]
     expected_rows = int(contract.get("expected_rows", -1))
     if (
         not prompt_ids
         or len(set(prompt_ids)) != len(prompt_ids)
+        or [*candidate_prompt_ids, *open_prompt_ids] != prompt_ids
         or int(contract.get("prompt_count", -1)) != len(prompt_ids)
         or contract.get("prompt_ids_sha256") != prompt_ids_sha256(prompt_ids)
         or not sample_seeds
@@ -424,6 +431,7 @@ def validate_generation_artifacts(
     generation_ids: set[str] = set()
     blind_ids: set[str] = set()
     by_blind: dict[str, dict[str, Any]] = {}
+    scientific_identities: set[str] = set()
     expected_settings = json.dumps(
         contract.get("generation_settings"), sort_keys=True
     )
@@ -449,6 +457,39 @@ def validate_generation_artifacts(
         generation_ids.add(generation_id)
         blind_ids.add(blind_id)
         by_blind[blind_id] = row
+        method = str(row.get("method", ""))
+        concept_id = str(row.get("concept_id", ""))
+        condition_id = str(row.get("condition_id", ""))
+        grid_point = row.get("grid_point")
+        intervention_metadata = row.get("intervention_metadata")
+        if (
+            method
+            not in {
+                "j_component_intervention",
+                "iti_intervention",
+                "raptor_intervention",
+            }
+            or not concept_id
+            or not condition_id
+            or not isinstance(grid_point, Mapping)
+            or not isinstance(intervention_metadata, Mapping)
+        ):
+            raise InterventionGenerationError(
+                f"invalid scientific identity for generation {generation_id}"
+            )
+        scientific_identities.add(
+            json.dumps(
+                {
+                    "method": method,
+                    "concept_id": concept_id,
+                    "condition_id": condition_id,
+                    "grid_point": dict(grid_point),
+                    "intervention_metadata": dict(intervention_metadata),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
         token_ids = row.get("generated_token_ids")
         token_logprobs = row.get("token_log_probabilities")
         if (
@@ -500,6 +541,8 @@ def validate_generation_artifacts(
             "sequence_length",
             "injected_norm",
         }
+        recomputed_by_layer: dict[str, float] = {}
+        calls_by_layer: dict[str, list[int]] = {}
         for event in telemetry:
             if (
                 not isinstance(event, Mapping)
@@ -510,6 +553,83 @@ def validate_generation_artifacts(
                 raise InterventionGenerationError(
                     f"malformed per-forward telemetry for generation {generation_id}"
                 )
+            layer = str(int(event["layer"]))
+            forward_call = int(event["forward_call"])
+            generation_step = int(event["generation_step"])
+            batch_size = int(event["batch_size"])
+            sequence_length = int(event["sequence_length"])
+            if (
+                forward_call < 0
+                or generation_step != forward_call
+                or batch_size < 1
+                or sequence_length < 1
+            ):
+                raise InterventionGenerationError(
+                    f"invalid telemetry coordinates for generation {generation_id}"
+                )
+            recomputed_by_layer[layer] = recomputed_by_layer.get(layer, 0.0) + float(
+                event["injected_norm"]
+            )
+            calls_by_layer.setdefault(layer, []).append(forward_call)
+        for layer, calls in calls_by_layer.items():
+            if sorted(calls) != list(range(len(calls))):
+                raise InterventionGenerationError(
+                    f"non-contiguous telemetry calls at layer {layer} "
+                    f"for generation {generation_id}"
+                )
+        if set(recomputed_by_layer) != {
+            str(value) for value in injected_by_layer
+        } or any(
+            not math.isclose(
+                recomputed_by_layer[layer],
+                float(injected_by_layer[layer]),
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            )
+            for layer in recomputed_by_layer
+        ):
+            raise InterventionGenerationError(
+                f"telemetry/layer norm mismatch for generation {generation_id}"
+            )
+        strength = grid_point.get("strength")
+        target_probability = grid_point.get("target_probability")
+        intervention_enabled = (
+            target_probability is not None
+            if method == "raptor_intervention"
+            else strength is not None and float(strength) != 0.0
+        )
+        if intervention_enabled and not telemetry:
+            raise InterventionGenerationError(
+                f"nonzero intervention has empty telemetry: {generation_id}"
+            )
+        expected_layers_key = (
+            "active_layers"
+            if method == "iti_intervention"
+            else "selected_layers"
+        )
+        expected_layers = {
+            str(int(value))
+            for value in intervention_metadata.get(expected_layers_key, [])
+        }
+        if intervention_enabled and (
+            not expected_layers or set(recomputed_by_layer) != expected_layers
+        ):
+            raise InterventionGenerationError(
+                f"intervention telemetry layer coverage mismatch: {generation_id}"
+            )
+        if (
+            intervention_enabled
+            and method
+            in {"j_component_intervention", "iti_intervention"}
+            and float(total_injected_norm) <= 0.0
+        ):
+            raise InterventionGenerationError(
+                f"nonzero intervention has zero injected norm: {generation_id}"
+            )
+        if not intervention_enabled and float(total_injected_norm) != 0.0:
+            raise InterventionGenerationError(
+                f"zero/no-hook generation has nonzero injected norm: {generation_id}"
+            )
         if (
             json.dumps(row.get("generation_settings"), sort_keys=True)
             != expected_settings
@@ -520,6 +640,10 @@ def validate_generation_artifacts(
     if observed_keys != expected_keys:
         raise InterventionGenerationError(
             "generation prompt/decoding IDs differ from the contract"
+        )
+    if len(scientific_identities) != 1:
+        raise InterventionGenerationError(
+            "generation shard mixes scientific condition identities"
         )
 
     blind_by_id = {str(row.get("blind_id", "")): row for row in blind}
@@ -556,6 +680,330 @@ def validate_generation_artifacts(
         "unique_generation_ids": len(generation_ids),
         "unique_blind_ids": len(blind_ids),
     }
+
+
+def validate_candidate_score_artifact(
+    path: str | Path,
+    *,
+    expected_sha256: str,
+    contract: Mapping[str, Any],
+    expected_method: str,
+    expected_concept_id: str,
+    expected_grid_condition: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Require one complete candidate-score row per registered candidate prompt."""
+
+    source = Path(path)
+    if not source.is_file() or sha256_file(source) != expected_sha256:
+        raise InterventionGenerationError(
+            f"candidate-score artifact identity mismatch: {source}"
+        )
+    prompt_ids = [
+        str(value) for value in contract.get("candidate_prompt_ids", [])
+    ]
+    if not prompt_ids or len(set(prompt_ids)) != len(prompt_ids):
+        raise InterventionGenerationError(
+            "generation contract lacks unique candidate prompt IDs"
+        )
+    with source.open(encoding="utf-8") as handle:
+        try:
+            rows = [json.loads(line) for line in handle if line.strip()]
+        except json.JSONDecodeError as error:
+            raise InterventionGenerationError(
+                f"invalid candidate-score JSONL: {source}"
+            ) from error
+    observed_prompt_ids = [str(row.get("prompt_id", "")) for row in rows]
+    if (
+        len(rows) != len(prompt_ids)
+        or len(set(observed_prompt_ids)) != len(observed_prompt_ids)
+        or set(observed_prompt_ids) != set(prompt_ids)
+    ):
+        raise InterventionGenerationError(
+            f"candidate-score row count/IDs differ from prompt contract: {source}"
+        )
+    condition_field_map = {
+        "mode": "condition",
+    }
+    for row in rows:
+        if (
+            row.get("method") != expected_method
+            or row.get("target_concept_id") != expected_concept_id
+            or row.get("evaluation_split") not in {"validation", "test"}
+        ):
+            raise InterventionGenerationError(
+                f"candidate-score scientific identity mismatch: {source}"
+            )
+        for key, value in expected_grid_condition.items():
+            row_key = condition_field_map.get(key, key)
+            if row.get(row_key) != value:
+                raise InterventionGenerationError(
+                    f"candidate-score grid condition mismatch: {source}"
+                )
+        log_probabilities = row.get("candidate_log_probabilities")
+        probabilities = row.get("candidate_probabilities_normalized")
+        target = expected_concept_id
+        if (
+            not isinstance(log_probabilities, Mapping)
+            or not isinstance(probabilities, Mapping)
+            or set(log_probabilities) != set(probabilities)
+            or target not in log_probabilities
+            or len(log_probabilities) < 2
+            or any(
+                not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                for value in [*log_probabilities.values(), *probabilities.values()]
+            )
+        ):
+            raise InterventionGenerationError(
+                f"incomplete candidate probabilities: {source}"
+            )
+        scalar_fields = (
+            "target_log_probability",
+            "target_candidate_probability",
+            "target_margin",
+        )
+        if any(
+            not isinstance(row.get(field), (int, float))
+            or not math.isfinite(float(row[field]))
+            for field in scalar_fields
+        ) or not isinstance(row.get("target_rank"), int):
+            raise InterventionGenerationError(
+                f"incomplete candidate metrics: {source}"
+            )
+        off_target = [
+            float(value)
+            for key, value in log_probabilities.items()
+            if key != target
+        ]
+        expected_margin = float(log_probabilities[target]) - (
+            sum(off_target) / len(off_target)
+        )
+        expected_rank = 1 + sum(
+            value > float(log_probabilities[target]) for value in off_target
+        )
+        if (
+            not math.isclose(
+                float(row["target_log_probability"]),
+                float(log_probabilities[target]),
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            )
+            or not math.isclose(
+                float(row["target_candidate_probability"]),
+                float(probabilities[target]),
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            )
+            or not 1 <= int(row["target_rank"]) <= len(log_probabilities)
+            or int(row["target_rank"]) != expected_rank
+            or not math.isclose(
+                float(row["target_margin"]),
+                expected_margin,
+                rel_tol=1e-6,
+                abs_tol=1e-6,
+            )
+            or not math.isclose(
+                sum(float(value) for value in probabilities.values()),
+                1.0,
+                rel_tol=1e-6,
+                abs_tol=1e-6,
+            )
+        ):
+            raise InterventionGenerationError(
+                f"inconsistent candidate target metrics: {source}"
+            )
+    return {
+        "rows": len(rows),
+        "prompt_ids_sha256": prompt_ids_sha256(prompt_ids),
+    }
+
+
+def validate_generation_contract_identity(
+    contract: Mapping[str, Any],
+    generation_identity: Mapping[str, Any],
+) -> None:
+    """Match a shard contract to the prompt banks frozen in the run manifest."""
+
+    candidate_ids = [
+        str(value) for value in contract.get("candidate_prompt_ids", [])
+    ]
+    open_ids = [str(value) for value in contract.get("open_prompt_ids", [])]
+    settings = contract.get("generation_settings")
+    if (
+        not isinstance(settings, Mapping)
+        or contract.get("prompt_ids_sha256")
+        != generation_identity.get("prompt_ids_sha256")
+        or int(contract.get("prompt_count", -1))
+        != int(generation_identity.get("prompt_count", -2))
+        or len(candidate_ids)
+        != int(generation_identity.get("candidate_prompt_count", -1))
+        or len(open_ids)
+        != int(generation_identity.get("open_prompt_count", -1))
+        or int(contract.get("expected_rows", -1))
+        != int(generation_identity.get("expected_rows_per_grid_point", -2))
+        or any(
+            settings.get(key) != generation_identity.get(key)
+            for key in (
+                "sample_seeds",
+                "max_new_tokens",
+                "temperature",
+                "top_p",
+                "repetition_penalty",
+                "no_repeat_ngram_size",
+            )
+        )
+    ):
+        raise InterventionGenerationError(
+            "generation contract differs from run-manifest prompt identity"
+        )
+
+
+def validate_shard_manifest_identity(
+    method_manifest: Mapping[str, Any],
+    shard_manifest: Mapping[str, Any],
+) -> None:
+    """Require a grid shard to come from the same immutable run identity."""
+
+    top_level_fields = (
+        "schema_version",
+        "experiment_name",
+        "seed",
+        "model_id",
+        "model_revision",
+        "tokenizer_id",
+        "tokenizer_revision",
+        "lens_source",
+        "lens_revision",
+        "dataset_source",
+        "dataset_revision",
+        "dataset_hash",
+        "git_commit",
+        "python",
+        "platform",
+        "packages",
+    )
+    method_notes = method_manifest.get("notes")
+    shard_notes = shard_manifest.get("notes")
+    note_fields = (
+        "direction",
+        "coordinate",
+        "config_sha256",
+        "force_bos",
+        "workflow",
+        "generation",
+        "selected_layers_sha256",
+        "row_manifest_sha256",
+    )
+    if (
+        not isinstance(method_notes, Mapping)
+        or not isinstance(shard_notes, Mapping)
+        or not method_manifest.get("git_commit")
+        or any(
+            method_manifest.get(field) != shard_manifest.get(field)
+            for field in top_level_fields
+        )
+        or any(
+            method_notes.get(field) != shard_notes.get(field)
+            for field in note_fields
+        )
+    ):
+        raise InterventionGenerationError(
+            "grid shard manifest differs from method run manifest"
+        )
+
+
+def build_target_artifact_seal(
+    root: str | Path,
+    summary_path: str | Path,
+) -> dict[str, Any]:
+    """Hash every method-root artifact reachable from one target summary."""
+
+    method_root = Path(root).resolve()
+    target_summary = Path(summary_path).resolve()
+    paths: set[Path] = {target_summary}
+    payload = json.loads(target_summary.read_text(encoding="utf-8"))
+    summary_paths = [target_summary]
+    for shard in payload.get("shards", []):
+        shard_summary = (method_root / str(shard["summary"])).resolve()
+        paths.add(shard_summary)
+        summary_paths.append(shard_summary)
+    for scientific_summary in summary_paths:
+        directory = scientific_summary.parent
+        for filename in (
+            "candidate_scores.jsonl",
+            "generations.jsonl",
+            "judge_blind_generations.jsonl",
+            "judge_blind_map.jsonl",
+        ):
+            candidate = directory / filename
+            if candidate.is_file():
+                paths.add(candidate.resolve())
+    rows = []
+    for path in sorted(paths, key=str):
+        try:
+            relative = path.relative_to(method_root)
+        except ValueError as error:
+            raise InterventionGenerationError(
+                f"artifact seal path escapes method root: {path}"
+            ) from error
+        if not path.is_file():
+            raise InterventionGenerationError(
+                f"artifact seal input is missing: {path}"
+            )
+        rows.append(
+            {
+                "path": str(relative),
+                "sha256": sha256_file(path),
+            }
+        )
+    encoded = json.dumps(rows, sort_keys=True, separators=(",", ":"))
+    return {
+        "schema_version": 1,
+        "files": rows,
+        "files_sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+    }
+
+
+def validate_target_artifact_seal(
+    root: str | Path,
+    seal: Mapping[str, Any],
+) -> set[Path]:
+    """Verify an index-time target artifact seal and return its absolute paths."""
+
+    if int(seal.get("schema_version", -1)) != 1:
+        raise InterventionGenerationError("unsupported target artifact seal")
+    rows = seal.get("files")
+    if not isinstance(rows, list) or not rows:
+        raise InterventionGenerationError("target artifact seal is empty")
+    encoded = json.dumps(rows, sort_keys=True, separators=(",", ":"))
+    if seal.get("files_sha256") != hashlib.sha256(
+        encoded.encode("utf-8")
+    ).hexdigest():
+        raise InterventionGenerationError(
+            "target artifact seal list identity mismatch"
+        )
+    method_root = Path(root).resolve()
+    output: set[Path] = set()
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise InterventionGenerationError("malformed target artifact seal row")
+        path = (method_root / str(row.get("path", ""))).resolve()
+        try:
+            path.relative_to(method_root)
+        except ValueError as error:
+            raise InterventionGenerationError(
+                f"artifact seal path escapes method root: {path}"
+            ) from error
+        if (
+            path in output
+            or not path.is_file()
+            or row.get("sha256") != sha256_file(path)
+        ):
+            raise InterventionGenerationError(
+                f"target artifact seal mismatch: {path}"
+            )
+        output.add(path)
+    return output
 
 
 def validate_equivalent_generation_outputs(

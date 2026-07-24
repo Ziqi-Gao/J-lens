@@ -33,7 +33,8 @@ Two versioned active-support coefficient solvers are provided:
 - ``nonnegative_gradient_pursuit_standard`` performs the standard Gradient
   Pursuit one-dimensional optimal update along the active-support gradient,
   followed by a non-negative projection.  It does not solve active-support
-  NNLS and is the primary solver for the unversioned intervention experiments.
+  NNLS and is the primary solver for the registered three-method intervention
+  experiment.
 
 Neither name claims a globally exact solution of the non-convex L0 problem.
 ``full-vocabulary`` means only that atom selection re-scans every token row at

@@ -1,4 +1,4 @@
-"""Unversioned multi-layer J-component intervention experiment."""
+"""Immutable-suite multi-layer J-component intervention experiment."""
 
 from __future__ import annotations
 
@@ -22,11 +22,16 @@ from jlens_workspace.concept_intervention.evaluation import (
 )
 from jlens_workspace.concept_intervention.generation import (
     GenerationSettings,
+    InterventionGenerationError,
     build_generation_contract,
+    build_target_artifact_seal,
     generate_full_grid,
     load_open_prompt_bank,
+    validate_candidate_score_artifact,
     validate_equivalent_generation_outputs,
     validate_generation_artifacts,
+    validate_generation_contract_identity,
+    validate_shard_manifest_identity,
     write_generation_artifacts,
 )
 from jlens_workspace.concept_intervention.j_component.intervention import (
@@ -552,10 +557,37 @@ def rebuild_multilayer_j_index(
         if strengths is None or random_control_seeds is None
         else (3 + len(random_control_seeds)) * len(strengths)
     )
+    expected_grid = (
+        None
+        if strengths is None or random_control_seeds is None
+        else [
+            {
+                "condition_id": condition_id,
+                "strength": float(strength),
+            }
+            for condition_id in (
+                "full",
+                "j",
+                "non_j",
+                *[
+                    f"random_{int(seed)}"
+                    for seed in random_control_seeds
+                ],
+            )
+            for strength in strengths
+        ]
+    )
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        raise MultiLayerJError("J method manifest is missing")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    generation_identity = manifest.get("notes", {}).get("generation")
+    if not isinstance(generation_identity, Mapping):
+        raise MultiLayerJError("J manifest lacks generation identity")
     for concept_id in concept_ids:
         target = root / "targets" / quote(concept_id, safe="")
         path = target / "summary.json"
-        if path.is_file():
+        if path.is_file() and expected_grid is None:
             payload = json.loads(path.read_text(encoding="utf-8"))
         else:
             shard_paths = sorted((target / "shards").glob("grid_*/summary.json"))
@@ -566,18 +598,70 @@ def rebuild_multilayer_j_index(
             for shard, shard_payload in zip(
                 shard_paths, shard_payloads, strict=True
             ):
-                candidate_path = shard.parent / "candidate_scores.jsonl"
-                if shard_payload.get("candidate_scores_sha256") != sha256_file(
-                    candidate_path
+                grid_index = int(shard_payload.get("grid_index", -1))
+                if (
+                    expected_grid is None
+                    or not 0 <= grid_index < len(expected_grid)
+                    or shard_payload.get("grid_condition")
+                    != expected_grid[grid_index]
+                    or shard_payload.get("method")
+                    != "j_component_intervention"
+                    or shard_payload.get("target_concept_id") != concept_id
                 ):
                     raise MultiLayerJError(
-                        f"J candidate-score identity mismatch: {candidate_path}"
+                        f"J shard scientific grid identity mismatch: {shard}"
                     )
-                validate_generation_artifacts(
-                    shard.parent,
-                    shard_payload["generation_files"],
-                    contract=shard_payload["generation_contract"],
+                shard_manifest_path = (
+                    root
+                    / "manifests"
+                    / quote(concept_id, safe="")
+                    / f"grid_{grid_index:04d}.json"
                 )
+                if not shard_manifest_path.is_file():
+                    raise MultiLayerJError(
+                        f"J shard manifest is missing: {shard_manifest_path}"
+                    )
+                try:
+                    validate_shard_manifest_identity(
+                        manifest,
+                        json.loads(
+                            shard_manifest_path.read_text(encoding="utf-8")
+                        ),
+                    )
+                except InterventionGenerationError as error:
+                    raise MultiLayerJError(
+                        f"J shard manifest identity mismatch: {shard_manifest_path}"
+                    ) from error
+                candidate_path = shard.parent / "candidate_scores.jsonl"
+                try:
+                    candidate_check = validate_candidate_score_artifact(
+                        candidate_path,
+                        expected_sha256=str(
+                            shard_payload.get("candidate_scores_sha256", "")
+                        ),
+                        contract=shard_payload["generation_contract"],
+                        expected_method="j_component_intervention",
+                        expected_concept_id=concept_id,
+                        expected_grid_condition=expected_grid[grid_index],
+                    )
+                    generation_check = validate_generation_artifacts(
+                        shard.parent,
+                        shard_payload["generation_files"],
+                        contract=shard_payload["generation_contract"],
+                    )
+                except InterventionGenerationError as error:
+                    raise MultiLayerJError(
+                        f"J shard output contract failed: {shard}"
+                    ) from error
+                if (
+                    int(shard_payload.get("candidate_score_rows", -1))
+                    != candidate_check["rows"]
+                    or int(shard_payload.get("generation_rows", -1))
+                    != generation_check["rows"]
+                ):
+                    raise MultiLayerJError(
+                        f"J shard declared row counts differ: {shard}"
+                    )
             indices = {row.get("grid_index") for row in shard_payloads}
             if (
                 expected_grid_size is None
@@ -589,6 +673,49 @@ def rebuild_multilayer_j_index(
                 )
             ):
                 continue
+            contract_identities = {
+                json.dumps(
+                    row["generation_contract"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                for row in shard_payloads
+            }
+            provenance_identities = {
+                json.dumps(
+                    {
+                        key: row[key]
+                        for key in (
+                            "selected_layers",
+                            "coordinate",
+                            "position",
+                            "normalization",
+                            "mean_residual_norms",
+                            "source_provenance",
+                        )
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                for row in shard_payloads
+            }
+            if len(contract_identities) != 1:
+                raise MultiLayerJError(
+                    f"{concept_id}: J shards used different generation contracts"
+                )
+            if len(provenance_identities) != 1:
+                raise MultiLayerJError(
+                    f"{concept_id}: J shards used different provenance"
+                )
+            try:
+                validate_generation_contract_identity(
+                    shard_payloads[0]["generation_contract"],
+                    generation_identity,
+                )
+            except InterventionGenerationError as error:
+                raise MultiLayerJError(
+                    f"{concept_id}: J shard contract differs from manifest"
+                ) from error
             layers = {
                 tuple(int(value) for value in row["selected_layers"])
                 for row in shard_payloads
@@ -666,6 +793,7 @@ def rebuild_multilayer_j_index(
                 "summary_sha256": sha256_file(path),
                 "selected_layers": payload["selected_layers"],
                 "layer_k": payload["source_provenance"]["layer_k"],
+                "artifact_seal": build_target_artifact_seal(root, path),
             }
         )
     expected = set(concept_ids)

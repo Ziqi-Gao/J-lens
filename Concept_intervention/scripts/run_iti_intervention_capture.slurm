@@ -8,8 +8,8 @@
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=12:00:00
-#SBATCH --output=artifacts/concept_intervention/iti_intervention/slurm/%x-%j.out
-#SBATCH --error=artifacts/concept_intervention/iti_intervention/slurm/%x-%j.err
+#SBATCH --output=artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/iti_intervention/slurm/%x-%j.out
+#SBATCH --error=artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/iti_intervention/slurm/%x-%j.err
 
 set -euo pipefail
 source "${CODE_ROOT:?}/Concept_intervention/scripts/three_method_env.sh"

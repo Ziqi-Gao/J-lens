@@ -101,7 +101,7 @@ def test_config_rejects_hybrid_research_directions() -> None:
         )
 
 
-def test_unversioned_three_method_configs_share_the_registered_protocol() -> None:
+def test_three_method_configs_share_the_immutable_registered_protocol() -> None:
     root = Path(__file__).parents[1]
     names = (
         "j_component_intervention",
@@ -115,10 +115,15 @@ def test_unversioned_three_method_configs_share_the_registered_protocol() -> Non
         for name in names
     }
     for name, config in configs.items():
-        assert config.experiment_name == name
+        assert (
+            config.experiment_name
+            == "qwen35_4b_three_method_intervention_v1"
+        )
+        assert (
+            "/qwen35_4b_three_method_intervention_v1/"
+            in config.output_dir
+        )
         assert config.output_dir.endswith(f"/{name}")
-        assert "_v1" not in config.experiment_name
-        assert "_v1" not in config.output_dir
 
     reference = configs["j_component_intervention"]
     for config in configs.values():
@@ -145,7 +150,14 @@ def test_unversioned_three_method_configs_share_the_registered_protocol() -> Non
         root
         / "Concept_intervention/configs/qwen35_4b_shared_intervention_protocol.yaml"
     )
-    assert shared.experiment_name == "shared_intervention_protocol"
+    assert (
+        shared.experiment_name
+        == "qwen35_4b_three_method_intervention_v1"
+    )
+    assert shared.output_dir.endswith(
+        "/qwen35_4b_three_method_intervention_v1/"
+        "shared_intervention_protocol"
+    )
     assert shared.shared_layer_selection.candidate_layers == [3, 7, 11, 15, 19, 23, 27]
     assert shared.shared_layer_selection.selected_layer_count == 6
     assert len(shared.shared_layer_selection.c_grid) == 100

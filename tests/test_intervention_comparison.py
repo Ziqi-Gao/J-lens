@@ -7,10 +7,12 @@ import pytest
 
 from jlens_workspace.artifacts import sha256_file
 from jlens_workspace.concept_intervention.comparison import (
+    InterventionComparisonError,
     rebuild_intervention_comparison,
     validate_three_method_smokes,
 )
 from jlens_workspace.concept_intervention.generation import (
+    build_target_artifact_seal,
     prompt_ids_sha256,
     write_generation_artifacts,
 )
@@ -96,12 +98,24 @@ def _write_baseline_generation(
             ("sample", 3003),
         )
     ]
-    write_generation_artifacts(shard, rows)
+    generation_files = write_generation_artifacts(shard, rows)
     summary_path = shard / "summary.json"
-    summary_path.write_text("{}", encoding="utf-8")
+    summary_path.write_text(
+        json.dumps(
+            {
+                "method": method,
+                "target_concept_id": "concept:a",
+                "grid_condition": grid_condition,
+                "generation_files": generation_files,
+                "generation_contract": _GENERATION_CONTRACT,
+            }
+        ),
+        encoding="utf-8",
+    )
     return {
         "grid_condition": grid_condition,
         "summary": str(summary_path.relative_to(root.parents[1])),
+        "summary_sha256": sha256_file(summary_path),
     }
 
 
@@ -121,8 +135,52 @@ def _write_smoke_shard(
     )
     shard.mkdir(parents=True)
     candidate = shard / "candidate_scores.jsonl"
-    candidate.write_text("{}\n", encoding="utf-8")
+    candidate_condition = {
+        ("mode" if key == "condition" else key): value
+        for key, value in condition.items()
+    }
+    score_condition = {
+        ("condition" if key == "mode" else key): value
+        for key, value in candidate_condition.items()
+    }
+    candidate.write_text(
+        json.dumps(
+            {
+                "prompt_id": "prompt-a",
+                "method": method,
+                "target_concept_id": "goemotions:admiration",
+                "evaluation_split": "test",
+                "candidate_log_probabilities": {
+                    "goemotions:admiration": -1.0,
+                    "other": -2.0,
+                },
+                "candidate_probabilities_normalized": {
+                    "goemotions:admiration": 0.7,
+                    "other": 0.3,
+                },
+                "target_log_probability": -1.0,
+                "target_candidate_probability": 0.7,
+                "target_margin": 1.0,
+                "target_rank": 1,
+                **score_condition,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     rows = []
+    layers = [3, 7, 11, 15, 19, 23]
+    telemetry = [
+        {
+            "layer": layer,
+            "forward_call": 0,
+            "generation_step": 0,
+            "batch_size": 1,
+            "sequence_length": 1,
+            "injected_norm": 1.0,
+        }
+        for layer in layers
+    ]
     for decoding, seed in (
         ("greedy", None),
         ("sample", 1001),
@@ -138,6 +196,10 @@ def _write_smoke_shard(
                 "concept_id": "goemotions:admiration",
                 "condition_id": str(condition["condition_id"]),
                 "grid_point": condition,
+                "intervention_metadata": {
+                    "selected_layers": layers,
+                    "active_layers": layers,
+                },
                 "prompt_id": "prompt-a",
                 "prompt_text": "Prompt.",
                 "decoding": decoding,
@@ -145,9 +207,11 @@ def _write_smoke_shard(
                 "generated_token_ids": [1],
                 "generated_text": "Result.",
                 "token_log_probabilities": [-0.5],
-                "telemetry": [],
-                "injected_norm_by_layer": {},
-                "total_injected_norm": 0.0,
+                "telemetry": telemetry,
+                "injected_norm_by_layer": {
+                    str(layer): 1.0 for layer in layers
+                },
+                "total_injected_norm": 6.0,
                 "generation_settings": _GENERATION_SETTINGS,
             }
         )
@@ -286,15 +350,6 @@ def test_comparison_selects_on_validation_and_reports_paired_test_effect(
                         "selected_layers_sha256": selection_hash,
                         "row_manifest_sha256": row_manifest_hash,
                     },
-                }
-            ),
-            encoding="utf-8",
-        )
-        (root / "index.json").write_text(
-            json.dumps(
-                {
-                    "complete": True,
-                    "manifest_sha256": sha256_file(manifest),
                 }
             ),
             encoding="utf-8",
@@ -454,6 +509,31 @@ def test_comparison_selects_on_validation_and_reports_paired_test_effect(
     _write_jsonl(
         target_dirs["iti_intervention"] / "candidate_scores.jsonl", iti_rows
     )
+    for method, root in roots.items():
+        summary_path = target_dirs[method] / "summary.json"
+        (root / "index.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "method": method,
+                    "complete": True,
+                    "expected_concepts": ["concept:a"],
+                    "observed_concepts": ["concept:a"],
+                    "manifest_sha256": sha256_file(root / "manifest.json"),
+                    "entries": [
+                        {
+                            "concept_id": "concept:a",
+                            "summary": str(summary_path.relative_to(root)),
+                            "summary_sha256": sha256_file(summary_path),
+                            "artifact_seal": build_target_artifact_seal(
+                                root, summary_path
+                            ),
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
 
     index = rebuild_intervention_comparison(
         output_dir=tmp_path / "intervention_comparison",
@@ -475,3 +555,23 @@ def test_comparison_selects_on_validation_and_reports_paired_test_effect(
     assert entry["iti_native"]["held_out_target_margin_effect"] == pytest.approx(5.0)
     assert entry["iti_layer_matched"]["held_out_target_margin_effect"] == pytest.approx(6.0)
     assert comparison["llm_as_judge_run"] is False
+
+    j_scores = (
+        target_dirs["j_component_intervention"] / "candidate_scores.jsonl"
+    )
+    tampered = [
+        json.loads(line)
+        for line in j_scores.read_text(encoding="utf-8").splitlines()
+    ]
+    tampered[0]["target_margin"] = 999.0
+    _write_jsonl(j_scores, tampered)
+
+    with pytest.raises(InterventionComparisonError, match="artifact"):
+        rebuild_intervention_comparison(
+            output_dir=tmp_path / "tampered_comparison",
+            shared_layer_selection=shared,
+            j_root=roots["j_component_intervention"],
+            iti_root=roots["iti_intervention"],
+            raptor_root=roots["raptor_intervention"],
+            concept_ids=["concept:a"],
+        )

@@ -13,8 +13,11 @@ import numpy as np
 
 from jlens_workspace.artifacts import atomic_write_json, sha256_file
 from jlens_workspace.concept_intervention.generation import (
+    InterventionGenerationError,
+    validate_candidate_score_artifact,
     validate_equivalent_generation_outputs,
     validate_generation_artifacts,
+    validate_target_artifact_seal,
 )
 
 
@@ -108,14 +111,21 @@ def validate_three_method_smokes(
                 f"registered smoke identity mismatch: {summary_path}"
             )
         candidate_path = shard / "candidate_scores.jsonl"
-        if (
-            not candidate_path.is_file()
-            or summary.get("candidate_scores_sha256")
-            != sha256_file(candidate_path)
-        ):
+        try:
+            validate_candidate_score_artifact(
+                candidate_path,
+                expected_sha256=str(
+                    summary.get("candidate_scores_sha256", "")
+                ),
+                contract=summary["generation_contract"],
+                expected_method=method,
+                expected_concept_id=concept_id,
+                expected_grid_condition=expected_condition,
+            )
+        except InterventionGenerationError as error:
             raise InterventionComparisonError(
                 f"registered smoke score identity mismatch: {candidate_path}"
-            )
+            ) from error
         validate_generation_artifacts(
             shard,
             summary["generation_files"],
@@ -146,14 +156,27 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def _read_method_scores(target: Path) -> list[dict[str, Any]]:
+def _read_method_scores(
+    target: Path,
+    *,
+    sealed_paths: set[Path],
+) -> list[dict[str, Any]]:
     direct = target / "candidate_scores.jsonl"
     if direct.is_file():
+        if direct.resolve() not in sealed_paths:
+            raise InterventionComparisonError(
+                f"candidate scores are absent from method artifact seal: {direct}"
+            )
         return _read_jsonl(direct)
     shards = sorted((target / "shards").glob("grid_*/candidate_scores.jsonl"))
     if not shards:
         raise InterventionComparisonError(
             f"candidate score artifact is missing: {target}"
+        )
+    unsealed = [path for path in shards if path.resolve() not in sealed_paths]
+    if unsealed:
+        raise InterventionComparisonError(
+            f"candidate scores are absent from method artifact seal: {unsealed[0]}"
         )
     return [row for path in shards for row in _read_jsonl(path)]
 
@@ -173,13 +196,86 @@ def _baseline_generation_path(
     matches = [
         row
         for row in summary.get("shards", [])
-        if all(row.get("grid_condition", {}).get(key) == value for key, value in condition.items())
+        if all(
+            row.get("grid_condition", {}).get(key) == value
+            for key, value in condition.items()
+        )
     ]
     if len(matches) != 1:
         raise InterventionComparisonError(
             f"expected one baseline generation shard for {condition}, found {len(matches)}"
         )
-    return root / str(matches[0]["summary"]).replace("summary.json", "generations.jsonl")
+    return root / str(matches[0]["summary"]).replace(
+        "summary.json", "generations.jsonl"
+    )
+
+
+def _validate_sealed_summary_graph(
+    root: Path,
+    summary_path: Path,
+    summary: Mapping[str, Any],
+    *,
+    sealed_paths: set[Path],
+) -> None:
+    """Recheck every summary-declared downstream hash at comparison time."""
+
+    method_root = root.resolve()
+    if summary_path.resolve() not in sealed_paths:
+        raise InterventionComparisonError(
+            f"target summary is absent from method artifact seal: {summary_path}"
+        )
+    for shard in summary.get("shards", []):
+        if not isinstance(shard, Mapping):
+            raise InterventionComparisonError(
+                f"malformed shard entry in target summary: {summary_path}"
+            )
+        shard_path = (method_root / str(shard.get("summary", ""))).resolve()
+        try:
+            shard_path.relative_to(method_root)
+        except ValueError as error:
+            raise InterventionComparisonError(
+                f"shard summary escapes method root: {shard_path}"
+            ) from error
+        if (
+            shard_path not in sealed_paths
+            or not shard_path.is_file()
+            or shard.get("summary_sha256") != sha256_file(shard_path)
+        ):
+            raise InterventionComparisonError(
+                f"shard summary hash-chain mismatch: {shard_path}"
+            )
+        shard_payload = json.loads(shard_path.read_text(encoding="utf-8"))
+        candidate_path = shard_path.parent / "candidate_scores.jsonl"
+        candidate_hash = shard_payload.get("candidate_scores_sha256")
+        if candidate_hash is not None and (
+            candidate_path.resolve() not in sealed_paths
+            or not candidate_path.is_file()
+            or candidate_hash != sha256_file(candidate_path)
+        ):
+            raise InterventionComparisonError(
+                f"candidate-score hash-chain mismatch: {candidate_path}"
+            )
+        generation_files = shard_payload.get("generation_files")
+        if generation_files is None:
+            continue
+        if not isinstance(generation_files, Mapping):
+            raise InterventionComparisonError(
+                f"malformed generation hash declarations: {shard_path}"
+            )
+        for filename, hash_key in (
+            ("generations.jsonl", "generations_sha256"),
+            ("judge_blind_generations.jsonl", "blind_generations_sha256"),
+            ("judge_blind_map.jsonl", "blind_map_sha256"),
+        ):
+            artifact = shard_path.parent / filename
+            if (
+                artifact.resolve() not in sealed_paths
+                or not artifact.is_file()
+                or generation_files.get(hash_key) != sha256_file(artifact)
+            ):
+                raise InterventionComparisonError(
+                    f"generation hash-chain mismatch: {artifact}"
+                )
 
 
 def _validate_cross_method_zero_scores(
@@ -352,6 +448,8 @@ def rebuild_intervention_comparison(
     }
     indexes = {}
     generation_identities: dict[str, dict[str, Any]] = {}
+    method_entries: dict[str, dict[str, Mapping[str, Any]]] = {}
+    method_seals: dict[str, dict[str, set[Path]]] = {}
     method_identities: set[tuple[Any, ...]] = set()
     generation_contracts: set[str] = set()
     selection_path = Path(shared_layer_selection)
@@ -373,6 +471,23 @@ def rebuild_intervention_comparison(
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not payload.get("complete"):
             raise InterventionComparisonError(f"{method} index is incomplete")
+        if payload.get("method") != method:
+            raise InterventionComparisonError(f"{method} index method mismatch")
+        entries = payload.get("entries")
+        if not isinstance(entries, list):
+            raise InterventionComparisonError(f"{method} index lacks entries")
+        entries_by_concept = {
+            str(entry.get("concept_id")): entry for entry in entries
+        }
+        if (
+            len(entries_by_concept) != len(entries)
+            or set(entries_by_concept) != set(concept_ids)
+            or set(payload.get("expected_concepts", [])) != set(concept_ids)
+            or set(payload.get("observed_concepts", [])) != set(concept_ids)
+        ):
+            raise InterventionComparisonError(
+                f"{method} index concept coverage mismatch"
+            )
         manifest_path = root / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if payload.get("manifest_sha256") != sha256_file(manifest_path):
@@ -416,6 +531,32 @@ def rebuild_intervention_comparison(
             raise InterventionComparisonError(
                 f"{method} manifest used another balanced-row artifact"
             )
+        seals: dict[str, set[Path]] = {}
+        for concept_id, entry in entries_by_concept.items():
+            summary_path = (root / str(entry.get("summary", ""))).resolve()
+            if (
+                not summary_path.is_file()
+                or entry.get("summary_sha256") != sha256_file(summary_path)
+            ):
+                raise InterventionComparisonError(
+                    f"{method} target summary artifact mismatch: {summary_path}"
+                )
+            try:
+                sealed = validate_target_artifact_seal(
+                    root,
+                    entry.get("artifact_seal", {}),
+                )
+            except InterventionGenerationError as error:
+                raise InterventionComparisonError(
+                    f"{method} target artifact seal failed for {concept_id}"
+                ) from error
+            if summary_path not in sealed:
+                raise InterventionComparisonError(
+                    f"{method} target summary is absent from artifact seal"
+                )
+            seals[concept_id] = sealed
+        method_entries[method] = entries_by_concept
+        method_seals[method] = seals
         indexes[method] = {
             "path": str(path),
             "sha256": sha256_file(path),
@@ -429,12 +570,23 @@ def rebuild_intervention_comparison(
         encoded = quote(concept_id, safe="")
         summaries = {
             method: json.loads(
-                (root / "targets" / encoded / "summary.json").read_text(
+                (root / str(method_entries[method][concept_id]["summary"])).read_text(
                     encoding="utf-8"
                 )
             )
             for method, root in roots.items()
         }
+        for method, summary in summaries.items():
+            root = roots[method]
+            summary_path = (
+                root / str(method_entries[method][concept_id]["summary"])
+            ).resolve()
+            _validate_sealed_summary_graph(
+                root,
+                summary_path,
+                summary,
+                sealed_paths=method_seals[method][concept_id],
+            )
         selected_layers = {
             tuple(int(value) for value in summary["selected_layers"])
             for summary in summaries.values()
@@ -510,41 +662,58 @@ def rebuild_intervention_comparison(
                 f"{concept_id}: methods used different balanced-row artifact hashes"
             )
         j_rows = _read_method_scores(
-            roots["j_component_intervention"] / "targets" / encoded
+            roots["j_component_intervention"] / "targets" / encoded,
+            sealed_paths=method_seals["j_component_intervention"][concept_id],
         )
         iti_rows = _read_method_scores(
-            roots["iti_intervention"] / "targets" / encoded
+            roots["iti_intervention"] / "targets" / encoded,
+            sealed_paths=method_seals["iti_intervention"][concept_id],
         )
         raptor_rows = _read_method_scores(
-            roots["raptor_intervention"] / "targets" / encoded
+            roots["raptor_intervention"] / "targets" / encoded,
+            sealed_paths=method_seals["raptor_intervention"][concept_id],
         )
         native_zero_k = min(
             int(value)
             for value in summaries["iti_intervention"]["native_top_k_grid"]
         )
+        baseline_generation_paths = [
+            _baseline_generation_path(
+                roots["j_component_intervention"],
+                summaries["j_component_intervention"],
+                condition={"condition_id": "full", "strength": 0.0},
+            ),
+            _baseline_generation_path(
+                roots["raptor_intervention"],
+                summaries["raptor_intervention"],
+                condition={"condition_id": "no_hook"},
+            ),
+            _baseline_generation_path(
+                roots["iti_intervention"],
+                summaries["iti_intervention"],
+                condition={
+                    "variant": "native",
+                    "condition_id": "iti_native_mass_mean",
+                    "top_k": native_zero_k,
+                    "strength": 0.0,
+                },
+            ),
+        ]
+        for method, path in zip(
+            (
+                "j_component_intervention",
+                "raptor_intervention",
+                "iti_intervention",
+            ),
+            baseline_generation_paths,
+            strict=True,
+        ):
+            if path.resolve() not in method_seals[method][concept_id]:
+                raise InterventionComparisonError(
+                    f"{method} baseline generation is absent from artifact seal"
+                )
         zero_generation_consistency = validate_equivalent_generation_outputs(
-            [
-                _baseline_generation_path(
-                    roots["j_component_intervention"],
-                    summaries["j_component_intervention"],
-                    condition={"condition_id": "full", "strength": 0.0},
-                ),
-                _baseline_generation_path(
-                    roots["raptor_intervention"],
-                    summaries["raptor_intervention"],
-                    condition={"condition_id": "no_hook"},
-                ),
-                _baseline_generation_path(
-                    roots["iti_intervention"],
-                    summaries["iti_intervention"],
-                    condition={
-                        "variant": "native",
-                        "condition_id": "iti_native_mass_mean",
-                        "top_k": native_zero_k,
-                        "strength": 0.0,
-                    },
-                ),
-            ]
+            baseline_generation_paths
         )
         zero_score_consistency = _validate_cross_method_zero_scores(
             {

@@ -25,11 +25,11 @@ if [[ "$(git -C "${RAPTOR_ROOT}" rev-parse HEAD)" != "${RAPTOR_COMMIT}" ]]; then
 fi
 
 mkdir -p \
-  "${RUN_ROOT}/artifacts/concept_intervention/shared_intervention_protocol/slurm" \
-  "${RUN_ROOT}/artifacts/concept_intervention/j_component_intervention/slurm" \
-  "${RUN_ROOT}/artifacts/concept_intervention/iti_intervention/slurm" \
-  "${RUN_ROOT}/artifacts/concept_intervention/raptor_intervention/slurm" \
-  "${RUN_ROOT}/artifacts/concept_intervention/intervention_comparison/slurm"
+  "${RUN_ROOT}/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/slurm" \
+  "${RUN_ROOT}/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/j_component_intervention/slurm" \
+  "${RUN_ROOT}/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/iti_intervention/slurm" \
+  "${RUN_ROOT}/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/raptor_intervention/slurm" \
+  "${RUN_ROOT}/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/intervention_comparison/slurm"
 
 export CODE_ROOT RUN_ROOT JLENS_GIT_COMMIT
 cd "${RUN_ROOT}"

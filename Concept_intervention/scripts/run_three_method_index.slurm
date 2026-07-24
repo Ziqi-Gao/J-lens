@@ -8,8 +8,8 @@
 #SBATCH --mem=32G
 #SBATCH --time=04:00:00
 #SBATCH --array=0-2
-#SBATCH --output=artifacts/concept_intervention/intervention_comparison/slurm/%x-%A_%a.out
-#SBATCH --error=artifacts/concept_intervention/intervention_comparison/slurm/%x-%A_%a.err
+#SBATCH --output=artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/intervention_comparison/slurm/%x-%A_%a.out
+#SBATCH --error=artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/intervention_comparison/slurm/%x-%A_%a.err
 
 set -euo pipefail
 source "${CODE_ROOT:?}/Concept_intervention/scripts/three_method_env.sh"

@@ -295,7 +295,8 @@ def build_parser() -> argparse.ArgumentParser:
     intervention_index.set_defaults(handler=_cmd_intervention_index)
 
     j_component = intervention_subparsers.add_parser(
-        "j-component", help="run the unversioned multi-layer J-component experiment"
+        "j-component",
+        help="run the immutable-suite multi-layer J-component experiment",
     )
     _add_config_argument(j_component)
     j_component.add_argument("--output", type=Path)
@@ -712,6 +713,35 @@ def _shared_protocol_identity(path: str | Path) -> dict[str, Any]:
         "row_manifest_sha256": row_hash,
         "activation_artifact_hash": selection.get("activation_artifact_hash"),
     }
+
+
+def _write_immutable_shard_manifest(
+    path: str | Path,
+    manifest: Any,
+    *,
+    scientific_summary: str | Path,
+) -> None:
+    """Create a shard manifest once and reject historical-artifact reuse."""
+
+    from dataclasses import asdict, is_dataclass
+
+    from jlens_workspace.artifacts import atomic_write_json
+
+    destination = Path(path)
+    summary = Path(scientific_summary)
+    payload = asdict(manifest) if is_dataclass(manifest) else dict(manifest)
+    if summary.is_file() and not destination.is_file():
+        raise ValueError(
+            f"scientific shard predates its immutable manifest: {summary}"
+        )
+    if destination.is_file():
+        existing = json.loads(destination.read_text(encoding="utf-8"))
+        if existing != payload:
+            raise ValueError(
+                f"scientific shard manifest identity changed: {destination}"
+            )
+        return
+    atomic_write_json(destination, payload)
 
 
 def _normalize_config_argument(args: argparse.Namespace) -> None:
@@ -2289,7 +2319,21 @@ def _cmd_j_component_intervention(args: argparse.Namespace) -> int:
         / quote(concepts[0], safe="")
         / f"grid_{args.grid_index:04d}.json"
     )
-    atomic_write_json(manifest_path, manifest)
+    if args.grid_index is None:
+        atomic_write_json(manifest_path, manifest)
+    else:
+        _write_immutable_shard_manifest(
+            manifest_path,
+            manifest,
+            scientific_summary=(
+                destination
+                / "targets"
+                / quote(concepts[0], safe="")
+                / "shards"
+                / f"grid_{args.grid_index:04d}"
+                / "summary.json"
+            ),
+        )
     results = [
         run_multilayer_j_intervention(
             output_dir=destination,
@@ -2389,7 +2433,21 @@ def _cmd_raptor_intervention(args: argparse.Namespace) -> int:
         / quote(concepts[0], safe="")
         / f"grid_{args.grid_index:04d}.json"
     )
-    atomic_write_json(manifest_path, manifest)
+    if args.grid_index is None:
+        atomic_write_json(manifest_path, manifest)
+    else:
+        _write_immutable_shard_manifest(
+            manifest_path,
+            manifest,
+            scientific_summary=(
+                destination
+                / "targets"
+                / quote(concepts[0], safe="")
+                / "shards"
+                / f"grid_{args.grid_index:04d}"
+                / "summary.json"
+            ),
+        )
     results = [
         run_raptor_intervention(
             output_dir=destination,
@@ -2577,8 +2635,6 @@ def _cmd_iti_fit(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     iti = _require_section(config, "iti")
     concepts = _iti_concepts(iti, args.concept_id)
-    if args.grid_index is not None and len(concepts) != 1:
-        raise ValueError("an ITI grid shard requires exactly one concept")
     destination = args.output or Path(iti.directions_dir)
     manifest = _experiment_manifest(
         config,
@@ -2695,7 +2751,21 @@ def _cmd_iti_run(args: argparse.Namespace) -> int:
             / encoded
             / f"grid_{args.grid_index:04d}.json"
         )
-        atomic_write_json(shard_manifest, manifest)
+        if args.grid_index is None:
+            atomic_write_json(shard_manifest, manifest)
+        else:
+            _write_immutable_shard_manifest(
+                shard_manifest,
+                manifest,
+                scientific_summary=(
+                    destination
+                    / "targets"
+                    / encoded
+                    / "shards"
+                    / f"grid_{args.grid_index:04d}"
+                    / "summary.json"
+                ),
+            )
         if iti.method == "honest_llama_mass_mean_qwen_full_attention":
             result = run_iti_intervention_experiment(
                 output_dir=destination,

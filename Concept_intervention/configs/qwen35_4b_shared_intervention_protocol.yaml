@@ -1,7 +1,7 @@
 schema_version: 1
 direction: concept_intervention
-experiment_name: shared_intervention_protocol
-output_dir: artifacts/concept_intervention/shared_intervention_protocol
+experiment_name: qwen35_4b_three_method_intervention_v1
+output_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol
 seed: 42
 model:
   model_id: Qwen/Qwen3.5-4B
@@ -24,8 +24,8 @@ dataset:
 lens:
   source: fit
   fit_prompts_path: artifacts/data/go_emotions_7concept_full_ovr_v2/fit_prompts.jsonl
-  fit_output_path: artifacts/lenses/qwen35_4b_shared_intervention_protocol_fp32.pt
-  fit_checkpoint_path: artifacts/lenses/qwen35_4b_shared_intervention_protocol_fp32.checkpoint.pt
+  fit_output_path: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/lens/qwen35_4b_fp32.pt
+  fit_checkpoint_path: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/lens/qwen35_4b_fp32.checkpoint.pt
   layers: [3, 7, 11, 15, 19, 23, 27]
   n_fit_prompts: 1000
   fit_prompt_offset: 0
@@ -66,8 +66,8 @@ shared_layer_selection:
   upstream_commit: cf7405899174af39f3970e093e4b86bf0972ff87
   candidate_layers: [3, 7, 11, 15, 19, 23, 27]
   selected_layer_count: 6
-  source_activations_dir: artifacts/concept_intervention/shared_intervention_protocol/activations
-  output_dir: artifacts/concept_intervention/shared_intervention_protocol/selection
+  source_activations_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/activations
+  output_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/selection
   concept_ids:
     - "goemotions:admiration"
     - "goemotions:approval"
@@ -111,4 +111,4 @@ occupancy:
     - bootstrap_4404
   bootstrap_seeds: [1101, 2202, 3303, 4404]
   bootstrap_k_max: 64
-  row_manifest_path: artifacts/concept_intervention/shared_intervention_protocol/selection/row_manifest.json
+  row_manifest_path: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/selection/row_manifest.json

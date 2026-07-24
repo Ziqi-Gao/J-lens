@@ -151,6 +151,41 @@ def test_installed_vcs_commit_reads_pep610_direct_url(
     )
 
 
+def test_shard_manifest_is_immutable_and_blocks_historical_reuse(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "manifests/grid_0001.json"
+    summary_path = tmp_path / "targets/grid_0001/summary.json"
+    manifest = {"git_commit": "a" * 40, "notes": {"config_sha256": "b" * 64}}
+
+    cli._write_immutable_shard_manifest(
+        manifest_path,
+        manifest,
+        scientific_summary=summary_path,
+    )
+    cli._write_immutable_shard_manifest(
+        manifest_path,
+        manifest,
+        scientific_summary=summary_path,
+    )
+    with pytest.raises(ValueError, match="identity changed"):
+        cli._write_immutable_shard_manifest(
+            manifest_path,
+            {"git_commit": "c" * 40, "notes": {"config_sha256": "b" * 64}},
+            scientific_summary=summary_path,
+        )
+
+    manifest_path.unlink()
+    summary_path.parent.mkdir(parents=True)
+    summary_path.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="predates"):
+        cli._write_immutable_shard_manifest(
+            manifest_path,
+            manifest,
+            scientific_summary=summary_path,
+        )
+
+
 def test_config_validate_is_json_and_torch_free(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

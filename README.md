@@ -284,11 +284,12 @@ by Git. The logical layout is:
 ```text
 artifacts/
 ├── concept_intervention/
-│   ├── shared_intervention_protocol/
-│   ├── j_component_intervention/
-│   ├── iti_intervention/
-│   ├── raptor_intervention/
-│   ├── intervention_comparison/
+│   ├── qwen35_4b_three_method_intervention_v1/
+│   │   ├── shared_intervention_protocol/
+│   │   ├── j_component_intervention/
+│   │   ├── iti_intervention/
+│   │   ├── raptor_intervention/
+│   │   └── intervention_comparison/
 │   └── <legacy-run>/
 │       ├── manifest.json  immutable pins, config hash, environment provenance
 │       ├── run.json       completed stage index

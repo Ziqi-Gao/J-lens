@@ -9,8 +9,8 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=12:00:00
 #SBATCH --array=0-34%10
-#SBATCH --output=artifacts/concept_intervention/shared_intervention_protocol/slurm/%x-%A_%a.out
-#SBATCH --error=artifacts/concept_intervention/shared_intervention_protocol/slurm/%x-%A_%a.err
+#SBATCH --output=artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/slurm/%x-%A_%a.out
+#SBATCH --error=artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/slurm/%x-%A_%a.err
 
 set -euo pipefail
 source "${CODE_ROOT:?}/Concept_intervention/scripts/three_method_env.sh"
@@ -22,9 +22,9 @@ LAYER="${LAYERS[$((TASK % 7))]}"
 REPLICATE="${REPLICATES[$((TASK / 7))]}"
 nvidia-smi
 jlens occupancy concepts "${SHARED_CONFIG}" \
-  --probes artifacts/concept_intervention/shared_intervention_protocol/selection/raptor_probes \
-  --probe-replicates artifacts/concept_intervention/shared_intervention_protocol/selection/probe_replicates \
-  --output artifacts/concept_intervention/shared_intervention_protocol/j_occupancy \
+  --probes artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/selection/raptor_probes \
+  --probe-replicates artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/selection/probe_replicates \
+  --output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/j_occupancy \
   --layer "${LAYER}" \
   --convention rmsnorm_weighted \
   --replicate-id "${REPLICATE}" \
