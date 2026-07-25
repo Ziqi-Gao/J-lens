@@ -13,7 +13,6 @@ import importlib
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from collections import defaultdict
@@ -30,7 +29,13 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from jlens_workspace.activations import load_activation_layer
-from jlens_workspace.artifacts import atomic_write_json, sha256_file, stable_hash
+from jlens_workspace.artifacts import (
+    GitIdentityError,
+    atomic_write_json,
+    git_head_commit,
+    sha256_file,
+    stable_hash,
+)
 from jlens_workspace.workflows.concept import (
     _concept_labels,
     _groups,
@@ -208,13 +213,13 @@ def load_upstream_raptor_tuning(path: str | Path) -> Any:
     root = Path(path).resolve()
     if not (root / ".git").exists() or not (root / "src/raptor").is_dir():
         raise SharedProtocolError(f"RAPTOR checkout is incomplete: {root}")
-    result = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    if result.stdout.strip() != RAPTOR_COMMIT:
+    try:
+        observed_commit = git_head_commit(root)
+    except GitIdentityError as error:
+        raise SharedProtocolError(
+            f"cannot resolve RAPTOR checkout commit: {root}"
+        ) from error
+    if observed_commit != RAPTOR_COMMIT:
         raise SharedProtocolError(
             f"RAPTOR checkout must be pinned at {RAPTOR_COMMIT}"
         )

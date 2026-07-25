@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib
 import math
-import subprocess
 import sys
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -15,6 +14,7 @@ from typing import Any
 
 import numpy as np
 
+from jlens_workspace.artifacts import GitIdentityError, git_head_commit
 from jlens_workspace.modeling import hidden_from_block_output, transformer_blocks
 
 RAPTOR_REPOSITORY = "https://github.com/Ziqi-Gao/RAPTOR.git"
@@ -36,13 +36,12 @@ def verify_raptor_checkout(path: str | Path) -> Path:
     root = Path(path).resolve()
     if not (root / ".git").exists() or not (root / "src/raptor").is_dir():
         raise RaptorError(f"RAPTOR checkout is incomplete: {root}")
-    result = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    observed = result.stdout.strip()
+    try:
+        observed = git_head_commit(root)
+    except GitIdentityError as error:
+        raise RaptorError(
+            f"cannot resolve RAPTOR checkout commit: {root}"
+        ) from error
     if observed != RAPTOR_COMMIT:
         raise RaptorError(
             f"RAPTOR commit mismatch: expected {RAPTOR_COMMIT}, observed {observed}"

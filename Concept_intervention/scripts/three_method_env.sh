@@ -2,19 +2,11 @@
 # Shared immutable execution environment for the three intervention methods.
 set -euo pipefail
 
-# Quest batch shells may start without system binaries on PATH.
-export PATH="/usr/bin:/bin:${PATH:-}"
-
 CODE_ROOT="${CODE_ROOT:?submit with CODE_ROOT set to the immutable code checkout}"
 RUN_ROOT="${RUN_ROOT:?submit with RUN_ROOT set to the artifact/data checkout}"
 JLENS_GIT_COMMIT="${JLENS_GIT_COMMIT:?submit with JLENS_GIT_COMMIT frozen}"
 PYTHON="${JLENS_PYTHON:-/gpfs/projects/p32737/del6500_home/J_lens/.venv/bin/python}"
 
-OBSERVED_COMMIT="$(git -C "${CODE_ROOT}" rev-parse HEAD)"
-if [[ "${OBSERVED_COMMIT}" != "${JLENS_GIT_COMMIT}" ]]; then
-  echo "error: code checkout moved: ${OBSERVED_COMMIT} != ${JLENS_GIT_COMMIT}" >&2
-  exit 2
-fi
 if [[ ! -x "${PYTHON}" ]]; then
   echo "error: experiment Python is not executable: ${PYTHON}" >&2
   exit 2
@@ -22,6 +14,16 @@ fi
 
 export CODE_ROOT RUN_ROOT JLENS_GIT_COMMIT
 export PYTHONPATH="${CODE_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
+OBSERVED_COMMIT="$(
+  "${PYTHON}" -c \
+    'import sys; from jlens_workspace.artifacts import git_head_commit; print(git_head_commit(sys.argv[1]))' \
+    "${CODE_ROOT}"
+)"
+if [[ "${OBSERVED_COMMIT}" != "${JLENS_GIT_COMMIT}" ]]; then
+  echo "error: code checkout moved: ${OBSERVED_COMMIT} != ${JLENS_GIT_COMMIT}" >&2
+  exit 2
+fi
+
 export HF_HOME="${HF_HOME:-${RUN_ROOT}/.cache/huggingface}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-${HF_HOME}}"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1

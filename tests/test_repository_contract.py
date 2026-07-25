@@ -21,6 +21,15 @@ def test_shared_data_preparation_is_not_nested_in_either_lane() -> None:
     assert not (ROOT / "Concept_intervention/scripts/prepare_go_emotions.py").exists()
 
 
+def test_three_method_batch_environment_does_not_require_git_cli() -> None:
+    source = (
+        ROOT / "Concept_intervention/scripts/three_method_env.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'git -C "${CODE_ROOT}" rev-parse HEAD' not in source
+    assert "git_head_commit" in source
+
+
 def test_formal_lanes_share_the_current_full_fit_prompt_artifact() -> None:
     assert not (ROOT / "Concept_intervention/configs/qwen35_4b_smoke.yaml").exists()
     concept = yaml.safe_load(

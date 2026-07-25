@@ -15,22 +15,19 @@ from jlens_workspace.concept_intervention.raptor.workflow import (
 )
 
 
-def test_checkout_verification_requires_pinned_commit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    (tmp_path / ".git").mkdir()
+def test_checkout_verification_requires_pinned_commit(tmp_path: Path) -> None:
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
     (tmp_path / "src/raptor").mkdir(parents=True)
-    monkeypatch.setattr(
-        raptor.subprocess,
-        "run",
-        lambda *_args, **_kwargs: SimpleNamespace(stdout=f"{raptor.RAPTOR_COMMIT}\n"),
+    (git_dir / "HEAD").write_text(
+        f"{raptor.RAPTOR_COMMIT}\n",
+        encoding="utf-8",
     )
     assert raptor.verify_raptor_checkout(tmp_path) == tmp_path.resolve()
 
-    monkeypatch.setattr(
-        raptor.subprocess,
-        "run",
-        lambda *_args, **_kwargs: SimpleNamespace(stdout=f"{'0' * 40}\n"),
+    (git_dir / "HEAD").write_text(
+        f"{'0' * 40}\n",
+        encoding="utf-8",
     )
     with pytest.raises(raptor.RaptorError, match="commit mismatch"):
         raptor.verify_raptor_checkout(tmp_path)
