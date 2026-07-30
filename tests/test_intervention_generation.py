@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from jlens_workspace import cli
 from jlens_workspace.artifacts import sha256_file
+from jlens_workspace.concept_intervention.evaluation import load_prompt_bank
 from jlens_workspace.concept_intervention.generation import (
     InterventionGenerationError,
     load_open_prompt_bank,
@@ -15,6 +17,7 @@ from jlens_workspace.concept_intervention.generation import (
     validate_generation_artifacts,
     write_generation_artifacts,
 )
+from jlens_workspace.config import GenerationConfig
 
 
 class _Tokenizer:
@@ -101,6 +104,80 @@ def test_frozen_open_prompts_are_exactly_balanced() -> None:
     assert sum(prompt.split == "validation" for prompt in prompts) == 16
     assert sum(prompt.split == "test" for prompt in prompts) == 16
     assert len({prompt.prompt_id for prompt in prompts}) == 32
+
+
+def test_generation_resources_resolve_from_registered_repository_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository_root = tmp_path / "code"
+    run_root = tmp_path / "run"
+    data_root = repository_root / "Concept_intervention" / "data"
+    data_root.mkdir(parents=True)
+    run_root.mkdir()
+    candidate_path = data_root / "candidates.json"
+    open_path = data_root / "open.json"
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "prompts": [
+                    {
+                        "prompt_id": "choose_0",
+                        "label_rotation": 0,
+                        "text": "Choose from {labels}.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    open_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "prompts": [
+                    {
+                        "prompt_id": "open_validation_0",
+                        "split": "validation",
+                        "text": "Write something.",
+                    },
+                    {
+                        "prompt_id": "open_test_0",
+                        "split": "test",
+                        "text": "Write something else.",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(run_root)
+    monkeypatch.setenv("JLENS_REPOSITORY_ROOT", str(repository_root))
+    candidate_relative = "Concept_intervention/data/candidates.json"
+    open_relative = "Concept_intervention/data/open.json"
+
+    candidate_prompts = load_prompt_bank(
+        candidate_relative,
+        tokenizer=_Tokenizer(),
+        candidate_labels=_CANDIDATE_LABELS,
+    )
+    open_prompts = load_open_prompt_bank(open_relative, tokenizer=_Tokenizer())
+    identity = cli._generation_identity(
+        GenerationConfig(
+            candidate_prompts_path=candidate_relative,
+            open_prompts_path=open_relative,
+            sample_seeds=[1001],
+        ),
+        _CANDIDATE_LABELS,
+    )
+
+    assert [prompt.prompt_id for prompt in candidate_prompts] == ["choose_0"]
+    assert [prompt.prompt_id for prompt in open_prompts] == [
+        "open_validation_0",
+        "open_test_0",
+    ]
+    assert identity["candidate_prompts_sha256"] == sha256_file(candidate_path)
+    assert identity["open_prompts_sha256"] == sha256_file(open_path)
 
 
 def test_blind_export_hides_method_but_keeps_private_mapping(tmp_path: Path) -> None:

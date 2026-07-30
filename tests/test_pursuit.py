@@ -75,6 +75,37 @@ def test_standard_gradient_pursuit_is_nonnegative_and_monotone() -> None:
     assert all(np.all(coefficients >= 0) for coefficients in result.coefficients_per_k)
 
 
+def test_standard_gradient_pursuit_backtracks_after_nonnegative_projection() -> None:
+    """Projection must not turn the exact gradient step into an uphill update."""
+
+    atoms = np.asarray(
+        [
+            [0.03465253495837938, 1.0889514651634622, 0.8422224822212777, 0.7938916028648317],
+            [-0.34917429807714406, 0.6520877776937004, 0.23717116336560415, -0.272693895000421],
+            [0.5682174640561662, 0.2841831167223799, 0.7447032615642507, -1.4979757056539782],
+            [-1.287812445122025, -1.0529170964456835, 0.3862175816422193, -0.9097826922455988],
+            [-1.2932944656440315, -1.4472875850558138, -0.3945612126759273, 1.1287805441227297],
+            [0.3847005509132743, 0.6439271418189256, 1.3993741834475515, -0.03552760258249778],
+            [-1.1323167253816067, 0.3116431073895811, -0.5253746796938693, 0.4788879796781767],
+            [-0.22374767032875, 1.8671215374338568, -0.14249063676101095, -1.4107994686470189],
+        ]
+    )
+    target = np.asarray(
+        [-1.5281607867161748, -0.7562798624169258, -1.6702892967111194, -0.5678178895153524]
+    )
+
+    result = streaming_nonnegative_pursuit(
+        UnitNormDictionary(DenseDictionary(atoms)),
+        target[None, :],
+        k_max=8,
+        solver_method="nonnegative_gradient_pursuit_standard",
+    )[0]
+
+    assert np.all(np.diff(result.errors) <= 1e-12)
+    assert all(np.all(coefficients >= 0) for coefficients in result.coefficients_per_k)
+    assert result.errors[5] < result.errors[4]
+
+
 def test_unit_norm_dictionary_preserves_streaming_operations() -> None:
     atoms = np.asarray([[3.0, 4.0], [0.0, 2.0], [0.0, 0.0]])
     dictionary = UnitNormDictionary(DenseDictionary(atoms))

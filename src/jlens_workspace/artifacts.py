@@ -129,6 +129,32 @@ def sha256_file(path: str | Path, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
+def resolve_repository_resource(path: str | Path) -> Path:
+    """Resolve a read-only resource when code and run roots are separate.
+
+    Relative artifact paths keep resolving against the current working
+    directory. If a relative path is absent there, ``JLENS_REPOSITORY_ROOT``
+    provides an explicit fallback for files committed with the immutable code
+    checkout, such as prompt banks. The fallback may never escape that root.
+    """
+
+    source = Path(path)
+    if source.is_absolute() or source.exists():
+        return source
+    root_value = os.environ.get("JLENS_REPOSITORY_ROOT")
+    if not root_value:
+        return source
+    root = Path(root_value).resolve()
+    candidate = (root / source).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as error:
+        raise ValueError(
+            f"repository resource escapes JLENS_REPOSITORY_ROOT: {source}"
+        ) from error
+    return candidate if candidate.is_file() else source
+
+
 def stable_hash(items: Iterable[str]) -> str:
     digest = hashlib.sha256()
     for item in items:

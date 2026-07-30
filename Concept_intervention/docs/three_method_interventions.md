@@ -75,10 +75,14 @@ observed VCS commit to equal this pin.
 
 Each layer's newly fitted shared concept vector is decomposed over
 RMSNorm-weighted unit J-token directions with standard non-negative Gradient
-Pursuit. Primary plus four group-bootstrap probes are compared with five
-same-size random dictionaries through K=64. `K_measured` is the median support
-before the first random crossing; `K_used=max(1,K_measured)`. K=0 floors and
-K=64 right-censoring remain explicit.
+Pursuit. The one-dimensional gradient step is projected to non-negative
+coefficients, then exactly line-searched on the resulting feasible segment so
+projection cannot increase reconstruction error; this is not an
+active-support NNLS refit. Primary plus four group-bootstrap probes are
+compared with five same-size random dictionaries through K=64. `K_measured` is
+the median support before the first random crossing;
+`K_used=max(1,K_measured)`. K=0 floors and K=64 right-censoring remain
+explicit.
 
 Full, J, non-J, and five random conditions use the selected six layers. Each
 layer receives its full signed strength times that layer's mean development
@@ -191,3 +195,11 @@ actually passed. The experiment is complete only when the parent suite's
 was produced after all prompt, row-manifest, probe, layer, zero-output, and
 telemetry checks. Pending jobs, launchers, or partial method directories are
 not experimental results.
+
+Batch jobs run artifact paths relative to the immutable `RUN_ROOT`. Committed
+read-only resources such as the frozen prompt banks resolve through the
+explicit `JLENS_REPOSITORY_ROOT=CODE_ROOT` fallback; this fallback is confined
+to that checkout and does not redirect missing artifact paths.
+Recovery after a solver-code correction must rerun every occupancy shard with
+`OCCUPANCY_OVERWRITE=1`; the default remains resumable and never overwrites a
+completed shard.

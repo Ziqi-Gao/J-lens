@@ -32,9 +32,9 @@ Two versioned active-support coefficient solvers are provided:
   its sparse-decomposition implementation.
 - ``nonnegative_gradient_pursuit_standard`` performs the standard Gradient
   Pursuit one-dimensional optimal update along the active-support gradient,
-  followed by a non-negative projection.  It does not solve active-support
-  NNLS and is the primary solver for the registered three-method intervention
-  experiment.
+  followed by a non-negative projection and an exact line search on the
+  resulting feasible segment. It does not solve active-support NNLS and is the
+  primary solver for the registered three-method intervention experiment.
 
 Neither name claims a globally exact solution of the non-convex L0 problem.
 ``full-vocabulary`` means only that atom selection re-scans every token row at
@@ -215,7 +215,26 @@ def _refit_coefficients(
         step_size = numerator / denominator
         if not np.isfinite(step_size) or step_size < 0.0:
             raise PursuitSolverError("standard gradient-pursuit step is invalid")
-        return np.maximum(0.0, coefficients + step_size * gradient)
+        projected = np.maximum(0.0, coefficients + step_size * gradient)
+        feasible_delta = projected - coefficients
+        feasible_reconstruction_direction = feasible_delta @ atoms
+        feasible_denominator = float(
+            feasible_reconstruction_direction @ feasible_reconstruction_direction
+        )
+        if feasible_denominator <= 0.0 or not np.isfinite(feasible_denominator):
+            return coefficients
+        feasible_step = float(
+            residual @ feasible_reconstruction_direction / feasible_denominator
+        )
+        if not np.isfinite(feasible_step):
+            raise PursuitSolverError(
+                "standard gradient-pursuit feasible step is invalid"
+            )
+        # Projection changes the exact-gradient direction. A second line
+        # search on the convex feasible segment restores the descent guarantee
+        # without turning this method into an active-support NNLS refit.
+        feasible_step = min(1.0, max(0.0, feasible_step))
+        return coefficients + feasible_step * feasible_delta
     raise PursuitSolverError(f"unknown solver method {solver_method!r}")
 
 

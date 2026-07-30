@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
+from jlens_workspace.artifacts import resolve_repository_resource
+
 ValueT = TypeVar("ValueT")
 
 
@@ -63,7 +65,7 @@ def load_prompt_bank(
 ) -> list[PromptRecord]:
     """Load and format the common counterbalanced prompt-bank schema."""
 
-    source = Path(path)
+    source = resolve_repository_resource(path)
     payload = json.loads(source.read_text(encoding="utf-8"))
     if payload.get("schema_version") != 1:
         raise CandidateEvaluationError(f"unsupported prompt schema: {source}")

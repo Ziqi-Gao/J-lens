@@ -20,6 +20,12 @@ REPLICATES=(primary bootstrap_1101 bootstrap_2202 bootstrap_3303 bootstrap_4404)
 TASK="${SLURM_ARRAY_TASK_ID}"
 LAYER="${LAYERS[$((TASK % 7))]}"
 REPLICATE="${REPLICATES[$((TASK / 7))]}"
+OVERWRITE_ARGS=()
+case "${OCCUPANCY_OVERWRITE:-0}" in
+  0) ;;
+  1) OVERWRITE_ARGS+=(--overwrite) ;;
+  *) echo "invalid OCCUPANCY_OVERWRITE (expected 0 or 1)" >&2; exit 2 ;;
+esac
 nvidia-smi
 jlens occupancy concepts "${SHARED_CONFIG}" \
   --probes artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/selection/raptor_probes \
@@ -28,4 +34,5 @@ jlens occupancy concepts "${SHARED_CONFIG}" \
   --layer "${LAYER}" \
   --convention rmsnorm_weighted \
   --replicate-id "${REPLICATE}" \
-  --k-max 64
+  --k-max 64 \
+  "${OVERWRITE_ARGS[@]}"

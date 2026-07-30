@@ -28,6 +28,16 @@ def test_three_method_batch_environment_does_not_require_git_cli() -> None:
 
     assert 'git -C "${CODE_ROOT}" rev-parse HEAD' not in source
     assert "git_head_commit" in source
+    assert 'JLENS_REPOSITORY_ROOT="${CODE_ROOT}"' in source
+
+
+def test_shared_occupancy_recovery_requires_explicit_overwrite_opt_in() -> None:
+    source = (
+        ROOT / "Concept_intervention/scripts/run_shared_j_occupancy.slurm"
+    ).read_text(encoding="utf-8")
+
+    assert 'OCCUPANCY_OVERWRITE:-0' in source
+    assert 'OVERWRITE_ARGS+=(--overwrite)' in source
 
 
 def test_formal_lanes_share_the_current_full_fit_prompt_artifact() -> None:

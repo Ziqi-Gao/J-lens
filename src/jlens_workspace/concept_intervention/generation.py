@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any
 
-from jlens_workspace.artifacts import sha256_file
+from jlens_workspace.artifacts import resolve_repository_resource, sha256_file
 from jlens_workspace.concept_intervention.evaluation import (
     PromptRecord,
     atomic_write_jsonl,
@@ -256,7 +256,7 @@ def load_open_prompt_bank(
 ) -> list[OpenPromptRecord]:
     """Load the frozen neutral open-ended prompt schema."""
 
-    source = Path(path)
+    source = resolve_repository_resource(path)
     payload = json.loads(source.read_text(encoding="utf-8"))
     if payload.get("schema_version") != 1:
         raise InterventionGenerationError(

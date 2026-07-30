@@ -658,18 +658,16 @@ def _generation_identity(
 ) -> dict[str, Any]:
     """Content-address both prompt banks together with decoding parameters."""
 
-    from jlens_workspace.artifacts import sha256_file
+    from jlens_workspace.artifacts import resolve_repository_resource, sha256_file
     from jlens_workspace.concept_intervention.generation import (
         candidate_prompt_splits,
         prompt_ids_sha256,
     )
 
-    candidate_payload = json.loads(
-        Path(value.candidate_prompts_path).read_text(encoding="utf-8")
-    )
-    open_payload = json.loads(
-        Path(value.open_prompts_path).read_text(encoding="utf-8")
-    )
+    candidate_path = resolve_repository_resource(value.candidate_prompts_path)
+    open_path = resolve_repository_resource(value.open_prompts_path)
+    candidate_payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+    open_payload = json.loads(open_path.read_text(encoding="utf-8"))
     candidate_ids = [
         str(row["prompt_id"]) for row in candidate_payload.get("prompts", [])
     ]
@@ -696,8 +694,8 @@ def _generation_identity(
             for concept_id, label in candidate_labels.items()
         },
         "candidate_prompt_splits": candidate_prompt_splits(candidate_ids),
-        "candidate_prompts_sha256": sha256_file(value.candidate_prompts_path),
-        "open_prompts_sha256": sha256_file(value.open_prompts_path),
+        "candidate_prompts_sha256": sha256_file(candidate_path),
+        "open_prompts_sha256": sha256_file(open_path),
         "candidate_prompt_count": len(candidate_ids),
         "open_prompt_count": len(open_ids),
         "prompt_count": len(prompt_ids),
@@ -2111,7 +2109,11 @@ def _load_unembedding_tensors_lightweight(config: Any) -> tuple[Any, Any]:
 
 
 def _cmd_intervention_concepts_v2(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json, sha256_file
+    from jlens_workspace.artifacts import (
+        atomic_write_json,
+        resolve_repository_resource,
+        sha256_file,
+    )
     from jlens_workspace.concept_intervention.j_component import (
         run_concept_intervention,
     )
@@ -2158,7 +2160,9 @@ def _cmd_intervention_concepts_v2(args: argparse.Namespace) -> int:
                 intervention.source_occupancy_git_commit
             ),
             "prompts_path": intervention.prompts_path,
-            "prompts_sha256": sha256_file(intervention.prompts_path),
+            "prompts_sha256": sha256_file(
+                resolve_repository_resource(intervention.prompts_path)
+            ),
         },
     )
     destination.mkdir(parents=True, exist_ok=True)
@@ -2724,7 +2728,11 @@ def _cmd_iti_fit(args: argparse.Namespace) -> int:
 
 
 def _cmd_iti_run(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json, sha256_file
+    from jlens_workspace.artifacts import (
+        atomic_write_json,
+        resolve_repository_resource,
+        sha256_file,
+    )
     from jlens_workspace.concept_intervention.iti import (
         run_iti_intervention,
         run_iti_intervention_experiment,
@@ -2753,7 +2761,9 @@ def _cmd_iti_run(args: argparse.Namespace) -> int:
             "upstream_repository": iti.upstream_repository,
             "upstream_commit": iti.upstream_commit,
             "prompts_path": iti.prompts_path,
-            "prompts_sha256": sha256_file(iti.prompts_path),
+            "prompts_sha256": sha256_file(
+                resolve_repository_resource(iti.prompts_path)
+            ),
             "validation_prompt_prefixes": list(iti.validation_prompt_prefixes),
             "test_prompt_prefixes": list(iti.test_prompt_prefixes),
             "generation": (
@@ -2849,7 +2859,11 @@ def _cmd_iti_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_iti_index(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json, sha256_file
+    from jlens_workspace.artifacts import (
+        atomic_write_json,
+        resolve_repository_resource,
+        sha256_file,
+    )
     from jlens_workspace.concept_intervention.iti import (
         rebuild_iti_experiment_index,
         rebuild_iti_index,
@@ -2882,7 +2896,9 @@ def _cmd_iti_index(args: argparse.Namespace) -> int:
             "upstream_repository": iti.upstream_repository,
             "upstream_commit": iti.upstream_commit,
             "prompts_path": iti.prompts_path,
-            "prompts_sha256": sha256_file(iti.prompts_path),
+            "prompts_sha256": sha256_file(
+                resolve_repository_resource(iti.prompts_path)
+            ),
             "validation_prompt_prefixes": list(iti.validation_prompt_prefixes),
             "test_prompt_prefixes": list(iti.test_prompt_prefixes),
             "reference_j_intervention_dir": iti.reference_j_intervention_dir,
