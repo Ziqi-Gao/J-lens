@@ -34,6 +34,9 @@ download, remote data, or CUDA with the existing `integration`, `remote`, or
 - Do not import one direction's scripts or generated outputs from the other.
 - Do not put reusable experimental logic in notebooks or Slurm files; launchers
   should validate configuration and call `jlens-workspace`.
+- On the managed local server, obey the three J-lens write roots and project
+  isolation policy in `AGENTS.md`. An agent writing J-lens must not write
+  FedFisher in the same task or session.
 
 ## Non-negotiable scientific invariants
 

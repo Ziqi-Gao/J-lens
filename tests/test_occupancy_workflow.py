@@ -97,6 +97,7 @@ def test_workflow_writes_complete_combo_artifacts(tmp_path: Path) -> None:
         np.linalg.norm(w_nonj) ** 2 / np.linalg.norm(target) ** 2,
         errors[8],
         rtol=1e-10,
+        atol=np.finfo(np.float64).eps**2,
     )
 
     negative = (

@@ -175,6 +175,18 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 
 These are dependency/API integration checks, not scientific experiments.
 
+## Local non-Slurm server
+
+The managed local server uses a separate top-level DAG rather than invoking the
+Quest `.slurm` components. Code remains in `/home/del6500/projects/J-lens`,
+durable artifacts go to `/data/del6500/J-lens`, and environments/caches/runtime
+state go to `/scr/del6500/J-lens`. GPU work may overlay foreign jobs only when
+the capacity gate passes; the launcher never controls pre-existing processes.
+
+See the [local server runbook](Concept_intervention/docs/local_server.md) for
+environment setup, bootstrap, Screen launch, GPU thresholds, resume state, and
+the final completion check.
+
 ## Qwen3.5-4B on the cluster
 
 The checked-in Qwen configs pin the model and tokenizer revisions. The formal

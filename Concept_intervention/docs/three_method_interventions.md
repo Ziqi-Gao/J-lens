@@ -162,6 +162,11 @@ the final comparison reports paired held-out target-margin change relative to
 each method's own zero/no-hook baseline. Blind exports are retained for a
 separately registered future judge.
 
+> **Managed local server:** the machine at `/home/del6500` has no Slurm.
+> Use the dedicated [local server runbook](local_server.md) and its top-level
+> DAG. Do not execute the component `.slurm` files or internal local task
+> scripts directly.
+
 ## Clean-server bootstrap
 
 No artifact from an earlier server is required for a from-scratch run. Clone
