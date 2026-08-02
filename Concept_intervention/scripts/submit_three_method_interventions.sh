@@ -3,9 +3,10 @@
 set -euo pipefail
 
 CODE_ROOT="${CODE_ROOT:-$(git rev-parse --show-toplevel)}"
-RUN_ROOT="${RUN_ROOT:-/gpfs/projects/p32737/del6500_home/J_lens}"
+RUN_ROOT="${RUN_ROOT:?set RUN_ROOT to a persistent experiment workspace}"
 RAPTOR_ROOT="${RUN_ROOT}/third_party_external/RAPTOR"
 RAPTOR_COMMIT="cf7405899174af39f3970e093e4b86bf0972ff87"
+source "${CODE_ROOT}/Concept_intervention/scripts/three_method_submit_env.sh"
 
 if [[ -n "$(git -C "${CODE_ROOT}" status --short)" ]]; then
   echo "error: three-method interventions require a clean immutable checkout" >&2
@@ -31,29 +32,29 @@ mkdir -p \
   "${RUN_ROOT}/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/raptor_intervention/slurm" \
   "${RUN_ROOT}/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/intervention_comparison/slurm"
 
-export CODE_ROOT RUN_ROOT JLENS_GIT_COMMIT
+export CODE_ROOT RUN_ROOT JLENS_GIT_COMMIT JLENS_PYTHON HF_HOME HF_HUB_CACHE
 cd "${RUN_ROOT}"
 SCRIPTS="${CODE_ROOT}/Concept_intervention/scripts"
 
-PREFLIGHT="$(sbatch --parsable "${SCRIPTS}/run_three_method_preflight.slurm")"
-LENS="$(sbatch --parsable --dependency="afterok:${PREFLIGHT}" "${SCRIPTS}/run_shared_intervention_lens.slurm")"
-CAPTURE="$(sbatch --parsable --dependency="afterok:${PREFLIGHT}" "${SCRIPTS}/run_shared_intervention_capture.slurm")"
-LAYERS="$(sbatch --parsable --dependency="afterok:${CAPTURE}" "${SCRIPTS}/run_shared_layer_selection.slurm")"
-BOOTSTRAP="$(sbatch --parsable --dependency="afterok:${LAYERS}" "${SCRIPTS}/run_shared_probe_bootstrap.slurm")"
-BOOTSTRAP_INDEX="$(sbatch --parsable --dependency="afterok:${BOOTSTRAP}" "${SCRIPTS}/run_shared_probe_bootstrap_index.slurm")"
-OCCUPANCY="$(sbatch --parsable --dependency="afterok:${LENS}:${BOOTSTRAP_INDEX}" "${SCRIPTS}/run_shared_j_occupancy.slurm")"
-OCCUPANCY_INDEX="$(sbatch --parsable --dependency="afterok:${OCCUPANCY}" "${SCRIPTS}/run_shared_j_occupancy_index.slurm")"
+PREFLIGHT="$(three_method_sbatch_cpu --parsable "${SCRIPTS}/run_three_method_preflight.slurm")"
+LENS="$(three_method_sbatch_gpu --parsable --dependency="afterok:${PREFLIGHT}" "${SCRIPTS}/run_shared_intervention_lens.slurm")"
+CAPTURE="$(three_method_sbatch_gpu --parsable --dependency="afterok:${PREFLIGHT}" "${SCRIPTS}/run_shared_intervention_capture.slurm")"
+LAYERS="$(three_method_sbatch_cpu --parsable --dependency="afterok:${CAPTURE}" "${SCRIPTS}/run_shared_layer_selection.slurm")"
+BOOTSTRAP="$(three_method_sbatch_cpu --parsable --array="0-6%${SLURM_BOOTSTRAP_LIMIT}" --dependency="afterok:${LAYERS}" "${SCRIPTS}/run_shared_probe_bootstrap.slurm")"
+BOOTSTRAP_INDEX="$(three_method_sbatch_cpu --parsable --dependency="afterok:${BOOTSTRAP}" "${SCRIPTS}/run_shared_probe_bootstrap_index.slurm")"
+OCCUPANCY="$(three_method_sbatch_gpu --parsable --array="0-34%${SLURM_OCCUPANCY_LIMIT}" --dependency="afterok:${LENS}:${BOOTSTRAP_INDEX}" "${SCRIPTS}/run_shared_j_occupancy.slurm")"
+OCCUPANCY_INDEX="$(three_method_sbatch_cpu --parsable --dependency="afterok:${OCCUPANCY}" "${SCRIPTS}/run_shared_j_occupancy_index.slurm")"
 
-ITI_CAPTURE="$(sbatch --parsable --dependency="afterok:${CAPTURE}" "${SCRIPTS}/run_iti_intervention_capture.slurm")"
-ITI_FIT="$(sbatch --parsable --dependency="afterok:${ITI_CAPTURE}:${LAYERS}" "${SCRIPTS}/run_iti_intervention_fit.slurm")"
+ITI_CAPTURE="$(three_method_sbatch_gpu --parsable --dependency="afterok:${CAPTURE}" "${SCRIPTS}/run_iti_intervention_capture.slurm")"
+ITI_FIT="$(three_method_sbatch_cpu --parsable --dependency="afterok:${ITI_CAPTURE}:${LAYERS}" "${SCRIPTS}/run_iti_intervention_fit.slurm")"
 
-J_SMOKE="$(sbatch --parsable --array=6 --dependency="afterok:${OCCUPANCY_INDEX}" "${SCRIPTS}/run_j_component_grid.slurm")"
-RAPTOR_SMOKE="$(sbatch --parsable --array=8 --dependency="afterok:${LAYERS}" "${SCRIPTS}/run_raptor_intervention_grid.slurm")"
-ITI_SMOKE="$(sbatch --parsable --array=6,251 --dependency="afterok:${ITI_FIT}" "${SCRIPTS}/run_iti_intervention_grid.slurm")"
+J_SMOKE="$(three_method_sbatch_gpu --parsable --array=6 --dependency="afterok:${OCCUPANCY_INDEX}" "${SCRIPTS}/run_j_component_grid.slurm")"
+RAPTOR_SMOKE="$(three_method_sbatch_gpu --parsable --array=8 --dependency="afterok:${LAYERS}" "${SCRIPTS}/run_raptor_intervention_grid.slurm")"
+ITI_SMOKE="$(three_method_sbatch_gpu --parsable --array=6,251 --dependency="afterok:${ITI_FIT}" "${SCRIPTS}/run_iti_intervention_grid.slurm")"
 SMOKE_DEPENDENCY="afterok:${J_SMOKE}:${RAPTOR_SMOKE}:${ITI_SMOKE}"
 
 FULL_SUBMISSION_GATE="$(
-  sbatch --parsable --dependency="${SMOKE_DEPENDENCY}" \
+  three_method_sbatch_cpu --parsable --dependency="${SMOKE_DEPENDENCY}" \
     "${SCRIPTS}/run_three_method_full_submit.slurm"
 )"
 

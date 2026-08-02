@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -29,6 +31,68 @@ def test_three_method_batch_environment_does_not_require_git_cli() -> None:
     assert 'git -C "${CODE_ROOT}" rev-parse HEAD' not in source
     assert "git_head_commit" in source
     assert 'JLENS_REPOSITORY_ROOT="${CODE_ROOT}"' in source
+    assert 'JLENS_PYTHON:-${CODE_ROOT}/.venv/bin/python' in source
+
+
+def test_three_method_submit_environment_overrides_cluster_mapping() -> None:
+    helper = ROOT / "Concept_intervention/scripts/three_method_submit_env.sh"
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "SLURM_ACCOUNT": "new_account",
+            "SLURM_CPU_PARTITION": "cpu_queue",
+            "SLURM_GPU_PARTITION": "gpu_queue",
+            "SLURM_GPU_GRES": "gpu:h100:1",
+            "SLURM_EXCLUDE": "badnode",
+        }
+    )
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                "sbatch() { printf '<%s>\\n' \"$@\"; }; "
+                f"source {helper}; "
+                "three_method_sbatch_cpu --parsable cpu.slurm; "
+                "three_method_sbatch_gpu --parsable gpu.slurm"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert "<--account=new_account>" in result.stdout
+    assert "<--partition=cpu_queue>" in result.stdout
+    assert "<--partition=gpu_queue>" in result.stdout
+    assert "<--gres=gpu:h100:1>" in result.stdout
+    assert "<--exclude=badnode>" in result.stdout
+
+
+def test_three_method_clean_server_bootstrap_is_content_pinned() -> None:
+    bootstrap = (
+        ROOT / "Concept_intervention/scripts/bootstrap_three_method_server.sh"
+    ).read_text(encoding="utf-8")
+    initial = (
+        ROOT / "Concept_intervention/scripts/submit_three_method_interventions.sh"
+    ).read_text(encoding="utf-8")
+    full = (
+        ROOT / "Concept_intervention/scripts/submit_three_method_full_grids.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a" in bootstrap
+    assert "add492243ff905527e67aeb8b80c082af02207c3" in bootstrap
+    assert "cf7405899174af39f3970e093e4b86bf0972ff87" in bootstrap
+    assert "snapshot_download" in bootstrap
+    assert "prepare_go_emotions.py" in bootstrap
+    assert "three_method_sbatch_cpu" in initial
+    assert "three_method_sbatch_gpu" in initial
+    assert "three_method_sbatch_cpu" in full
+    assert "three_method_sbatch_gpu" in full
+    assert "SLURM_EXCLUDE THREE_METHOD_SUBMIT_ENV_LOADED" not in (
+        ROOT / "Concept_intervention/scripts/three_method_submit_env.sh"
+    ).read_text(encoding="utf-8")
 
 
 def test_shared_occupancy_recovery_requires_explicit_overwrite_opt_in() -> None:

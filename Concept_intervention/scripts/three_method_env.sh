@@ -5,7 +5,7 @@ set -euo pipefail
 CODE_ROOT="${CODE_ROOT:?submit with CODE_ROOT set to the immutable code checkout}"
 RUN_ROOT="${RUN_ROOT:?submit with RUN_ROOT set to the artifact/data checkout}"
 JLENS_GIT_COMMIT="${JLENS_GIT_COMMIT:?submit with JLENS_GIT_COMMIT frozen}"
-PYTHON="${JLENS_PYTHON:-/gpfs/projects/p32737/del6500_home/J_lens/.venv/bin/python}"
+PYTHON="${JLENS_PYTHON:-${CODE_ROOT}/.venv/bin/python}"
 
 if [[ ! -x "${PYTHON}" ]]; then
   echo "error: experiment Python is not executable: ${PYTHON}" >&2

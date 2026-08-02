@@ -162,9 +162,88 @@ the final comparison reports paired held-out target-margin change relative to
 each method's own zero/no-hook baseline. Blind exports are retained for a
 separately registered future judge.
 
+## Clean-server bootstrap
+
+No artifact from an earlier server is required for a from-scratch run. Clone
+the published experiment branch, create an environment from the lockfile, and
+choose a persistent run root with enough space for model cache, activations,
+head captures, generations, and logs:
+
+```bash
+git clone --branch codex/three-method-interventions \
+  git@github.com:Ziqi-Gao/J-lens.git J-lens
+cd J-lens
+uv sync --extra dev --extra llm
+
+export CODE_ROOT="$PWD"
+export RUN_ROOT=/absolute/persistent/path/jlens-three-method
+export JLENS_PYTHON="$CODE_ROOT/.venv/bin/python"
+export HF_HOME="$RUN_ROOT/.cache/huggingface"
+export HF_HUB_CACHE="$HF_HOME"
+```
+
+The bootstrap command runs online on a login/download node. It downloads the
+model and tokenizer at `851bf6e...`, downloads the three GoEmotions parquet
+files at `add4922...`, verifies their checked-in SHA-256 allowlist, prepares the
+deterministic seven-concept dataset and fit prompts, checks out RAPTOR at
+`cf740589...`, and then runs the same offline config/data/source preflight used
+by Slurm:
+
+```bash
+Concept_intervention/scripts/bootstrap_three_method_server.sh
+```
+
+Scientific batch jobs are offline. The bootstrap must finish with
+`bootstrap_complete=true` before submission. The official Jacobian-lens
+package at `581d398...` is installed by the `llm` extra and its observed PEP
+610 VCS commit is checked by preflight.
+
+Set the scheduler mapping without editing any scientific YAML or Slurm file.
+The values below are examples; use the new cluster's actual names. The wrapper
+passes these options on every initial, smoke, full-grid, and index submission,
+including submissions made later by the smoke gate:
+
+```bash
+export SLURM_ACCOUNT=my_account
+export SLURM_CPU_PARTITION=cpu
+export SLURM_GPU_PARTITION=gpu
+export SLURM_GPU_GRES=gpu:1          # for example gpu:a100:1 or gpu:h100:1
+unset SLURM_EXCLUDE                  # or export a real comma-separated node list
+export SLURM_BOOTSTRAP_LIMIT=7
+export SLURM_OCCUPANCY_LIMIT=4
+export SLURM_J_LIMIT=4
+export SLURM_RAPTOR_LIMIT=4
+export SLURM_ITI_LIMIT=4
+
+Concept_intervention/scripts/submit_three_method_interventions.sh \
+  | tee "$RUN_ROOT/three_method_submission.txt"
+```
+
+The checked-in resource envelope is one GPU and 64 GB host RAM for GPU jobs;
+CPU stages reach 16 cores and 128 GB RAM. J-lens fitting requests 24 hours,
+capture/occupancy request 12 hours, and generation shards request 8 hours.
+Default array throttles are 10 occupancy, 16 J/RAPTOR generation, and 24 ITI
+generation tasks. Set the corresponding `SLURM_*_LIMIT` variables to the new
+cluster's per-user limits; changing launchers or scientific configs is not
+necessary.
+
+Always launch this registered DAG through
+`submit_three_method_interventions.sh`. Do not directly run `sbatch` on one of
+the component `.slurm` files on a different cluster: their checked-in
+`#SBATCH` headers document the original Quest resource envelope, while the
+submit wrapper supplies the new cluster's account, partition, GPU type, and
+array limits as command-line overrides. Both `CODE_ROOT` and `RUN_ROOT` must be
+visible at the same absolute paths on every compute node.
+
+Use only a clean, immutable Git checkout. The submitter records the exact
+commit and every compute job rejects a checkout that moves afterward. Keep
+`CODE_ROOT`, `RUN_ROOT`, `JLENS_PYTHON`, Hugging Face cache variables, and the
+`SLURM_*` mapping/throttle variables exported until the initial DAG has been
+submitted. After that, Slurm carries them through the full dependency graph.
+
 ## Slurm completion contract
 
-Run:
+After completing the clean-server bootstrap, run:
 
 ```bash
 Concept_intervention/scripts/submit_three_method_interventions.sh
@@ -196,7 +275,28 @@ was produced after all prompt, row-manifest, probe, layer, zero-output, and
 telemetry checks. Pending jobs, launchers, or partial method directories are
 not experimental results.
 
-Batch jobs run artifact paths relative to the immutable `RUN_ROOT`. Committed
+Monitor the recorded IDs with the new cluster's normal `squeue`/`sacct`
+commands. The machine-readable terminal check is:
+
+```bash
+test -f "$RUN_ROOT/artifacts/concept_intervention/\
+qwen35_4b_three_method_intervention_v1/intervention_comparison/index.json"
+"$JLENS_PYTHON" - <<'PY'
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["RUN_ROOT"]) / (
+    "artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/"
+    "intervention_comparison/index.json"
+)
+payload = json.loads(path.read_text())
+assert payload["complete"] is True, payload
+print(path)
+PY
+```
+
+Batch jobs run artifact paths relative to the persistent `RUN_ROOT`. Committed
 read-only resources such as the frozen prompt banks resolve through the
 explicit `JLENS_REPOSITORY_ROOT=CODE_ROOT` fallback; this fallback is confined
 to that checkout and does not redirect missing artifact paths.
