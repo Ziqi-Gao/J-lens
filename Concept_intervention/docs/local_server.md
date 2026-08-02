@@ -34,19 +34,21 @@ J-lens variable at a FedFisher directory.
 
 ## 1. Create the environment
 
-The server provides `/usr/bin/python3.12`. The setup entrypoint creates a
-private uv tool environment and the locked project environment under J-lens
-scratch. It does not install a system or user-level package and does not
-download model weights or datasets.
+The server provides `/usr/bin/python3.12` only to bootstrap uv. The setup
+entrypoint then installs a complete uv-managed CPython 3.12, including build
+headers needed by Triton, and creates the locked project environment under
+J-lens scratch. It does not install a system or user-level package and does
+not download model weights or datasets.
 
 ```bash
 cd /home/del6500/projects/J-lens
 Concept_intervention/scripts/setup_three_method_local.sh
 ```
 
-The command performs `uv sync --frozen --extra dev --extra llm`. Its tool,
-wheel, Git dependency, Torch, Triton, and compiler caches remain under
-`/scr/del6500/J-lens/cache`. The recorded environment summary is:
+The command performs `uv sync --frozen --extra dev --extra llm` against that
+managed interpreter. Its Python distribution, tool environment, wheel, Git
+dependency, Torch, Triton, and compiler caches remain under
+`/scr/del6500/J-lens`. The recorded environment summary is:
 
 ```text
 /scr/del6500/J-lens/runtime/three-method/environment.txt
