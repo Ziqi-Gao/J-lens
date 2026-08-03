@@ -62,6 +62,12 @@ If a J-lens overlay causes OOM, instability, or material contention, adjust or
 stop only the exact J-lens process/session launched by the current task after
 verifying its ownership. Leave every foreign workload untouched.
 
+Within J-lens, ordinary GPU tasks remain mutually exclusive per device.
+Measured low-memory, CPU-heavy occupancy tasks may use a bounded shared gate
+with explicit per-device slots, while retaining the same capacity sampling and
+foreign-process non-interference checks. Slot-count changes require a clean
+commit and a controlled DAG restart; never hot-edit a running checkout.
+
 ## Non-negotiable invariants
 
 1. Pin the official Jacobian-lens implementation to commit

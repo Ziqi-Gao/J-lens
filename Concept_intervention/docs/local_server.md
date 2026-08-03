@@ -111,6 +111,7 @@ export JLENS_LOCAL_GPU_SAMPLE_INTERVAL_SECONDS=2
 export JLENS_LOCAL_GPU_POLL_SECONDS=30
 export JLENS_LOCAL_GPU_WAIT_TIMEOUT_SECONDS=0
 export JLENS_LOCAL_GPU_WORKERS=4
+export JLENS_LOCAL_OCCUPANCY_GPU_SLOTS_PER_DEVICE=2
 export JLENS_LOCAL_CPU_WORKERS=4
 ```
 
@@ -124,6 +125,14 @@ J-lens locks coordinate only J-lens workers; they do not claim ownership over
 another project's GPU process. If an overlay fails or interferes, stop or
 adjust only the exact J-lens Screen session/PID after confirming its command
 and ownership.
+
+Ordinary model, capture, and generation tasks retain an exclusive per-device
+J-lens gate. Occupancy is a measured low-memory, CPU-heavy task with bursty GPU
+dictionary scans, so occupancy workers share that gate and take one of a
+bounded number of per-device slots. The default is two slots per GPU. Do not
+raise it without checking host CPU saturation, peak device memory, and foreign
+workload latency; the same free-memory/utilization stability gate still runs
+before every slot launch.
 
 ## 5. Run the smoke DAG
 

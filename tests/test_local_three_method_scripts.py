@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -60,3 +61,57 @@ def test_local_top_level_plan_has_the_registered_smoke_indices() -> None:
     )
     assert "J[6] + RAPTOR[8] + ITI[6,251] smoke" in result.stdout
     assert "three method indexes" in result.stdout
+
+
+def _gpu_policy(task: str, *, slots: str | None = None) -> dict[str, str]:
+    environment = os.environ.copy()
+    if slots is not None:
+        environment["JLENS_LOCAL_OCCUPANCY_GPU_SLOTS_PER_DEVICE"] = slots
+    result = subprocess.run(
+        [
+            "bash",
+            str(SCRIPTS / "three_method_local_gpu.sh"),
+            "--describe-policy",
+            task,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    return dict(line.split("=", 1) for line in result.stdout.splitlines())
+
+
+def test_local_gpu_policy_uses_bounded_shared_slots_only_for_occupancy() -> None:
+    assert _gpu_policy("occupancy") == {
+        "task_class": "occupancy",
+        "lock_mode": "shared",
+        "slots_per_device": "2",
+    }
+    assert _gpu_policy("lens") == {
+        "task_class": "standard",
+        "lock_mode": "exclusive",
+        "slots_per_device": "1",
+    }
+    assert _gpu_policy("occupancy", slots="3")["slots_per_device"] == "3"
+
+
+def test_local_gpu_policy_rejects_invalid_occupancy_slot_count() -> None:
+    environment = {
+        **os.environ,
+        "JLENS_LOCAL_OCCUPANCY_GPU_SLOTS_PER_DEVICE": "0",
+    }
+    result = subprocess.run(
+        [
+            "bash",
+            str(SCRIPTS / "three_method_local_gpu.sh"),
+            "--describe-policy",
+            "occupancy",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert result.returncode == 2
+    assert "must be positive" in result.stderr
