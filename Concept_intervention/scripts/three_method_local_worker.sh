@@ -46,7 +46,8 @@ if [[ "${KIND}" == "gpu" ]]; then
     "${SCRIPT_DIR}/run_three_method_local_task.sh" \
     "${TASK_NAME}" ${TASK_INDEX:+"${TASK_INDEX}"} >"${LOG_PATH}" 2>&1
 else
-  "${SCRIPT_DIR}/run_three_method_local_task.sh" \
+  "${SCRIPT_DIR}/three_method_local_resources.sh" cpu "${TASK_NAME}" \
+    "${SCRIPT_DIR}/run_three_method_local_task.sh" \
     "${TASK_NAME}" ${TASK_INDEX:+"${TASK_INDEX}"} >"${LOG_PATH}" 2>&1
 fi
 STATUS="$?"

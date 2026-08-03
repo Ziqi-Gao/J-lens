@@ -94,45 +94,81 @@ environments force Hugging Face, Transformers, and Datasets offline.
 ## 4. GPU overlay policy
 
 The user has authorized J-lens to run alongside pre-existing GPU work when
-there is stable spare capacity. The local wrapper samples each candidate GPU
-three times and takes a J-lens-only `flock` before launch. It records free
-memory, utilization, and the existing compute-process snapshot, then exposes
-exactly one physical GPU with `CUDA_VISIBLE_DEVICES`.
+there is stable spare capacity, and accepts longer foreign-training step times
+as the cost of bounded sharing. The scheduler still prioritizes successful
+completion over raw utilization: it reserves task-profiled memory and compute
+tokens, never controls a foreign process, and does not preempt a scientific
+shard after launch.
 
-Defaults are intentionally conservative:
+The scheduler discovers all visible GPU indices with `nvidia-smi`; it does not
+encode a particular server's idle card numbers. `JLENS_LOCAL_GPU_IDS`, when
+non-empty, is only an optional allow-list. Rolling samples retain minimum free
+memory and maximum utilization. Candidate scoring prefers devices without a
+foreign PID, then balances projected utilization, GPU memory reservations, and
+remaining free memory. A J-lens `flock` plus an atomic CPU/RAM/GPU lease is
+taken before launch, capacity is rechecked, and exactly one physical GPU is
+exposed through `CUDA_VISIBLE_DEVICES`.
+
+Registered defaults are:
 
 ```bash
-export JLENS_LOCAL_GPU_IDS=0,1,2,3
-export JLENS_LOCAL_GPU_MIN_FREE_MIB=65536
-export JLENS_LOCAL_GPU_MAX_UTILIZATION=70
+unset JLENS_LOCAL_GPU_IDS                 # auto-discover every visible GPU
+export JLENS_LOCAL_GPU_MEMORY_RESERVE_MIB=8192
+export JLENS_LOCAL_GPU_MAX_UTILIZATION=85
+export JLENS_LOCAL_GPU_TARGET_UTILIZATION=95
 export JLENS_LOCAL_GPU_ALLOW_OVERLAY=1
 export JLENS_LOCAL_GPU_STABILITY_SAMPLES=3
 export JLENS_LOCAL_GPU_SAMPLE_INTERVAL_SECONDS=2
-export JLENS_LOCAL_GPU_POLL_SECONDS=30
+export JLENS_LOCAL_GPU_POLL_SECONDS=10
 export JLENS_LOCAL_GPU_WAIT_TIMEOUT_SECONDS=0
-export JLENS_LOCAL_GPU_WORKERS=4
-export JLENS_LOCAL_OCCUPANCY_GPU_SLOTS_PER_DEVICE=2
+export JLENS_LOCAL_GPU_WORKERS=10
+export JLENS_LOCAL_OCCUPANCY_GPU_SLOTS_PER_DEVICE=5
 export JLENS_LOCAL_CPU_WORKERS=4
+unset JLENS_LOCAL_HOST_CPU_TOKENS         # auto-detect physical CPU cores
+export JLENS_LOCAL_HOST_RAM_RESERVE_MIB=65536
+
+export JLENS_LOCAL_OCCUPANCY_CPU_TOKENS=4
+export JLENS_LOCAL_OCCUPANCY_HOST_RAM_MIB=4096
+export JLENS_LOCAL_OCCUPANCY_GPU_VRAM_MIB=2048
+export JLENS_LOCAL_OCCUPANCY_GPU_UTILIZATION_TOKENS=20
+
+export JLENS_LOCAL_STANDARD_CPU_TOKENS=4
+export JLENS_LOCAL_STANDARD_HOST_RAM_MIB=24576
+export JLENS_LOCAL_STANDARD_GPU_VRAM_MIB=24576
+export JLENS_LOCAL_STANDARD_GPU_MEMORY_RESERVE_MIB=16384
+export JLENS_LOCAL_STANDARD_GPU_UTILIZATION_TOKENS=40
 ```
 
 A timeout of zero means wait without disturbing existing work. A foreign PID is
 never killed, paused, signalled, inspected with a debugger, or reconfigured.
 Setting `JLENS_LOCAL_GPU_ALLOW_OVERLAY=0` makes the gate require no existing
-compute process. Lowering the free-memory threshold is an operator decision and
-must be based on measured smoke memory, not merely on model-weight size.
+foreign compute process. The memory reserve is held in addition to the current
+task's profiled peak. Lowering either value, or raising utilization tokens, is
+an operator decision that must be based on observed smoke peaks rather than
+model-weight size alone.
 
 J-lens locks coordinate only J-lens workers; they do not claim ownership over
 another project's GPU process. If an overlay fails or interferes, stop or
 adjust only the exact J-lens Screen session/PID after confirming its command
-and ownership.
+and ownership. Increase the relevant task profile or safety reserve before a
+retry; never adjust the foreign process.
 
 Ordinary model, capture, and generation tasks retain an exclusive per-device
 J-lens gate. Occupancy is a measured low-memory, CPU-heavy task with bursty GPU
 dictionary scans, so occupancy workers share that gate and take one of a
-bounded number of per-device slots. The default is two slots per GPU. Do not
-raise it without checking host CPU saturation, peak device memory, and foreign
-workload latency; the same free-memory/utilization stability gate still runs
-before every slot launch.
+bounded number of per-device slots. GPU utilization tokens normally admit four
+occupancy workers on a clean idle card (`4 * 20 <= 95`) even though five lock
+slots exist; the fifth slot permits a different measured profile without a code
+change. On a foreign card, sampled utilization and active J-lens reservations
+are combined conservatively. Host leases default to physical-core capacity and
+retain 64 GiB of RAM. Lease JSON lives under
+`/scr/del6500/J-lens/runtime/three-method/scheduler/leases/` and stale leases
+are removed only after both their scheduler and child PIDs have exited.
+
+Each array shard performs fresh admission. Thus idle cards are filled first,
+bounded overlay follows only when resources remain, and a card becomes eligible
+automatically after its external task exits. No mid-shard migration is
+attempted; long shards define the scheduler's reaction granularity.
 
 ## 5. Run the smoke DAG
 

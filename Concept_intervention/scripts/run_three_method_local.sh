@@ -93,7 +93,7 @@ JLENS_LOCAL_DRY_RUN="${DRY_RUN}"
 export JLENS_LOCAL_DAG_ACTIVE JLENS_LOCAL_DRY_RUN
 WORKER="${SCRIPT_DIR}/three_method_local_worker.sh"
 CPU_WORKERS="${JLENS_LOCAL_CPU_WORKERS:-4}"
-GPU_WORKERS="${JLENS_LOCAL_GPU_WORKERS:-4}"
+GPU_WORKERS="${JLENS_LOCAL_GPU_WORKERS:-10}"
 for pair in "JLENS_LOCAL_CPU_WORKERS:${CPU_WORKERS}" "JLENS_LOCAL_GPU_WORKERS:${GPU_WORKERS}"; do
   if [[ ! "${pair#*:}" =~ ^[1-9][0-9]*$ ]]; then
     echo "error: ${pair%%:*} must be a positive integer" >&2

@@ -51,22 +51,34 @@ shell configuration.
 Processes, Screen/tmux sessions, containers, and GPU contexts not launched by
 the current J-lens task are foreign experiments. Existing GPU use does not by
 itself prohibit a J-lens overlay: the user has authorized additive execution
-when stable free-memory and utilization thresholds leave sufficient capacity.
-Use the checked-in local GPU wrapper, a J-lens-owned lock, and an explicit
-`CUDA_VISIBLE_DEVICES`; record the pre-existing compute-process snapshot.
+even when it lengthens a foreign training step, provided memory headroom and
+resource admission make task failure unlikely. Never encode a status-derived
+GPU number in a launcher. Discover visible devices dynamically; treat
+`JLENS_LOCAL_GPU_IDS` only as an optional operator allow-list.
+
+Use the checked-in local scheduler, J-lens-owned locks and leases, and an
+explicit `CUDA_VISIBLE_DEVICES`. It must classify J-lens versus foreign compute
+PIDs, record the pre-existing snapshot, take rolling min-free/max-utilization
+samples, rank clean devices before bounded overlays, acquire CPU/RAM/GPU
+tokens, and revalidate after taking the device lock. Every new shard repeats
+admission, so a newly freed GPU joins automatically. Task profiles distinguish
+CPU-heavy, low-memory occupancy from exclusive model/capture/generation work.
 
 Never terminate, signal, pause, renice, debug, or change the affinity,
 environment, files, clocks, power settings, MIG layout, MPS state, or driver
 state of a foreign process. Never use GPU reset, `killall`, or broad `pkill`.
-If a J-lens overlay causes OOM, instability, or material contention, adjust or
-stop only the exact J-lens process/session launched by the current task after
-verifying its ownership. Leave every foreign workload untouched.
+The scheduler does not preempt a task in the middle of a scientific shard. If
+a J-lens overlay causes OOM or instability, adjust or stop only the exact
+J-lens process/session launched by the current task after verifying ownership,
+then increase the affected task profile or reserve before retrying. Leave every
+foreign workload untouched.
 
 Within J-lens, ordinary GPU tasks remain mutually exclusive per device.
 Measured low-memory, CPU-heavy occupancy tasks may use a bounded shared gate
-with explicit per-device slots, while retaining the same capacity sampling and
-foreign-process non-interference checks. Slot-count changes require a clean
-commit and a controlled DAG restart; never hot-edit a running checkout.
+with explicit per-device slots and utilization/memory tokens. CPU and host RAM
+leases apply to GPU and CPU tasks alike. Profile, token, worker-pool, or
+slot-count changes require a clean commit and a controlled DAG restart; never
+hot-edit a running checkout.
 
 ## Non-negotiable invariants
 

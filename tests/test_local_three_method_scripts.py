@@ -86,14 +86,28 @@ def test_local_gpu_policy_uses_bounded_shared_slots_only_for_occupancy() -> None
     assert _gpu_policy("occupancy") == {
         "task_class": "occupancy",
         "lock_mode": "shared",
-        "slots_per_device": "2",
+        "slots_per_device": "5",
+        "cpu_tokens": "4",
+        "host_ram_mib": "4096",
+        "gpu_vram_mib": "2048",
+        "gpu_memory_reserve_mib": "8192",
+        "gpu_utilization_tokens": "20",
     }
     assert _gpu_policy("lens") == {
         "task_class": "standard",
         "lock_mode": "exclusive",
         "slots_per_device": "1",
+        "cpu_tokens": "4",
+        "host_ram_mib": "24576",
+        "gpu_vram_mib": "24576",
+        "gpu_memory_reserve_mib": "16384",
+        "gpu_utilization_tokens": "40",
     }
     assert _gpu_policy("occupancy", slots="3")["slots_per_device"] == "3"
+    gpu_script = (SCRIPTS / "three_method_local_gpu.sh").read_text()
+    controller = (SCRIPTS / "run_three_method_local.sh").read_text()
+    assert "0,1,2,3" not in gpu_script
+    assert 'GPU_WORKERS="${JLENS_LOCAL_GPU_WORKERS:-10}"' in controller
 
 
 def test_local_gpu_policy_rejects_invalid_occupancy_slot_count() -> None:
