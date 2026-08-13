@@ -10,6 +10,7 @@ Commands:
   bootstrap  Download and verify pinned model/data/RAPTOR inputs.
   smoke      Run every producer plus the four registered smoke shards and gate.
   full       Run remaining grids, method indexes, and final comparison.
+  finalize   CPU-only validation/indexing of already-complete scientific grids.
   all        Run bootstrap, smoke, and full in order.
   status     Report local task markers and the final completion marker.
   plan       Print the registered local DAG without executing it.
@@ -26,7 +27,7 @@ if [[ "${1:-}" == "--dry-run" ]]; then
 fi
 COMMAND="${1:-}"
 case "${COMMAND}" in
-  bootstrap|smoke|full|all|status|plan) ;;
+  bootstrap|smoke|full|finalize|all|status|plan) ;;
   -h|--help|"") usage; exit 0 ;;
   *) echo "error: unknown command: ${COMMAND}" >&2; usage >&2; exit 2 ;;
 esac
@@ -44,6 +45,11 @@ bootstrap (online, pinned inputs)
   -> J[0-391 except 6]
   -> RAPTOR[0-62 except 8]
   -> ITI[0-3086 except 6,251]
+  -> three method indexes
+  -> intervention comparison index
+
+finalize (CPU-only recovery; no grid task or old marker dependency)
+  -> validate every existing J/ITI/RAPTOR shard and artifact hash
   -> three method indexes
   -> intervention comparison index
 EOF
@@ -149,6 +155,11 @@ run_smoke() {
   run_one cpu smoke-check
 }
 
+run_finalize() {
+  run_range cpu method-index 2 "${CPU_WORKERS}"
+  run_one cpu comparison-index
+}
+
 run_full() {
   local smoke_marker="${STATE_DIR}/smoke-check.done"
   if [[ "${DRY_RUN}" == "0" && ! -f "${smoke_marker}" ]]; then
@@ -158,18 +169,18 @@ run_full() {
   run_range gpu j-grid 391 "${GPU_WORKERS}" 6
   run_range gpu raptor-grid 62 "${GPU_WORKERS}" 8
   run_range gpu iti-grid 3086 "${GPU_WORKERS}" 6 251
-  run_range cpu method-index 2 "${CPU_WORKERS}"
-  run_one cpu comparison-index
+  run_finalize
 }
 
 case "${COMMAND}" in
   bootstrap) run_bootstrap ;;
   smoke) run_smoke ;;
   full) run_full ;;
+  finalize) run_finalize ;;
   all) run_bootstrap; run_smoke; run_full ;;
 esac
 
-if [[ "${DRY_RUN}" == "0" && "${COMMAND}" =~ ^(full|all)$ ]]; then
+if [[ "${DRY_RUN}" == "0" && "${COMMAND}" =~ ^(full|finalize|all)$ ]]; then
   /usr/bin/python3.12 -c \
     'import json,sys; payload=json.load(open(sys.argv[1])); assert payload.get("complete") is True, payload; print("three_method_complete=true")' \
     "${FINAL_INDEX}"

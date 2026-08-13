@@ -12,6 +12,7 @@ from jlens_workspace.concept_intervention.comparison import (
     validate_three_method_smokes,
 )
 from jlens_workspace.concept_intervention.generation import (
+    build_method_index_provenance,
     build_target_artifact_seal,
     prompt_ids_sha256,
     write_generation_artifacts,
@@ -419,22 +420,38 @@ def test_comparison_selects_on_validation_and_reports_paired_test_effect(
             "raptor_intervention",
         )
     }
-    for root in roots.values():
+    for method, root in roots.items():
         root.mkdir()
         manifest = root / "manifest.json"
         manifest.write_text(
             json.dumps(
                 {
+                    "schema_version": 1,
+                    "experiment_name": "experiment",
+                    "seed": 42,
                     "model_id": "model",
                     "model_revision": "revision",
                     "tokenizer_id": "model",
                     "tokenizer_revision": "revision",
                     "lens_source": "local:lens.pt",
+                    "lens_revision": None,
                     "dataset_source": "dataset",
                     "dataset_revision": "data-revision",
                     "dataset_hash": "sha256:dataset",
                     "git_commit": "a" * 40,
+                    "python": "3.12.13",
+                    "platform": (
+                        "Linux-new"
+                        if method == "iti_intervention"
+                        else "Linux-old"
+                    ),
+                    "packages": {"torch": "2.7.1"},
                     "notes": {
+                        "direction": "concept_intervention",
+                        "coordinate": "resid_post/block_output",
+                        "config_sha256": "e" * 64,
+                        "force_bos": False,
+                        "workflow": method,
                         "generation": {
                             **_GENERATION_SETTINGS,
                             "candidate_prompts_sha256": "c" * 64,
@@ -609,11 +626,29 @@ def test_comparison_selects_on_validation_and_reports_paired_test_effect(
     _write_jsonl(
         target_dirs["iti_intervention"] / "candidate_scores.jsonl", iti_rows
     )
+    builder = {
+        "git_commit": "b" * 40,
+        "platform": "builder-platform",
+        "python": "3.12.13",
+        "packages": {"jlens-workspace": "0.1.0"},
+    }
     for method, root in roots.items():
         summary_path = target_dirs[method] / "summary.json"
+        shard_manifest = root / "manifests/concept%3Aa/grid_0000.json"
+        shard_manifest.parent.mkdir(parents=True)
+        shard_manifest.write_text(
+            (root / "manifest.json").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        provenance = build_method_index_provenance(
+            root,
+            [shard_manifest],
+            index_builder=builder,
+        )
         (root / "index.json").write_text(
             json.dumps(
                 {
+                    **provenance,
                     "schema_version": 1,
                     "method": method,
                     "complete": True,
@@ -650,6 +685,14 @@ def test_comparison_selects_on_validation_and_reports_paired_test_effect(
     )
     entry = comparison["entries"][0]
     assert index["complete"] is True
+    assert set(index["method_provenance"]) == set(roots)
+    assert index["method_provenance"]["iti_intervention"]["platforms"] == [
+        {"platform": "Linux-new", "shard_count": 1}
+    ]
+    assert index["method_provenance"]["j_component_intervention"]["platforms"] == [
+        {"platform": "Linux-old", "shard_count": 1}
+    ]
+    assert index["index_builder"]["git_commit"] == "b" * 40
     assert entry["j_component"]["held_out_target_margin_effect"] == pytest.approx(3.0)
     assert entry["raptor"]["held_out_target_margin_effect"] == pytest.approx(4.0)
     assert entry["iti_native"]["held_out_target_margin_effect"] == pytest.approx(5.0)
@@ -669,6 +712,24 @@ def test_comparison_selects_on_validation_and_reports_paired_test_effect(
             concept_ids=["concept:a"],
         )
     direction_file.write_bytes(original_direction)
+
+    registry_path = (
+        roots["iti_intervention"] / "shard_manifest_provenance.json"
+    )
+    original_registry = registry_path.read_text(encoding="utf-8")
+    malformed_registry = json.loads(original_registry)
+    malformed_registry["platforms"][0]["shard_count"] = 2
+    registry_path.write_text(json.dumps(malformed_registry), encoding="utf-8")
+    with pytest.raises(InterventionComparisonError, match="provenance"):
+        rebuild_intervention_comparison(
+            output_dir=tmp_path / "malformed_provenance_comparison",
+            shared_layer_selection=shared,
+            j_root=roots["j_component_intervention"],
+            iti_root=roots["iti_intervention"],
+            raptor_root=roots["raptor_intervention"],
+            concept_ids=["concept:a"],
+        )
+    registry_path.write_text(original_registry, encoding="utf-8")
 
     j_scores = (
         target_dirs["j_component_intervention"] / "candidate_scores.jsonl"

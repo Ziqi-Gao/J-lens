@@ -129,3 +129,17 @@ def test_local_gpu_policy_rejects_invalid_occupancy_slot_count() -> None:
     )
     assert result.returncode == 2
     assert "must be positive" in result.stderr
+
+
+def test_local_finalize_is_cpu_only_and_independent_of_grid_markers() -> None:
+    controller = (SCRIPTS / "run_three_method_local.sh").read_text()
+    finalize_body = controller.split("run_finalize() {", 1)[1].split(
+        "run_full() {", 1
+    )[0]
+
+    assert 'run_range cpu method-index 2 "${CPU_WORKERS}"' in finalize_body
+    assert "run_one cpu comparison-index" in finalize_body
+    assert " gpu " not in finalize_body
+    assert "-grid" not in finalize_body
+    assert "smoke-check.done" not in finalize_body
+    assert "finalize) run_finalize ;;" in controller

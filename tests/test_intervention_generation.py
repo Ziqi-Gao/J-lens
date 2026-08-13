@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import math
 from pathlib import Path
@@ -15,6 +16,7 @@ from jlens_workspace.concept_intervention.generation import (
     prompt_ids_sha256,
     validate_candidate_score_artifact,
     validate_generation_artifacts,
+    validate_shard_manifest_identity,
     write_generation_artifacts,
 )
 from jlens_workspace.config import GenerationConfig
@@ -537,3 +539,87 @@ def test_telemetry_requires_method_specific_fields(
             files,
             contract=_contract(),
         )
+
+
+def _scientific_manifest() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "experiment_name": "experiment",
+        "seed": 42,
+        "model_id": "model",
+        "model_revision": "model-revision",
+        "tokenizer_id": "tokenizer",
+        "tokenizer_revision": "tokenizer-revision",
+        "lens_source": "local:lens",
+        "lens_revision": None,
+        "dataset_source": "dataset",
+        "dataset_revision": "dataset-revision",
+        "dataset_hash": "dataset-hash",
+        "git_commit": "a" * 40,
+        "python": "3.12.13",
+        "platform": "Linux-old",
+        "packages": {"torch": "2.7.1"},
+        "notes": {
+            "direction": "concept_intervention",
+            "coordinate": "resid_post/block_output",
+            "config_sha256": "b" * 64,
+            "force_bos": False,
+            "workflow": "j_component_intervention",
+            "generation": {"prompt_ids_sha256": "c" * 64},
+            "selected_layers_sha256": "d" * 64,
+            "row_manifest_sha256": "e" * 64,
+        },
+    }
+
+
+def test_shard_manifest_identity_accepts_identical_and_mixed_platforms() -> None:
+    root = _scientific_manifest()
+    validate_shard_manifest_identity(root, copy.deepcopy(root))
+
+    mixed_platform = copy.deepcopy(root)
+    mixed_platform["platform"] = "Linux-new"
+    validate_shard_manifest_identity(root, mixed_platform)
+
+
+@pytest.mark.parametrize(
+    ("field_path", "replacement"),
+    [
+        (("git_commit",), "f" * 40),
+        (("model_revision",), "other-model"),
+        (("dataset_hash",), "other-data"),
+        (("python",), "3.13.0"),
+        (("packages",), {"torch": "different"}),
+        (("notes", "config_sha256"), "0" * 64),
+        (("notes", "generation"), {"prompt_ids_sha256": "0" * 64}),
+    ],
+)
+def test_shard_manifest_identity_rejects_scientific_or_runtime_changes(
+    field_path: tuple[str, ...],
+    replacement: object,
+) -> None:
+    root = _scientific_manifest()
+    shard = copy.deepcopy(root)
+    if len(field_path) == 1:
+        shard[field_path[0]] = replacement
+    else:
+        notes = shard["notes"]
+        assert isinstance(notes, dict)
+        notes[field_path[1]] = replacement
+
+    with pytest.raises(InterventionGenerationError, match="scientific identity"):
+        validate_shard_manifest_identity(root, shard)
+
+
+@pytest.mark.parametrize("platform_value", [None, "", 7])
+def test_shard_manifest_identity_rejects_missing_or_malformed_platform(
+    platform_value: object,
+) -> None:
+    root = _scientific_manifest()
+    shard = copy.deepcopy(root)
+    if platform_value is None:
+        shard.pop("platform")
+    else:
+        shard["platform"] = platform_value
+
+    with pytest.raises(InterventionGenerationError, match="platform"):
+        validate_shard_manifest_identity(root, shard)

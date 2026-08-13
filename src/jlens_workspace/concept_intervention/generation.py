@@ -11,7 +11,11 @@ from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any
 
-from jlens_workspace.artifacts import resolve_repository_resource, sha256_file
+from jlens_workspace.artifacts import (
+    atomic_write_json,
+    resolve_repository_resource,
+    sha256_file,
+)
 from jlens_workspace.concept_intervention.evaluation import (
     PromptRecord,
     atomic_write_jsonl,
@@ -29,6 +33,40 @@ _CANDIDATE_PROMPT_FAMILY_SPLITS = {
     "classify": "test",
     "report": "test",
 }
+
+_SCIENTIFIC_MANIFEST_TOP_LEVEL_FIELDS = (
+    "schema_version",
+    "experiment_name",
+    "seed",
+    "model_id",
+    "model_revision",
+    "tokenizer_id",
+    "tokenizer_revision",
+    "lens_source",
+    "lens_revision",
+    "dataset_source",
+    "dataset_revision",
+    "dataset_hash",
+    "git_commit",
+    "python",
+    "packages",
+)
+_SCIENTIFIC_MANIFEST_NOTE_FIELDS = (
+    "direction",
+    "coordinate",
+    "config_sha256",
+    "force_bos",
+    "workflow",
+    "generation",
+    "selected_layers_sha256",
+    "row_manifest_sha256",
+)
+_EXPECTED_MANIFEST_RUNTIME_FIELDS = {
+    "git_commit",
+    "python",
+    "packages",
+}
+_INDEX_BUILDER_FIELDS = ("git_commit", "platform", "python", "packages")
 
 
 @dataclass(frozen=True)
@@ -1088,54 +1126,413 @@ def validate_shard_manifest_identity(
     method_manifest: Mapping[str, Any],
     shard_manifest: Mapping[str, Any],
 ) -> None:
-    """Require a grid shard to come from the same immutable run identity."""
+    """Compare immutable scientific identity while allowing platform changes.
 
-    top_level_fields = (
-        "schema_version",
-        "experiment_name",
-        "seed",
-        "model_id",
-        "model_revision",
-        "tokenizer_id",
-        "tokenizer_revision",
-        "lens_source",
-        "lens_revision",
-        "dataset_source",
-        "dataset_revision",
-        "dataset_hash",
-        "git_commit",
-        "python",
-        "platform",
-        "packages",
-    )
-    method_notes = method_manifest.get("notes")
-    shard_notes = shard_manifest.get("notes")
-    note_fields = (
-        "direction",
-        "coordinate",
-        "config_sha256",
-        "force_bos",
-        "workflow",
-        "generation",
-        "selected_layers_sha256",
-        "row_manifest_sha256",
-    )
-    if (
-        not isinstance(method_notes, Mapping)
-        or not isinstance(shard_notes, Mapping)
-        or not method_manifest.get("git_commit")
-        or any(
-            method_manifest.get(field) != shard_manifest.get(field)
-            for field in top_level_fields
+    Kernel/platform provenance is mandatory on both manifests, but it is not a
+    scientific identity field. Callers aggregate every observed platform with
+    :func:`build_method_index_provenance` after all shards pass this check.
+    """
+
+    method_identity = scientific_shard_identity(method_manifest)
+    shard_identity = scientific_shard_identity(shard_manifest)
+    if method_identity != shard_identity:
+        differing = sorted(
+            field
+            for field in _SCIENTIFIC_MANIFEST_TOP_LEVEL_FIELDS
+            if method_identity.get(field) != shard_identity.get(field)
         )
-        or any(
-            method_notes.get(field) != shard_notes.get(field)
-            for field in note_fields
+        method_notes = method_identity["notes"]
+        shard_notes = shard_identity["notes"]
+        differing.extend(
+            f"notes.{field}"
+            for field in _SCIENTIFIC_MANIFEST_NOTE_FIELDS
+            if method_notes.get(field) != shard_notes.get(field)
         )
+        raise InterventionGenerationError(
+            "grid shard scientific identity mismatch: " + ", ".join(differing)
+        )
+
+
+def scientific_shard_identity(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract and validate the platform-independent scientific shard identity."""
+
+    missing = [
+        field
+        for field in (*_SCIENTIFIC_MANIFEST_TOP_LEVEL_FIELDS, "platform", "notes")
+        if field not in manifest
+    ]
+    if missing:
+        raise InterventionGenerationError(
+            "grid shard manifest lacks required provenance fields: "
+            + ", ".join(missing)
+        )
+    platform_value = manifest.get("platform")
+    if not isinstance(platform_value, str) or not platform_value.strip():
+        raise InterventionGenerationError(
+            "grid shard manifest platform must be a non-empty string"
+        )
+    if not isinstance(manifest.get("git_commit"), str) or not manifest.get(
+        "git_commit"
     ):
         raise InterventionGenerationError(
-            "grid shard manifest differs from method run manifest"
+            "grid shard manifest git_commit must be a non-empty string"
         )
+    if not isinstance(manifest.get("python"), str) or not manifest.get("python"):
+        raise InterventionGenerationError(
+            "grid shard manifest python must be a non-empty string"
+        )
+    packages = manifest.get("packages")
+    if not isinstance(packages, Mapping):
+        raise InterventionGenerationError(
+            "grid shard manifest packages must be a mapping"
+        )
+    notes = manifest.get("notes")
+    if not isinstance(notes, Mapping):
+        raise InterventionGenerationError(
+            "grid shard manifest notes must be a mapping"
+        )
+    missing_notes = [
+        field for field in _SCIENTIFIC_MANIFEST_NOTE_FIELDS if field not in notes
+    ]
+    if missing_notes:
+        raise InterventionGenerationError(
+            "grid shard manifest lacks required scientific notes: "
+            + ", ".join(missing_notes)
+        )
+    return {
+        **{
+            field: dict(packages) if field == "packages" else manifest.get(field)
+            for field in _SCIENTIFIC_MANIFEST_TOP_LEVEL_FIELDS
+        },
+        "notes": {
+            field: notes.get(field)
+            for field in _SCIENTIFIC_MANIFEST_NOTE_FIELDS
+        },
+    }
+
+
+def _canonical_sha256(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _manifest_payload(value: Any) -> dict[str, Any]:
+    payload = asdict(value) if is_dataclass(value) else dict(value)
+    return json.loads(json.dumps(payload))
+
+
+def _validate_expected_manifest_identity(
+    expected_manifest: Mapping[str, Any],
+    scientific_manifest: Mapping[str, Any],
+) -> None:
+    """Match current config expectations without conflating builder runtime."""
+
+    expected = scientific_shard_identity(expected_manifest)
+    observed = scientific_shard_identity(scientific_manifest)
+    differing = [
+        field
+        for field in _SCIENTIFIC_MANIFEST_TOP_LEVEL_FIELDS
+        if field not in _EXPECTED_MANIFEST_RUNTIME_FIELDS
+        and expected.get(field) != observed.get(field)
+    ]
+    differing.extend(
+        f"notes.{field}"
+        for field in _SCIENTIFIC_MANIFEST_NOTE_FIELDS
+        if expected["notes"].get(field) != observed["notes"].get(field)
+    )
+    if differing:
+        raise InterventionGenerationError(
+            "scientific shards differ from the configured index identity: "
+            + ", ".join(differing)
+        )
+
+
+def _validate_index_builder(value: Mapping[str, Any]) -> dict[str, Any]:
+    missing = [field for field in _INDEX_BUILDER_FIELDS if field not in value]
+    if missing:
+        raise InterventionGenerationError(
+            "index-builder provenance lacks fields: " + ", ".join(missing)
+        )
+    git_commit = value.get("git_commit")
+    if not isinstance(git_commit, str) or len(git_commit) not in {40, 64}:
+        raise InterventionGenerationError(
+            "index-builder git_commit must be a 40- or 64-character digest"
+        )
+    try:
+        int(git_commit, 16)
+    except ValueError as error:
+        raise InterventionGenerationError(
+            "index-builder git_commit must be hexadecimal"
+        ) from error
+    for field in ("platform", "python"):
+        if not isinstance(value.get(field), str) or not value.get(field):
+            raise InterventionGenerationError(
+                f"index-builder {field} must be a non-empty string"
+            )
+    if not isinstance(value.get("packages"), Mapping):
+        raise InterventionGenerationError(
+            "index-builder packages must be a mapping"
+        )
+    return {
+        "git_commit": git_commit,
+        "platform": str(value["platform"]),
+        "python": str(value["python"]),
+        "packages": dict(value["packages"]),
+    }
+
+
+def validate_index_builder_provenance(
+    value: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate and normalize an index-builder runtime identity."""
+
+    return _validate_index_builder(value)
+
+
+def build_method_index_provenance(
+    root: str | Path,
+    manifest_paths: Sequence[str | Path],
+    *,
+    expected_manifest: Mapping[str, Any] | Any | None = None,
+    index_builder: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate all shard identities and write an auditable platform registry."""
+
+    method_root = Path(root).resolve()
+    paths = sorted({Path(path).resolve() for path in manifest_paths})
+    if not paths:
+        raise InterventionGenerationError(
+            "method index has no shard manifests to validate"
+        )
+    payloads: list[tuple[Path, dict[str, Any]]] = []
+    for path in paths:
+        if not path.is_relative_to(method_root) or not path.is_file():
+            raise InterventionGenerationError(
+                f"shard manifest registry path is invalid: {path}"
+            )
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise InterventionGenerationError(
+                f"shard manifest must contain a JSON object: {path}"
+            )
+        payloads.append((path, payload))
+    reference = payloads[0][1]
+    for path, payload in payloads:
+        try:
+            validate_shard_manifest_identity(reference, payload)
+        except InterventionGenerationError as error:
+            raise InterventionGenerationError(
+                f"scientific shard manifest identity mismatch: {path}"
+            ) from error
+
+    existing_manifest_path = method_root / "manifest.json"
+    if expected_manifest is None:
+        if not existing_manifest_path.is_file():
+            raise InterventionGenerationError("method manifest is missing")
+        base_manifest = json.loads(
+            existing_manifest_path.read_text(encoding="utf-8")
+        )
+    else:
+        base_manifest = _manifest_payload(expected_manifest)
+        _validate_expected_manifest_identity(base_manifest, reference)
+
+    builder_source = index_builder
+    if builder_source is None:
+        nested_builder = base_manifest.get("index_builder")
+        builder_source = (
+            nested_builder
+            if isinstance(nested_builder, Mapping)
+            else {
+                field: base_manifest.get(field)
+                for field in _INDEX_BUILDER_FIELDS
+            }
+        )
+    builder = _validate_index_builder(builder_source)
+    scientific_identity = scientific_shard_identity(reference)
+    scientific_identity_sha256 = _canonical_sha256(scientific_identity)
+
+    entries = [
+        {
+            "path": path.relative_to(method_root).as_posix(),
+            "manifest_sha256": sha256_file(path),
+            "platform": payload["platform"],
+        }
+        for path, payload in payloads
+    ]
+    counts: dict[str, int] = {}
+    for entry in entries:
+        platform_value = str(entry["platform"])
+        counts[platform_value] = counts.get(platform_value, 0) + 1
+    platforms = [
+        {"platform": platform_value, "shard_count": counts[platform_value]}
+        for platform_value in sorted(counts)
+    ]
+    registry = {
+        "schema_version": 1,
+        "scientific_shard_identity": scientific_identity,
+        "scientific_shard_identity_sha256": scientific_identity_sha256,
+        "shard_count": len(entries),
+        "platforms": platforms,
+        "manifests": entries,
+    }
+    registry_path = method_root / "shard_manifest_provenance.json"
+    atomic_write_json(registry_path, registry)
+    registry_summary = {
+        "path": registry_path.relative_to(method_root).as_posix(),
+        "sha256": sha256_file(registry_path),
+        "shard_count": len(entries),
+        "platforms": platforms,
+    }
+
+    method_manifest = dict(base_manifest)
+    for field in _SCIENTIFIC_MANIFEST_TOP_LEVEL_FIELDS:
+        method_manifest[field] = reference[field]
+    method_manifest["platform"] = reference["platform"]
+    method_manifest["scientific_shard_identity"] = scientific_identity
+    method_manifest["scientific_shard_identity_sha256"] = scientific_identity_sha256
+    method_manifest["shard_manifest_provenance"] = registry_summary
+    method_manifest["index_builder"] = builder
+    atomic_write_json(existing_manifest_path, method_manifest)
+    return {
+        "scientific_shard_identity": scientific_identity,
+        "scientific_shard_identity_sha256": scientific_identity_sha256,
+        "shard_manifest_provenance": registry_summary,
+        "index_builder": builder,
+    }
+
+
+def validate_method_index_provenance(
+    root: str | Path,
+    index: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Revalidate a method index's complete manifest/platform provenance graph."""
+
+    method_root = Path(root).resolve()
+    summary = index.get("shard_manifest_provenance")
+    if not isinstance(summary, Mapping):
+        raise InterventionGenerationError(
+            "method index lacks shard-manifest provenance"
+        )
+    relative_path = summary.get("path")
+    if not isinstance(relative_path, str) or not relative_path:
+        raise InterventionGenerationError(
+            "method index has malformed shard-manifest provenance path"
+        )
+    registry_path = (method_root / relative_path).resolve()
+    if (
+        not registry_path.is_relative_to(method_root)
+        or not registry_path.is_file()
+        or summary.get("sha256") != sha256_file(registry_path)
+    ):
+        raise InterventionGenerationError(
+            f"shard-manifest provenance registry identity mismatch: {registry_path}"
+        )
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    entries = registry.get("manifests")
+    if not isinstance(entries, list) or not entries:
+        raise InterventionGenerationError(
+            "shard-manifest provenance registry has no manifests"
+        )
+    expected_count = len(entries)
+    if (
+        registry.get("schema_version") != 1
+        or registry.get("shard_count") != expected_count
+        or summary.get("shard_count") != expected_count
+        or registry.get("platforms") != summary.get("platforms")
+    ):
+        raise InterventionGenerationError(
+            "shard-manifest provenance registry cardinality is malformed"
+        )
+    paths: list[Path] = []
+    observed_platforms: dict[str, int] = {}
+    previous_path = ""
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            raise InterventionGenerationError(
+                "shard-manifest provenance entry must be a mapping"
+            )
+        path_value = entry.get("path")
+        platform_value = entry.get("platform")
+        if (
+            not isinstance(path_value, str)
+            or not path_value
+            or path_value <= previous_path
+            or not isinstance(platform_value, str)
+            or not platform_value
+        ):
+            raise InterventionGenerationError(
+                "shard-manifest provenance entry is malformed or unsorted"
+            )
+        path = (method_root / path_value).resolve()
+        if (
+            not path.is_relative_to(method_root)
+            or not path.is_file()
+            or entry.get("manifest_sha256") != sha256_file(path)
+        ):
+            raise InterventionGenerationError(
+                f"registered shard manifest identity mismatch: {path}"
+            )
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("platform") != platform_value:
+            raise InterventionGenerationError(
+                f"registered shard platform mismatch: {path}"
+            )
+        paths.append(path)
+        observed_platforms[platform_value] = (
+            observed_platforms.get(platform_value, 0) + 1
+        )
+        previous_path = path_value
+    reference = json.loads(paths[0].read_text(encoding="utf-8"))
+    for path in paths[1:]:
+        validate_shard_manifest_identity(
+            reference,
+            json.loads(path.read_text(encoding="utf-8")),
+        )
+    platforms = [
+        {"platform": value, "shard_count": observed_platforms[value]}
+        for value in sorted(observed_platforms)
+    ]
+    identity = scientific_shard_identity(reference)
+    identity_sha256 = _canonical_sha256(identity)
+    if (
+        registry.get("platforms") != platforms
+        or registry.get("scientific_shard_identity") != identity
+        or registry.get("scientific_shard_identity_sha256") != identity_sha256
+        or index.get("scientific_shard_identity") != identity
+        or index.get("scientific_shard_identity_sha256") != identity_sha256
+    ):
+        raise InterventionGenerationError(
+            "method index scientific shard provenance is inconsistent"
+        )
+    builder = _validate_index_builder(index.get("index_builder", {}))
+    method_manifest_path = method_root / "manifest.json"
+    method_manifest = json.loads(method_manifest_path.read_text(encoding="utf-8"))
+    validate_shard_manifest_identity(method_manifest, reference)
+    if (
+        method_manifest.get("scientific_shard_identity") != identity
+        or method_manifest.get("scientific_shard_identity_sha256") != identity_sha256
+        or method_manifest.get("shard_manifest_provenance") != dict(summary)
+        or method_manifest.get("index_builder") != builder
+    ):
+        raise InterventionGenerationError(
+            "method manifest and index provenance differ"
+        )
+    return {
+        "scientific_shard_identity": identity,
+        "scientific_shard_identity_sha256": identity_sha256,
+        "shard_count": expected_count,
+        "platforms": platforms,
+        "shard_manifest_provenance": {
+            "path": relative_path,
+            "sha256": summary["sha256"],
+        },
+        "index_builder": builder,
+    }
 
 
 def build_target_artifact_seal(

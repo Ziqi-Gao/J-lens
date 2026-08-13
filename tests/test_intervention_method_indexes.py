@@ -356,16 +356,46 @@ def test_raptor_index_rejects_mixed_shard_provenance(tmp_path: Path) -> None:
         _write_shard_manifest(
             tmp_path,
             grid_index=grid_index,
-            manifest=manifest,
+            manifest={
+                **manifest,
+                "platform": f"platform-{grid_index}",
+            },
         )
         summaries.append((shard / "summary.json", summary))
 
+    builder = {
+        "git_commit": "b" * 40,
+        "platform": "builder-platform",
+        "python": "3.12.13",
+        "packages": {"jlens-workspace": "0.1.0"},
+    }
     index = rebuild_raptor_index(
         tmp_path,
         concept_ids=["concept:a"],
         target_probabilities=[0.9],
+        expected_manifest={**manifest, **builder},
+        index_builder=builder,
     )
     assert index["complete"] is True
+    assert index["scientific_shard_identity"]["git_commit"] == "a" * 40
+    assert index["index_builder"] == builder
+    assert index["shard_manifest_provenance"]["shard_count"] == 2
+    assert index["shard_manifest_provenance"]["platforms"] == [
+        {"platform": "platform-0", "shard_count": 1},
+        {"platform": "platform-1", "shard_count": 1},
+    ]
+    registry = json.loads(
+        (tmp_path / "shard_manifest_provenance.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert len(registry["manifests"]) == 2
+    assert all(row["manifest_sha256"] for row in registry["manifests"])
+    root_manifest = json.loads(
+        (tmp_path / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert root_manifest["git_commit"] == "a" * 40
+    assert root_manifest["index_builder"]["git_commit"] == "b" * 40
 
     summary_path, original = summaries[1]
     wrong_grid = {

@@ -147,7 +147,19 @@ indices, wrong grid conditions, empty or cardinality-mismatched
 candidate/generation files, duplicate IDs, incomplete token/logprob records,
 malformed telemetry, mixed prompt contracts or provenance, inconsistent layer
 sets, and non-identical zero-strength token IDs, text, or per-token log
-probabilities. ITI direction metrics contain a recursive SHA-256 registry for
+probabilities. Scientific shard identity includes the Git commit, model,
+tokenizer, lens, data, config, prompt/generation contract, selected-layer and
+row-manifest hashes, Python version, and package versions. Runtime
+`platform` is mandatory but may differ across shards after a kernel or host
+upgrade. Every method index writes `shard_manifest_provenance.json`, whose
+content-addressed registry maps each shard manifest path to its SHA-256 and
+exact platform, reports per-platform shard counts, and retains the common
+platform-independent scientific identity. The top-level method manifest and
+index separately record the scientific shard commit/runtime and the index
+builder's Git commit, platform, Python, and packages. The final comparison
+revalidates all registered manifest bytes and propagates this provenance for
+all three methods. Any difference outside `platform` remains fail-closed.
+ITI direction metrics contain a recursive SHA-256 registry for
 every `.npz`; loading, method indexing, and final comparison each revalidate
 the registered bytes. Each method index seals every target summary, shard summary,
 candidate score, generation, and blind-export hash. The final comparison

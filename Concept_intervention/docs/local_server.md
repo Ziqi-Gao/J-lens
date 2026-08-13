@@ -224,6 +224,22 @@ For a single uninterrupted controller, `all` runs bootstrap, smoke, and full
 in sequence. Prefer separate phases for the first server run so model/CUDA
 compatibility and telemetry storage growth can be reviewed at the smoke gate.
 
+If all registered scientific grid shards already exist but a later
+index-validation bug was fixed in a successor commit, use the top-level
+CPU-only recovery entrypoint:
+
+```bash
+Concept_intervention/scripts/run_three_method_local.sh finalize
+```
+
+`finalize` takes the same DAG lock, does not launch a GPU task, does not
+regenerate a grid shard, and does not consult a prior commit's local
+`.done` markers. It validates every existing shard, generation/candidate
+artifact, hash, zero-intervention contract, and scientific identity before
+building the three method indexes and comparison. It preserves the historical
+scientific shard commit and records the current index-builder commit and
+runtime separately.
+
 ## 7. Monitor and complete
 
 ```bash

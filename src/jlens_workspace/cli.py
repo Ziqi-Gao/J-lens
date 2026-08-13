@@ -639,6 +639,17 @@ def _experiment_manifest(
     )
 
 
+def _index_builder_provenance(manifest: Any) -> dict[str, Any]:
+    """Record the index process separately from historical scientific shards."""
+
+    return {
+        "git_commit": manifest.git_commit,
+        "platform": manifest.platform,
+        "python": manifest.python,
+        "packages": dict(manifest.packages),
+    }
+
+
 def _activation_dataset_hash(path: str | Path) -> str:
     """Read the source dataset fingerprint from a captured activation artifact."""
 
@@ -2376,7 +2387,7 @@ def _cmd_j_component_intervention(args: argparse.Namespace) -> int:
 
 
 def _cmd_j_component_index(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json, sha256_file
+    from jlens_workspace.artifacts import sha256_file
     from jlens_workspace.concept_intervention.j_component import (
         rebuild_multilayer_j_index,
     )
@@ -2399,12 +2410,13 @@ def _cmd_j_component_index(args: argparse.Namespace) -> int:
             **_shared_protocol_identity(section.selected_layers_path),
         },
     )
-    atomic_write_json(destination / "manifest.json", manifest)
     index = rebuild_multilayer_j_index(
         destination,
         concept_ids=section.concept_ids,
         strengths=section.strengths,
         random_control_seeds=section.random_control_seeds,
+        expected_manifest=manifest.__dict__,
+        index_builder=_index_builder_provenance(manifest),
     )
     if not index["complete"]:
         raise ValueError(
@@ -2496,7 +2508,7 @@ def _cmd_raptor_intervention(args: argparse.Namespace) -> int:
 
 
 def _cmd_raptor_index(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json, sha256_file
+    from jlens_workspace.artifacts import sha256_file
     from jlens_workspace.concept_intervention.raptor import rebuild_raptor_index
 
     config = _load_config(args.config)
@@ -2518,11 +2530,12 @@ def _cmd_raptor_index(args: argparse.Namespace) -> int:
             **_shared_protocol_identity(section.selected_layers_path),
         },
     )
-    atomic_write_json(destination / "manifest.json", manifest)
     index = rebuild_raptor_index(
         destination,
         concept_ids=section.concept_ids,
         target_probabilities=section.target_probabilities,
+        expected_manifest=manifest.__dict__,
+        index_builder=_index_builder_provenance(manifest),
     )
     if not index["complete"]:
         raise ValueError(
@@ -2537,10 +2550,12 @@ def _cmd_raptor_index(args: argparse.Namespace) -> int:
 
 
 def _cmd_intervention_compare_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import RunManifest
     from jlens_workspace.concept_intervention.comparison import (
         rebuild_intervention_comparison,
     )
 
+    builder_manifest = RunManifest.for_workspace(Path.cwd())
     index = rebuild_intervention_comparison(
         output_dir=args.output,
         shared_layer_selection=args.shared_layer_selection,
@@ -2548,6 +2563,7 @@ def _cmd_intervention_compare_index(args: argparse.Namespace) -> int:
         iti_root=args.iti_output,
         raptor_root=args.raptor_output,
         concept_ids=args.concept_id,
+        index_builder=_index_builder_provenance(builder_manifest),
     )
     _finish_command(
         args,
@@ -2920,14 +2936,16 @@ def _cmd_iti_index(args: argparse.Namespace) -> int:
             **shared_identity,
         },
     )
-    atomic_write_json(destination / "manifest.json", manifest)
     if iti.method == "honest_llama_mass_mean_qwen_full_attention":
         index = rebuild_iti_experiment_index(
             destination,
             concept_ids=iti.concept_ids,
             config=iti,
+            expected_manifest=manifest.__dict__,
+            index_builder=_index_builder_provenance(manifest),
         )
     else:
+        atomic_write_json(destination / "manifest.json", manifest)
         index = rebuild_iti_index(
             destination,
             expected_concepts=iti.concept_ids,

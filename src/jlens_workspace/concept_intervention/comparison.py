@@ -18,6 +18,8 @@ from jlens_workspace.concept_intervention.generation import (
     validate_equivalent_generation_outputs,
     validate_generation_artifacts,
     validate_generation_contract_identity,
+    validate_index_builder_provenance,
+    validate_method_index_provenance,
     validate_target_artifact_seal,
 )
 from jlens_workspace.concept_intervention.iti.intervention import (
@@ -444,6 +446,7 @@ def rebuild_intervention_comparison(
     iti_root: str | Path,
     raptor_root: str | Path,
     concept_ids: Sequence[str],
+    index_builder: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a no-judge held-out comparison after all three indexes complete."""
 
@@ -453,6 +456,7 @@ def rebuild_intervention_comparison(
         "raptor_intervention": Path(raptor_root),
     }
     indexes = {}
+    method_provenance: dict[str, dict[str, Any]] = {}
     generation_identities: dict[str, dict[str, Any]] = {}
     method_entries: dict[str, dict[str, Mapping[str, Any]]] = {}
     method_seals: dict[str, dict[str, set[Path]]] = {}
@@ -494,6 +498,15 @@ def rebuild_intervention_comparison(
             raise InterventionComparisonError(
                 f"{method} index concept coverage mismatch"
             )
+        try:
+            method_provenance[method] = validate_method_index_provenance(
+                root,
+                payload,
+            )
+        except InterventionGenerationError as error:
+            raise InterventionComparisonError(
+                f"{method} method provenance validation failed"
+            ) from error
         manifest_path = root / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if payload.get("manifest_sha256") != sha256_file(manifest_path):
@@ -512,6 +525,8 @@ def rebuild_intervention_comparison(
             manifest.get("dataset_revision"),
             manifest.get("dataset_hash"),
             manifest.get("git_commit"),
+            manifest.get("python"),
+            json.dumps(manifest.get("packages"), sort_keys=True),
         )
         if any(value is None for value in identity):
             raise InterventionComparisonError(
@@ -567,6 +582,25 @@ def rebuild_intervention_comparison(
             "path": str(path),
             "sha256": sha256_file(path),
         }
+    if index_builder is None:
+        builder_identities = {
+            json.dumps(value["index_builder"], sort_keys=True)
+            for value in method_provenance.values()
+        }
+        if len(builder_identities) != 1:
+            raise InterventionComparisonError(
+                "method indexes were built by different runtimes"
+            )
+        comparison_builder = next(
+            iter(method_provenance.values())
+        )["index_builder"]
+    else:
+        try:
+            comparison_builder = validate_index_builder_provenance(index_builder)
+        except InterventionGenerationError as error:
+            raise InterventionComparisonError(
+                "comparison index-builder provenance is malformed"
+            ) from error
     if len(method_identities) != 1 or len(generation_contracts) != 1:
         raise InterventionComparisonError(
             "methods used different model/data/lens or generation identities"
@@ -768,6 +802,8 @@ def rebuild_intervention_comparison(
         "shared_layer_selection": str(shared_layer_selection),
         "shared_layer_selection_sha256": sha256_file(shared_layer_selection),
         "method_indexes": indexes,
+        "method_provenance": method_provenance,
+        "index_builder": comparison_builder,
         "entries": entries,
     }
     destination = Path(output_dir)
@@ -779,6 +815,8 @@ def rebuild_intervention_comparison(
         "comparison_sha256": sha256_file(destination / "comparison.json"),
         "methods": list(roots),
         "concept_ids": list(concept_ids),
+        "method_provenance": method_provenance,
+        "index_builder": comparison_builder,
         "llm_as_judge_run": False,
     }
     atomic_write_json(destination / "index.json", index)

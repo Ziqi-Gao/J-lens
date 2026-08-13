@@ -22,6 +22,7 @@ from jlens_workspace.concept_intervention.generation import (
     GenerationSettings,
     InterventionGenerationError,
     build_generation_contract,
+    build_method_index_provenance,
     build_target_artifact_seal,
     generate_full_grid,
     load_open_prompt_bank,
@@ -392,6 +393,8 @@ def rebuild_raptor_index(
     *,
     concept_ids: Sequence[str],
     target_probabilities: Sequence[float] | None = None,
+    expected_manifest: Mapping[str, Any] | None = None,
+    index_builder: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     root = Path(output_dir)
     observed: set[str] = set()
@@ -417,12 +420,17 @@ def rebuild_raptor_index(
         ]
     )
     manifest_path = root / "manifest.json"
-    if not manifest_path.is_file():
-        raise RaptorError("RAPTOR method manifest is missing")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if expected_manifest is None:
+        if not manifest_path.is_file():
+            raise RaptorError("RAPTOR method manifest is missing")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    else:
+        manifest = dict(expected_manifest)
     generation_identity = manifest.get("notes", {}).get("generation")
     if not isinstance(generation_identity, Mapping):
         raise RaptorError("RAPTOR manifest lacks generation identity")
+    shard_manifest_paths: list[Path] = []
+    scientific_manifest: Mapping[str, Any] | None = None
     for concept_id in concept_ids:
         target = root / "targets" / quote(concept_id, safe="")
         path = target / "summary.json"
@@ -459,18 +467,22 @@ def rebuild_raptor_index(
                     raise RaptorError(
                         f"RAPTOR shard manifest is missing: {shard_manifest_path}"
                     )
+                shard_manifest = json.loads(
+                    shard_manifest_path.read_text(encoding="utf-8")
+                )
+                if scientific_manifest is None:
+                    scientific_manifest = shard_manifest
                 try:
                     validate_shard_manifest_identity(
-                        manifest,
-                        json.loads(
-                            shard_manifest_path.read_text(encoding="utf-8")
-                        ),
+                        scientific_manifest,
+                        shard_manifest,
                     )
                 except InterventionGenerationError as error:
                     raise RaptorError(
                         "RAPTOR shard manifest identity mismatch: "
                         f"{shard_manifest_path}"
                     ) from error
+                shard_manifest_paths.append(shard_manifest_path)
                 candidate_path = shard.parent / "candidate_scores.jsonl"
                 try:
                     candidate_check = validate_candidate_score_artifact(
@@ -611,7 +623,17 @@ def rebuild_raptor_index(
             }
         )
     expected = set(concept_ids)
+    try:
+        provenance = build_method_index_provenance(
+            root,
+            shard_manifest_paths,
+            expected_manifest=expected_manifest,
+            index_builder=index_builder,
+        )
+    except InterventionGenerationError as error:
+        raise RaptorError("RAPTOR method provenance validation failed") from error
     index = {
+        **provenance,
         "schema_version": 1,
         "method": "raptor_intervention",
         "complete": observed == expected,
