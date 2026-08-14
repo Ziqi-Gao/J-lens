@@ -1,0 +1,118 @@
+schema_version: 1
+protocol_version: concept_intervention_llm_judge_v3
+experiment_name: qwen35_4b_j_raptor_llm_judge_pilot_v8
+output_dir: /data/del6500/J-lens/runs/qwen35_4b_three_method_intervention_v1/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/llm_judge_pilot_v8
+seed: 42
+
+source:
+  j_component_root: /data/del6500/J-lens/runs/qwen35_4b_three_method_intervention_v1/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/j_component_intervention
+  raptor_root: /data/del6500/J-lens/runs/qwen35_4b_three_method_intervention_v1/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/raptor_intervention
+  concept_definitions_path: Concept_intervention/data/go_emotions_7concept_full_allowlist.json
+  concept_ids:
+    - goemotions:admiration
+    - goemotions:approval
+    - goemotions:curiosity
+    - goemotions:disapproval
+    - goemotions:gratitude
+    - goemotions:love
+    - goemotions:optimism
+
+selection:
+  tuning_split: validation
+  evaluation_splits: [validation, test]
+  prompt_family: open
+  # The pilot uses one deterministic generation per prompt. After calibration,
+  # copy this config and use [greedy, sample] for the registered full study.
+  decodings: [greedy]
+  j_condition: j
+  j_positive_strengths_only: true
+  raptor_probability_above: 0.5
+  include_j_controls: [full, j, non_j, random]
+  random_control_seeds: [101]
+
+judges:
+  primary: google/gemini-3.5-flash
+  secondary: anthropic/claude-haiku-4.5
+  arbitration: google/gemini-3.6-flash
+  expert_review: anthropic/claude-opus-5
+
+openrouter:
+  endpoint: https://openrouter.ai/api/v1/chat/completions
+  key_status_endpoint: https://openrouter.ai/api/v1/key
+  api_key_env: JLENS_JUDGE_API_KEY
+  timeout_seconds: 180
+  max_retries: 1
+  max_tokens: 1024
+  concurrency: 2
+  temperature: 0.0
+  # All four v8 endpoints support temperature under require_parameters=true.
+  temperature_unsupported_models: []
+  # Haiku 4.5 has no registered reasoning-effort parameter, so thinking is not
+  # requested. Other roles explicitly minimize reasoning while preserving JSON.
+  reasoning_effort_by_model:
+    google/gemini-3.5-flash: minimal
+    google/gemini-3.6-flash: minimal
+    anthropic/claude-opus-5: low
+  # Keep each Anthropic retry on the same exact model but rotate its endpoint.
+  provider_order_by_model:
+    anthropic/claude-haiku-4.5: [anthropic, amazon-bedrock]
+    anthropic/claude-opus-5: [anthropic, amazon-bedrock]
+  exclude_reasoning: true
+  data_collection: deny
+  require_parameters: true
+  allow_provider_fallbacks: false
+
+budget:
+  require_explicit_limit: true
+  require_live_credit_check: true
+  max_tasks_per_invocation: 25
+  max_smoke_tasks_per_invocation: 1
+  max_estimated_prompt_tokens_per_request: 5120
+  max_completion_tokens_per_request: 1024
+  max_estimated_total_tokens_per_invocation: 275000
+  max_cost_usd_per_invocation: 1.50
+  max_experiment_cost_usd: 9.25
+  reserve_openrouter_credit_usd: 75.00
+  pricing_safety_multiplier: 2.0
+
+calibration:
+  min_completion_rate: 0.98
+  min_pointwise_spearman: 0.60
+  max_pointwise_mae: 20.0
+  min_pairwise_order_consistency: 0.80
+  min_pairwise_cross_judge_agreement: 0.70
+  human_annotations_path: null
+  # False is appropriate for this internal pilot. Set true in a copied preregistration
+  # before using the judge results as publication-grade evidence.
+  require_human_gate: false
+  min_human_spearman: 0.60
+
+review:
+  pointwise_disagreement_threshold: 25
+  expert_disagreement_threshold: 20
+  expert_audit_fraction: 0.05
+  human_audit_per_concept: 8
+
+analysis:
+  bootstrap_samples: 10000
+  permutation_samples: 10000
+  confidence_level: 0.95
+  quality_noninferiority_margin: -10.0
+  refusal_rate_margin: 0.05
+  primary_contrast: j_minus_raptor
+  multiple_comparison_correction: benjamini_hochberg
+
+# Prices are frozen for conservative preflight and post-call accounting, never routing.
+# The 2x safety multiplier absorbs moderate provider price changes, but these prices
+# must still be reviewed before copying this registration into a later formal study.
+pricing:
+  input_per_million:
+    google/gemini-3.5-flash: 1.5
+    anthropic/claude-haiku-4.5: 1.0
+    google/gemini-3.6-flash: 1.5
+    anthropic/claude-opus-5: 5.0
+  output_per_million:
+    google/gemini-3.5-flash: 9.0
+    anthropic/claude-haiku-4.5: 5.0
+    google/gemini-3.6-flash: 7.5
+    anthropic/claude-opus-5: 25.0

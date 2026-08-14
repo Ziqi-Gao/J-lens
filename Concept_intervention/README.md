@@ -44,6 +44,9 @@ registered in
 [`docs/three_method_interventions.md`](docs/three_method_interventions.md).
 The earlier single-layer J/ITI protocol remains available as historical
 documentation in [`docs/iti_comparison_v1.md`](docs/iti_comparison_v1.md).
+The separate blinded J-component/RAPTOR LLM-as-judge pilot, which can run
+before ITI finishes, is documented in
+[`docs/llm_judge_evaluation.md`](docs/llm_judge_evaluation.md).
 
 ## Inputs
 

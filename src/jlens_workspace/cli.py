@@ -447,6 +447,81 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json_flag(iti_index)
     iti_index.set_defaults(handler=_cmd_iti_index)
 
+    judge = subparsers.add_parser(
+        "judge", help="blinded LLM-as-judge evaluation of concept interventions"
+    )
+    judge_subparsers = judge.add_subparsers(dest="judge_command", required=True)
+
+    judge_validate = judge_subparsers.add_parser(
+        "validate", help="validate the standalone judge registration"
+    )
+    _add_config_argument(judge_validate)
+    _add_json_flag(judge_validate)
+    judge_validate.set_defaults(handler=_cmd_judge_validate)
+
+    judge_prepare = judge_subparsers.add_parser(
+        "prepare", help="select validation hyperparameters and freeze blind tasks"
+    )
+    _add_config_argument(judge_prepare)
+    _add_json_flag(judge_prepare)
+    judge_prepare.set_defaults(handler=_cmd_judge_prepare)
+
+    judge_run = judge_subparsers.add_parser(
+        "run", help="run or resume one exact judge role and task set"
+    )
+    _add_config_argument(judge_run)
+    judge_run.add_argument(
+        "--role",
+        choices=("primary", "secondary", "arbitration", "expert_review"),
+        required=True,
+    )
+    judge_run.add_argument(
+        "--task-set",
+        choices=("pointwise", "pairwise", "arbitration", "expert_review"),
+        required=True,
+    )
+    judge_run.add_argument("--split", choices=("validation", "test"))
+    judge_run.add_argument("--limit", type=int)
+    judge_run.add_argument(
+        "--smoke",
+        action="store_true",
+        help="write a limited run outside the formal response artifacts",
+    )
+    judge_run.add_argument("--jobs", type=int)
+    _add_json_flag(judge_run)
+    judge_run.set_defaults(handler=_cmd_judge_run)
+
+    judge_calibrate = judge_subparsers.add_parser(
+        "calibrate", help="apply the registered validation agreement gates"
+    )
+    _add_config_argument(judge_calibrate)
+    _add_json_flag(judge_calibrate)
+    judge_calibrate.set_defaults(handler=_cmd_judge_calibrate)
+
+    judge_review = judge_subparsers.add_parser(
+        "review-prepare", help="freeze arbitration or expert-review tasks"
+    )
+    _add_config_argument(judge_review)
+    judge_review.add_argument(
+        "--tier", choices=("arbitration", "expert_review"), required=True
+    )
+    _add_json_flag(judge_review)
+    judge_review.set_defaults(handler=_cmd_judge_review_prepare)
+
+    judge_aggregate = judge_subparsers.add_parser(
+        "aggregate", help="unblind and compute registered clustered inference"
+    )
+    _add_config_argument(judge_aggregate)
+    _add_json_flag(judge_aggregate)
+    judge_aggregate.set_defaults(handler=_cmd_judge_aggregate)
+
+    judge_audit = judge_subparsers.add_parser(
+        "audit-export", help="export a deterministic method-blind human audit subset"
+    )
+    _add_config_argument(judge_audit)
+    _add_json_flag(judge_audit)
+    judge_audit.set_defaults(handler=_cmd_judge_audit_export)
+
     matrix = subparsers.add_parser("matrix", help="J-space matrix workflows")
     matrix_subparsers = matrix.add_subparsers(dest="matrix_command", required=True)
     matrix_run = matrix_subparsers.add_parser(
@@ -2637,6 +2712,117 @@ def _cmd_intervention_smoke_check(args: argparse.Namespace) -> int:
         args,
         result,
         message=f"three-method GPU smokes complete -> {args.output}",
+    )
+    return 0
+
+
+def _cmd_judge_validate(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge.config import load_judge_config
+
+    config = load_judge_config(args.config)
+    payload = {
+        "valid": True,
+        "schema_version": config.schema_version,
+        "protocol_version": config.protocol_version,
+        "experiment_name": config.experiment_name,
+        "output_dir": config.output_dir,
+        "concept_count": len(config.source.concept_ids),
+        "judge_models": {
+            "primary": config.judges.primary,
+            "secondary": config.judges.secondary,
+            "arbitration": config.judges.arbitration,
+            "expert_review": config.judges.expert_review,
+        },
+        "api_key_env": config.openrouter.api_key_env,
+        "api_key_stored_in_config": False,
+    }
+    _finish_command(
+        args,
+        payload,
+        message=f"valid judge registration: {config.experiment_name}",
+    )
+    return 0
+
+
+def _cmd_judge_prepare(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import prepare_evaluation
+
+    result = prepare_evaluation(args.config)
+    _finish_command(
+        args,
+        result,
+        message=f"blinded judge tasks prepared -> {result['experiment_name']}",
+    )
+    return 0
+
+
+def _cmd_judge_run(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import run_judge_tasks
+
+    result = run_judge_tasks(
+        args.config,
+        role=args.role,
+        task_set=args.task_set,
+        split=args.split,
+        limit=args.limit,
+        smoke=args.smoke,
+        jobs=args.jobs,
+    )
+    _finish_command(
+        args,
+        result,
+        message=(
+            f"judge {args.role}: {result['completed_tasks']}/"
+            f"{result['requested_tasks']} -> {args.task_set}"
+        ),
+    )
+    return 0 if result["invocation_succeeded"] else 2
+
+
+def _cmd_judge_calibrate(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import calibrate_judges
+
+    result = calibrate_judges(args.config)
+    _finish_command(
+        args,
+        result,
+        message=f"judge calibration passed={result['passed']}",
+    )
+    return 0 if result["passed"] else 2
+
+
+def _cmd_judge_review_prepare(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import prepare_review_tasks
+
+    result = prepare_review_tasks(args.config, tier=args.tier)
+    _finish_command(
+        args,
+        result,
+        message=f"{args.tier} tasks: {result['tasks']} -> {result['task_path']}",
+    )
+    return 0
+
+
+def _cmd_judge_aggregate(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import aggregate_evaluation
+
+    result = aggregate_evaluation(args.config)
+    _finish_command(
+        args,
+        result,
+        message=f"judge analysis complete -> {result['report']}",
+    )
+    return 0
+
+
+def _cmd_judge_audit_export(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import export_human_audit
+
+    result = export_human_audit(args.config)
+    _finish_command(
+        args,
+        result,
+        message=f"method-blind human audit -> {result['tasks']}",
     )
     return 0
 
