@@ -106,7 +106,9 @@ CURRENT_STAGE=preflight
 write_status() {
   local state="$1" stage="$2" temporary
   temporary="${STATUS_FILE}.$$"
-  printf 'state=%s\nstage=%s\npid=%s\nupdated_at=%s\nbundle_root=%s\n' +    "${state}" "${stage}" "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" +    "${BUNDLE_ROOT}" >"${temporary}"
+  printf 'state=%s\nstage=%s\npid=%s\nupdated_at=%s\nbundle_root=%s\n' \
+    "${state}" "${stage}" "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "${BUNDLE_ROOT}" >"${temporary}"
   mv -- "${temporary}" "${STATUS_FILE}"
 }
 finish_trap() {
@@ -183,7 +185,7 @@ PY
 }
 model_for_role() {
   case "$1" in
-    primary) printf '%s\n' google/gemini-3.5-flash ;;
+    primary) printf '%s\n' mistralai/mistral-small-2603 ;;
     secondary) printf '%s\n' anthropic/claude-haiku-4.5 ;;
     arbitration) printf '%s\n' google/gemini-3.6-flash ;;
     expert_review) printf '%s\n' anthropic/claude-sonnet-5 ;;
@@ -213,7 +215,8 @@ run_until_complete() {
       echo "error: judge set exceeded 600 bounded batches: ${result_set}" >&2
       return 2
     fi
-    command=(judge run --config "${CONFIG}" --role "${role}" +      --task-set "${task_set}" --limit "${limit}" --jobs "${jobs}" --json)
+    command=(judge run --config "${CONFIG}" --role "${role}" \
+      --task-set "${task_set}" --limit "${limit}" --jobs "${jobs}" --json)
     if [[ -n "${split}" ]]; then
       command+=(--split "${split}")
     fi

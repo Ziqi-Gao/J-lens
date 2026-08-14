@@ -67,8 +67,10 @@ base judges finish test. They never alter the primary two-judge estimator.
 
 ## Judge and request policy
 
-The registered base judges are `google/gemini-3.5-flash` and
-`anthropic/claude-haiku-4.5`. Arbitration is
+The registered base judges are `mistralai/mistral-small-2603` and
+`anthropic/claude-haiku-4.5`. The independent Mistral and Anthropic model
+families preserve cross-judge diversity while keeping the registered study
+within its fixed USD 50 hard cap. Arbitration is
 `google/gemini-3.6-flash`; expert review is
 `anthropic/claude-sonnet-5`.
 
@@ -77,6 +79,12 @@ provider data collection denied, required parameters, and no cross-model
 fallback. Returned model identity must equal requested identity. Scored fields
 are strictly validated. Evidence and rationale tolerance cannot change scores,
 preferences, or flags.
+
+The Mistral route is pinned to the first-party `mistral` provider. The study
+reserves USD 25 of live OpenRouter credit and refuses any invocation whose
+conservative projection would exceed either that reserve or the USD 50 study
+cap. Based on the completed v16 token profile and selective-review rates, the
+central projection is about USD 41; the cap is a bound, not a spending target.
 
 Each successful task has one atomic response file containing the blinded request
 payload, raw provider response, usage/cost, provider, exact model, timestamps,

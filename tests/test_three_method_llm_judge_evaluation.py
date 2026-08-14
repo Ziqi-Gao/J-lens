@@ -30,7 +30,7 @@ from jlens_workspace.concept_intervention.judge.workflow import (
 
 def _config_payload(tmp_path: Path) -> dict[str, Any]:
     models = {
-        "primary": "google/gemini-3.5-flash",
+        "primary": "mistralai/mistral-small-2603",
         "secondary": "anthropic/claude-haiku-4.5",
         "arbitration": "google/gemini-3.6-flash",
         "expert_review": "anthropic/claude-sonnet-5",
@@ -125,6 +125,32 @@ def test_three_method_config_is_fixed_and_isolated(tmp_path: Path) -> None:
         JudgeEvaluationConfig.model_validate(payload)
 
 
+def test_registered_config_uses_cost_bounded_independent_judges() -> None:
+    config_path = (
+        Path(__file__).resolve().parents[1]
+        / "Concept_intervention/configs/qwen35_4b_three_method_llm_judge_v1.yaml"
+    )
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert payload["judges"] == {
+        "primary": "mistralai/mistral-small-2603",
+        "secondary": "anthropic/claude-haiku-4.5",
+        "arbitration": "google/gemini-3.6-flash",
+        "expert_review": "anthropic/claude-sonnet-5",
+    }
+    assert payload["openrouter"]["provider_order_by_model"][
+        "mistralai/mistral-small-2603"
+    ] == ["mistral"]
+    assert payload["budget"]["max_experiment_cost_usd"] == 50.0
+    assert payload["budget"]["reserve_openrouter_credit_usd"] == 25.0
+    assert payload["pricing"]["input_per_million"][
+        "mistralai/mistral-small-2603"
+    ] == 0.15
+    assert payload["pricing"]["output_per_million"][
+        "mistralai/mistral-small-2603"
+    ] == 0.60
+
+
 def test_client_retains_secret_safe_raw_audit() -> None:
     observed_headers: dict[str, str] = {}
 
@@ -166,13 +192,13 @@ def test_client_retains_secret_safe_raw_audit() -> None:
 
     config = OpenRouterConfig(
         max_retries=0,
-        provider_order_by_model={"google/gemini-3.5-flash": ["provider-a"]},
+        provider_order_by_model={"mistralai/mistral-small-2603": ["provider-a"]},
     )
     client = OpenRouterClient(config, transport=transport)
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("JLENS_JUDGE_API_KEY", "unit-test-secret")
         response = client.judge(
-            model="google/gemini-3.5-flash",
+            model="mistralai/mistral-small-2603",
             task=_public_point_task(),
         )
     assert observed_headers["Authorization"] == "Bearer unit-test-secret"

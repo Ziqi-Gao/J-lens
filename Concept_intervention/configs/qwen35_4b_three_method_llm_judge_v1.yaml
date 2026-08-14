@@ -34,7 +34,7 @@ selection:
   matched_random_seed: 101
 
 judges:
-  primary: google/gemini-3.5-flash
+  primary: mistralai/mistral-small-2603
   secondary: anthropic/claude-haiku-4.5
   arbitration: google/gemini-3.6-flash
   expert_review: anthropic/claude-sonnet-5
@@ -51,10 +51,10 @@ openrouter:
   temperature_unsupported_models:
     - anthropic/claude-sonnet-5
   reasoning_effort_by_model:
-    google/gemini-3.5-flash: minimal
     google/gemini-3.6-flash: minimal
     anthropic/claude-sonnet-5: low
   provider_order_by_model:
+    mistralai/mistral-small-2603: [mistral]
     anthropic/claude-haiku-4.5: [anthropic, amazon-bedrock]
     anthropic/claude-sonnet-5: [google-vertex, anthropic]
   exclude_reasoning: true
@@ -73,8 +73,8 @@ budget:
   max_completion_tokens_per_request: 1024
   max_estimated_total_tokens_per_invocation: 275000
   max_cost_usd_per_invocation: 2.00
-  max_experiment_cost_usd: 500.00
-  reserve_openrouter_credit_usd: 75.00
+  max_experiment_cost_usd: 50.00
+  reserve_openrouter_credit_usd: 25.00
   pricing_safety_multiplier: 2.0
 
 calibration:
@@ -115,12 +115,12 @@ legacy_assessment:
 
 pricing:
   input_per_million:
-    google/gemini-3.5-flash: 1.5
+    mistralai/mistral-small-2603: 0.15
     anthropic/claude-haiku-4.5: 1.0
-    google/gemini-3.6-flash: 1.5
+    google/gemini-3.6-flash: 0.75
     anthropic/claude-sonnet-5: 2.0
   output_per_million:
-    google/gemini-3.5-flash: 9.0
+    mistralai/mistral-small-2603: 0.60
     anthropic/claude-haiku-4.5: 5.0
-    google/gemini-3.6-flash: 7.5
+    google/gemini-3.6-flash: 3.75
     anthropic/claude-sonnet-5: 10.0
