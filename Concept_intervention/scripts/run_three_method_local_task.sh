@@ -31,7 +31,7 @@ GRID_INDEX=""
 LAYER=""
 REPLICATE=""
 case "${TASK_NAME}" in
-  preflight|lens|capture|layer-selection|bootstrap-index|occupancy-index|iti-capture|iti-fit|smoke-check|comparison-index)
+  preflight|lens|capture|layer-selection|bootstrap-index|occupancy-index|iti-capture|iti-fit|smoke-check|comparison-index|comparison-rescore-index)
     if [[ -n "${TASK_INDEX}" ]]; then
       echo "error: ${TASK_NAME} does not take an index" >&2
       exit 2
@@ -62,6 +62,9 @@ case "${TASK_NAME}" in
     GRID_INDEX="$((TASK_INDEX % 441))"
     ;;
   method-index)
+    require_index 2
+    ;;
+  candidate-rescore)
     require_index 2
     ;;
   *)
@@ -96,6 +99,7 @@ source "${SCRIPT_DIR}/three_method_local_env.sh"
 
 SHARED_ROOT="artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol"
 COMPARISON_ROOT="artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/intervention_comparison"
+RESCORE_ROOT="artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/candidate_score_rescore_v1"
 
 case "${TASK_NAME}" in
   preflight)
@@ -173,6 +177,46 @@ case "${TASK_NAME}" in
       --j-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/j_component_intervention \
       --iti-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/iti_intervention \
       --raptor-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/raptor_intervention \
+      --output "${COMPARISON_ROOT}" \
+      --concept-id goemotions:admiration \
+      --concept-id goemotions:approval \
+      --concept-id goemotions:curiosity \
+      --concept-id goemotions:disapproval \
+      --concept-id goemotions:gratitude \
+      --concept-id goemotions:love \
+      --concept-id goemotions:optimism
+    ;;
+  candidate-rescore)
+    case "${TASK_INDEX}" in
+      0)
+        jlens intervention candidate-rescore "${J_CONFIG}" \
+          --method j_component_intervention \
+          --source-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/j_component_intervention \
+          --output "${RESCORE_ROOT}/j_component_intervention" --overwrite
+        ;;
+      1)
+        jlens intervention candidate-rescore "${ITI_CONFIG}" \
+          --method iti_intervention \
+          --source-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/iti_intervention \
+          --output "${RESCORE_ROOT}/iti_intervention" --overwrite
+        ;;
+      2)
+        jlens intervention candidate-rescore "${RAPTOR_CONFIG}" \
+          --method raptor_intervention \
+          --source-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/raptor_intervention \
+          --output "${RESCORE_ROOT}/raptor_intervention" --overwrite
+        ;;
+    esac
+    ;;
+  comparison-rescore-index)
+    jlens intervention compare-index \
+      --shared-layer-selection "${SHARED_ROOT}/selection/layer_selection.json" \
+      --j-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/j_component_intervention \
+      --iti-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/iti_intervention \
+      --raptor-output artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/raptor_intervention \
+      --j-candidate-rescore "${RESCORE_ROOT}/j_component_intervention" \
+      --iti-candidate-rescore "${RESCORE_ROOT}/iti_intervention" \
+      --raptor-candidate-rescore "${RESCORE_ROOT}/raptor_intervention" \
       --output "${COMPARISON_ROOT}" \
       --concept-id goemotions:admiration \
       --concept-id goemotions:approval \

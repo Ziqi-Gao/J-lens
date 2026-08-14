@@ -67,6 +67,7 @@ def test_profiles_separate_cpu_heavy_occupancy_from_standard_gpu_work() -> None:
     assert standard.gpu_vram_mib == 24576
     assert standard.gpu_memory_reserve_mib == 16384
     assert standard.gpu_utilization_tokens == 40
+    assert scheduler.profile_for_task("candidate-rescore", {}) == standard
 
     fit = scheduler.profile_for_task("iti-fit", {})
     assert fit.task_class == "cpu"

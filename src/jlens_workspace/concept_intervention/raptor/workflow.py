@@ -237,8 +237,18 @@ def run_raptor_intervention(
     concept_id: str,
     grid_index: int | None = None,
     overwrite: bool = False,
+    candidate_only: bool = False,
+    score_batch_size: int | None = None,
 ) -> dict[str, Any]:
-    """Run no-hook plus every adaptive target probability and decoding."""
+    """Run RAPTOR, optionally rescoring candidates without decoding."""
+
+    effective_score_batch_size = (
+        int(config.score_batch_size)
+        if score_batch_size is None
+        else int(score_batch_size)
+    )
+    if effective_score_batch_size != 1:
+        raise RaptorError("RAPTOR candidate scoring requires batch_size=1")
 
     checkout = verify_raptor_checkout(config.upstream_checkout)
     target_root = Path(output_dir) / "targets" / quote(concept_id, safe="")
@@ -312,6 +322,8 @@ def run_raptor_intervention(
                 }
             )
         scores.extend(rows)
+        if candidate_only:
+            continue
         generations.extend(
             generate_full_grid(
                 model=model,
@@ -341,7 +353,11 @@ def run_raptor_intervention(
         )
     destination.mkdir(parents=True, exist_ok=True)
     atomic_write_jsonl(destination / "candidate_scores.jsonl", scores)
-    generation_files = write_generation_artifacts(destination, generations)
+    generation_files = (
+        None
+        if candidate_only
+        else write_generation_artifacts(destination, generations)
+    )
     summary = {
         "schema_version": 1,
         "method": "raptor_intervention",
@@ -367,6 +383,11 @@ def run_raptor_intervention(
         "candidate_scores_sha256": sha256_file(
             destination / "candidate_scores.jsonl"
         ),
+        "candidate_score_contract": {
+            "schema_version": 1,
+            "batch_size": effective_score_batch_size,
+            "batching": "one_prompt_per_forward",
+        },
         "generation_rows": len(generations),
         "generation_files": generation_files,
         "generation_contract": generation_contract,
@@ -384,6 +405,8 @@ def run_raptor_intervention(
         },
         "llm_as_judge_run": False,
     }
+    if candidate_only:
+        summary["artifact_kind"] = "candidate_score_rescore"
     atomic_write_json(destination / "summary.json", summary)
     return {"status": "completed", **summary}
 

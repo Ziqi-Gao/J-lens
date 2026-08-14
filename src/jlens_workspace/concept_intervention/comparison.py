@@ -12,6 +12,9 @@ from urllib.parse import quote
 import numpy as np
 
 from jlens_workspace.artifacts import atomic_write_json, sha256_file
+from jlens_workspace.concept_intervention.candidate_rescore import (
+    CANONICAL_SCORE_CONTRACT,
+)
 from jlens_workspace.concept_intervention.generation import (
     InterventionGenerationError,
     validate_candidate_score_artifact,
@@ -447,6 +450,7 @@ def rebuild_intervention_comparison(
     raptor_root: str | Path,
     concept_ids: Sequence[str],
     index_builder: Mapping[str, Any] | None = None,
+    candidate_rescore_roots: Mapping[str, str | Path] | None = None,
 ) -> dict[str, Any]:
     """Build a no-judge held-out comparison after all three indexes complete."""
 
@@ -455,6 +459,22 @@ def rebuild_intervention_comparison(
         "iti_intervention": Path(iti_root),
         "raptor_intervention": Path(raptor_root),
     }
+    rescore_roots = (
+        None
+        if candidate_rescore_roots is None
+        else {
+            str(method): Path(root)
+            for method, root in candidate_rescore_roots.items()
+        }
+    )
+    if rescore_roots is not None and set(rescore_roots) != set(roots):
+        raise InterventionComparisonError(
+            "candidate rescore roots must cover exactly all three methods"
+        )
+    candidate_rescore_indexes: dict[str, dict[str, Any]] = {}
+    candidate_rescore_entries: dict[
+        str, dict[str, Mapping[str, Any]]
+    ] = {}
     indexes = {}
     method_provenance: dict[str, dict[str, Any]] = {}
     generation_identities: dict[str, dict[str, Any]] = {}
@@ -605,6 +625,98 @@ def rebuild_intervention_comparison(
         raise InterventionComparisonError(
             "methods used different model/data/lens or generation identities"
         )
+    if rescore_roots is not None:
+        for method, rescore_root in rescore_roots.items():
+            rescore_root = rescore_root.resolve()
+            index_path = rescore_root / "index.json"
+            manifest_path = rescore_root / "manifest.json"
+            if not index_path.is_file() or not manifest_path.is_file():
+                raise InterventionComparisonError(
+                    f"{method} candidate rescore index/manifest is missing"
+                )
+            payload = json.loads(index_path.read_text(encoding="utf-8"))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            rescore_entries = payload.get("entries")
+            if (
+                payload.get("complete") is not True
+                or payload.get("artifact_kind")
+                != "candidate_score_rescore_index"
+                or payload.get("method") != method
+                or payload.get("scoring_contract")
+                != CANONICAL_SCORE_CONTRACT
+                or payload.get("source_method_index_sha256")
+                != indexes[method]["sha256"]
+                or payload.get("source_method_manifest_sha256")
+                != sha256_file(roots[method] / "manifest.json")
+                or payload.get("rescore_manifest_sha256")
+                != sha256_file(manifest_path)
+                or not isinstance(rescore_entries, list)
+            ):
+                raise InterventionComparisonError(
+                    f"{method} candidate rescore index provenance is malformed"
+                )
+            metadata = manifest.get("notes", {}).get("candidate_rescore")
+            if (
+                not isinstance(metadata, Mapping)
+                or metadata.get("method") != method
+                or metadata.get("scoring_contract")
+                != CANONICAL_SCORE_CONTRACT
+                or metadata.get("source_method_index_sha256")
+                != indexes[method]["sha256"]
+                or metadata.get("source_method_manifest_sha256")
+                != sha256_file(roots[method] / "manifest.json")
+            ):
+                raise InterventionComparisonError(
+                    f"{method} candidate rescore manifest link is malformed"
+                )
+            try:
+                rescore_builder = validate_index_builder_provenance(
+                    payload.get("index_builder", {})
+                )
+            except InterventionGenerationError as error:
+                raise InterventionComparisonError(
+                    f"{method} candidate rescore builder provenance is malformed"
+                ) from error
+            entries_by_concept = {
+                str(entry.get("concept_id")): entry
+                for entry in rescore_entries
+            }
+            if (
+                len(entries_by_concept) != len(rescore_entries)
+                or set(entries_by_concept) != set(concept_ids)
+                or set(payload.get("expected_concepts", [])) != set(concept_ids)
+                or set(payload.get("observed_concepts", [])) != set(concept_ids)
+            ):
+                raise InterventionComparisonError(
+                    f"{method} candidate rescore concept coverage mismatch"
+                )
+            for concept_id, entry in entries_by_concept.items():
+                summary_path = (
+                    rescore_root / str(entry.get("summary", ""))
+                ).resolve()
+                candidate_path = (
+                    rescore_root / str(entry.get("candidate_scores", ""))
+                ).resolve()
+                if (
+                    not summary_path.is_relative_to(rescore_root)
+                    or not candidate_path.is_relative_to(rescore_root)
+                    or not summary_path.is_file()
+                    or not candidate_path.is_file()
+                    or entry.get("summary_sha256") != sha256_file(summary_path)
+                    or entry.get("candidate_scores_sha256")
+                    != sha256_file(candidate_path)
+                ):
+                    raise InterventionComparisonError(
+                        f"{method} candidate rescore artifact mismatch: {concept_id}"
+                    )
+            candidate_rescore_entries[method] = entries_by_concept
+            candidate_rescore_indexes[method] = {
+                "path": str(index_path),
+                "sha256": sha256_file(index_path),
+                "index_builder": rescore_builder,
+                "manifest": str(manifest_path),
+                "manifest_sha256": sha256_file(manifest_path),
+            }
     entries = []
     for concept_id in concept_ids:
         encoded = quote(concept_id, safe="")
@@ -627,6 +739,37 @@ def rebuild_intervention_comparison(
                 summary,
                 sealed_paths=method_seals[method][concept_id],
             )
+        score_summaries = dict(summaries)
+        if rescore_roots is not None:
+            for method, rescore_root in rescore_roots.items():
+                entry = candidate_rescore_entries[method][concept_id]
+                summary_path = (
+                    rescore_root / str(entry["summary"])
+                ).resolve()
+                candidate_path = (
+                    rescore_root / str(entry["candidate_scores"])
+                ).resolve()
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                if (
+                    summary.get("artifact_kind")
+                    != "candidate_score_rescore"
+                    or summary.get("method") != method
+                    or summary.get("target_concept_id") != concept_id
+                    or summary.get("candidate_score_contract")
+                    != CANONICAL_SCORE_CONTRACT
+                    or summary.get("generation_rows") != 0
+                    or summary.get("generation_files") is not None
+                    or summary.get("generation_contract")
+                    != summaries[method].get("generation_contract")
+                    or summary.get("selected_layers")
+                    != summaries[method].get("selected_layers")
+                    or summary.get("candidate_scores_sha256")
+                    != sha256_file(candidate_path)
+                ):
+                    raise InterventionComparisonError(
+                        f"{concept_id}: {method} rescore summary differs from source"
+                    )
+                score_summaries[method] = summary
         selected_layers = {
             tuple(int(value) for value in summary["selected_layers"])
             for summary in summaries.values()
@@ -700,18 +843,39 @@ def rebuild_intervention_comparison(
             raise InterventionComparisonError(
                 f"{concept_id}: methods used different balanced-row artifact hashes"
             )
-        j_rows = _read_method_scores(
-            roots["j_component_intervention"] / "targets" / encoded,
-            sealed_paths=method_seals["j_component_intervention"][concept_id],
-        )
-        iti_rows = _read_method_scores(
-            roots["iti_intervention"] / "targets" / encoded,
-            sealed_paths=method_seals["iti_intervention"][concept_id],
-        )
-        raptor_rows = _read_method_scores(
-            roots["raptor_intervention"] / "targets" / encoded,
-            sealed_paths=method_seals["raptor_intervention"][concept_id],
-        )
+        if rescore_roots is None:
+            score_rows = {
+                method: _read_method_scores(
+                    root / "targets" / encoded,
+                    sealed_paths=method_seals[method][concept_id],
+                )
+                for method, root in roots.items()
+            }
+        else:
+            score_rows = {}
+            for method, rescore_root in rescore_roots.items():
+                candidate_path = (
+                    rescore_root
+                    / str(
+                        candidate_rescore_entries[method][concept_id][
+                            "candidate_scores"
+                        ]
+                    )
+                ).resolve()
+                score_rows[method] = _read_method_scores(
+                    rescore_root / "targets" / encoded,
+                    sealed_paths={candidate_path},
+                )
+                declared_rows = candidate_rescore_entries[method][concept_id].get(
+                    "candidate_score_rows"
+                )
+                if declared_rows != len(score_rows[method]):
+                    raise InterventionComparisonError(
+                        f"{concept_id}: {method} rescore row count mismatch"
+                    )
+        j_rows = score_rows["j_component_intervention"]
+        iti_rows = score_rows["iti_intervention"]
+        raptor_rows = score_rows["raptor_intervention"]
         native_zero_k = min(
             int(value)
             for value in summaries["iti_intervention"]["native_top_k_grid"]
@@ -783,10 +947,10 @@ def rebuild_intervention_comparison(
                 "j_component": _select_j(j_rows),
                 "raptor": _select_raptor(raptor_rows),
                 "iti_native": _select_iti(
-                    iti_rows, summaries["iti_intervention"], "native"
+                    iti_rows, score_summaries["iti_intervention"], "native"
                 ),
                 "iti_layer_matched": _select_iti(
-                    iti_rows, summaries["iti_intervention"], "layer_matched"
+                    iti_rows, score_summaries["iti_intervention"], "layer_matched"
                 ),
             }
         )
@@ -803,6 +967,7 @@ def rebuild_intervention_comparison(
         "shared_layer_selection_sha256": sha256_file(shared_layer_selection),
         "method_indexes": indexes,
         "method_provenance": method_provenance,
+        "candidate_rescore_indexes": candidate_rescore_indexes,
         "index_builder": comparison_builder,
         "entries": entries,
     }
@@ -816,6 +981,7 @@ def rebuild_intervention_comparison(
         "methods": list(roots),
         "concept_ids": list(concept_ids),
         "method_provenance": method_provenance,
+        "candidate_rescore_indexes": candidate_rescore_indexes,
         "index_builder": comparison_builder,
         "llm_as_judge_run": False,
     }

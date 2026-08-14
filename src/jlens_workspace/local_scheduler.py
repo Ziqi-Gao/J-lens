@@ -33,6 +33,7 @@ GPU_TASKS = frozenset(
         "j-grid",
         "raptor-grid",
         "iti-grid",
+        "candidate-rescore",
     }
 )
 

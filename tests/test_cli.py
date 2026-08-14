@@ -94,6 +94,19 @@ def test_parser_exposes_required_commands_without_importing_optional_stack() -> 
         ["iti", "run", "--config", "experiment.yaml"],
         ["iti", "index", "--config", "experiment.yaml"],
         ["matrix", "run", "--config", "experiment.yaml"],
+        [
+            "intervention",
+            "candidate-rescore",
+            "--config",
+            "experiment.yaml",
+            "--method",
+            "j_component_intervention",
+            "--source-output",
+            "source",
+            "--output",
+            "rescore",
+            "--overwrite",
+        ],
     ):
         assert callable(parser.parse_args(argv).handler)
     assert {

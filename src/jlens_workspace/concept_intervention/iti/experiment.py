@@ -96,8 +96,18 @@ def run_iti_intervention_experiment(
     concept_id: str,
     grid_index: int | None = None,
     overwrite: bool = False,
+    candidate_only: bool = False,
+    score_batch_size: int | None = None,
 ) -> dict[str, Any]:
-    """Run every ITI variant/control/K/alpha and all registered decodings."""
+    """Run the ITI grid, optionally rescoring candidates without decoding."""
+
+    effective_score_batch_size = (
+        int(config.score_batch_size)
+        if score_batch_size is None
+        else int(score_batch_size)
+    )
+    if effective_score_batch_size <= 0:
+        raise ITIWorkflowError("score_batch_size must be positive")
 
     target_root = Path(output_dir) / "targets" / quote(concept_id, safe="")
     grid = iti_experiment_grid(config)
@@ -194,7 +204,7 @@ def run_iti_intervention_experiment(
                 multiplier=strength,
                 num_heads=config.num_heads,
                 head_dim=config.head_dim,
-                batch_size=config.score_batch_size,
+                batch_size=effective_score_batch_size,
             )
             for row in rows:
                 row.update(
@@ -212,6 +222,8 @@ def run_iti_intervention_experiment(
             score_rows.extend(rows)
             if split == "validation" and mode == "mass_mean":
                 validation_by_variant[variant].extend(rows)
+        if candidate_only:
+            continue
         generation_rows.extend(
             generate_full_grid(
                 model=model,
@@ -283,7 +295,11 @@ def run_iti_intervention_experiment(
         raise ITIWorkflowError(f"zero-strength ITI conditions differ by {zero_spread}")
     destination.mkdir(parents=True, exist_ok=True)
     atomic_write_jsonl(destination / "candidate_scores.jsonl", score_rows)
-    generation_files = write_generation_artifacts(destination, generation_rows)
+    generation_files = (
+        None
+        if candidate_only
+        else write_generation_artifacts(destination, generation_rows)
+    )
     summary = {
         "schema_version": 1,
         "method": "iti_intervention",
@@ -306,12 +322,23 @@ def run_iti_intervention_experiment(
         "candidate_scores_sha256": sha256_file(
             destination / "candidate_scores.jsonl"
         ),
+        "candidate_score_contract": {
+            "schema_version": 1,
+            "batch_size": effective_score_batch_size,
+            "batching": (
+                "one_prompt_per_forward"
+                if effective_score_batch_size == 1
+                else "deterministic_split_contiguous_batches"
+            ),
+        },
         "generation_rows": len(generation_rows),
         "generation_files": generation_files,
         "generation_contract": generation_contract,
         "zero_strength_max_logprob_spread": zero_spread,
         "llm_as_judge_run": False,
     }
+    if candidate_only:
+        summary["artifact_kind"] = "candidate_score_rescore"
     atomic_write_json(destination / "summary.json", summary)
     return {
         "status": "completed",

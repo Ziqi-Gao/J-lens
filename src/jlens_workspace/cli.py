@@ -340,6 +340,26 @@ def build_parser() -> argparse.ArgumentParser:
     raptor_index.add_argument("--output", type=Path)
     _add_json_flag(raptor_index)
     raptor_index.set_defaults(handler=_cmd_raptor_index)
+    candidate_rescore = intervention_subparsers.add_parser(
+        "candidate-rescore",
+        help="rescore a sealed method grid with canonical one-prompt batches",
+    )
+    _add_config_argument(candidate_rescore)
+    candidate_rescore.add_argument(
+        "--method",
+        choices=(
+            "j_component_intervention",
+            "iti_intervention",
+            "raptor_intervention",
+        ),
+        required=True,
+    )
+    candidate_rescore.add_argument("--source-output", type=Path, required=True)
+    candidate_rescore.add_argument("--output", type=Path, required=True)
+    candidate_rescore.add_argument("--concept-id", action="append")
+    _add_overwrite_flag(candidate_rescore)
+    _add_json_flag(candidate_rescore)
+    candidate_rescore.set_defaults(handler=_cmd_intervention_candidate_rescore)
 
     compare_index = intervention_subparsers.add_parser(
         "compare-index", help="build the identity-checked three-method comparison"
@@ -348,6 +368,15 @@ def build_parser() -> argparse.ArgumentParser:
     compare_index.add_argument("--j-output", type=Path, required=True)
     compare_index.add_argument("--iti-output", type=Path, required=True)
     compare_index.add_argument("--raptor-output", type=Path, required=True)
+    compare_index.add_argument(
+        "--j-candidate-rescore", type=Path
+    )
+    compare_index.add_argument(
+        "--iti-candidate-rescore", type=Path
+    )
+    compare_index.add_argument(
+        "--raptor-candidate-rescore", type=Path
+    )
     compare_index.add_argument("--output", type=Path, required=True)
     compare_index.add_argument("--concept-id", action="append", required=True)
     _add_json_flag(compare_index)
@@ -2556,6 +2585,24 @@ def _cmd_intervention_compare_index(args: argparse.Namespace) -> int:
     )
 
     builder_manifest = RunManifest.for_workspace(Path.cwd())
+    candidate_rescores = (
+        args.j_candidate_rescore,
+        args.iti_candidate_rescore,
+        args.raptor_candidate_rescore,
+    )
+    if any(value is not None for value in candidate_rescores) and not all(
+        value is not None for value in candidate_rescores
+    ):
+        raise ValueError("pass all three candidate rescore roots or none")
+    rescore_roots = (
+        None
+        if candidate_rescores[0] is None
+        else {
+            "j_component_intervention": candidate_rescores[0],
+            "iti_intervention": candidate_rescores[1],
+            "raptor_intervention": candidate_rescores[2],
+        }
+    )
     index = rebuild_intervention_comparison(
         output_dir=args.output,
         shared_layer_selection=args.shared_layer_selection,
@@ -2564,6 +2611,7 @@ def _cmd_intervention_compare_index(args: argparse.Namespace) -> int:
         raptor_root=args.raptor_output,
         concept_ids=args.concept_id,
         index_builder=_index_builder_provenance(builder_manifest),
+        candidate_rescore_roots=rescore_roots,
     )
     _finish_command(
         args,
@@ -3350,6 +3398,161 @@ def main(argv: list[str] | None = None) -> int:
             raise
         print(f"error: {error}", file=sys.stderr)
         return 2
+
+
+def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json, sha256_file
+    from jlens_workspace.concept_intervention.candidate_rescore import (
+        CANONICAL_SCORE_CONTRACT,
+        rebuild_candidate_rescore_index,
+    )
+
+    config = _load_config(args.config)
+    source_root = args.source_output.resolve()
+    destination = args.output.resolve()
+    if source_root == destination:
+        raise ValueError("candidate rescore output must differ from source output")
+    source_index_path = source_root / "index.json"
+    source_manifest_path = source_root / "manifest.json"
+    if not source_index_path.is_file() or not source_manifest_path.is_file():
+        raise ValueError("candidate rescore source method index/manifest is missing")
+    source_index = json.loads(source_index_path.read_text(encoding="utf-8"))
+    if (
+        source_index.get("complete") is not True
+        or source_index.get("method") != args.method
+    ):
+        raise ValueError("candidate rescore source method index is incomplete")
+
+    if args.method == "j_component_intervention":
+        from jlens_workspace.concept_intervention.j_component import (
+            run_multilayer_j_intervention,
+        )
+
+        section = _require_section(config, "j_component")
+        activation_root = section.source_activations_dir
+        selected_layers_path = section.selected_layers_path
+        generation_identity = _generation_identity(
+            section.generation, section.candidate_labels
+        )
+
+        def run_one(concept_id: str) -> dict[str, Any]:
+            return run_multilayer_j_intervention(
+                output_dir=destination,
+                model=bundle.model,
+                tokenizer=bundle.tokenizer,
+                config=section,
+                concept_id=concept_id,
+                overwrite=args.overwrite,
+                candidate_only=True,
+                score_batch_size=1,
+            )
+
+    elif args.method == "iti_intervention":
+        from jlens_workspace.concept_intervention.iti import (
+            run_iti_intervention_experiment,
+        )
+
+        section = _require_section(config, "iti")
+        if section.method != "honest_llama_mass_mean_qwen_full_attention":
+            raise ValueError("candidate rescore requires registered three-method ITI")
+        if section.generation is None or section.selected_layers_path is None:
+            raise ValueError("registered ITI rescore lacks shared generation/layers")
+        activation_root = section.source_residual_activations_dir
+        selected_layers_path = section.selected_layers_path
+        generation_identity = _generation_identity(
+            section.generation, section.candidate_labels
+        )
+
+        def run_one(concept_id: str) -> dict[str, Any]:
+            return run_iti_intervention_experiment(
+                output_dir=destination,
+                model=bundle.model,
+                tokenizer=bundle.tokenizer,
+                config=section,
+                concept_id=concept_id,
+                overwrite=args.overwrite,
+                candidate_only=True,
+                score_batch_size=1,
+            )
+
+    else:
+        from jlens_workspace.concept_intervention.raptor import (
+            run_raptor_intervention,
+        )
+
+        section = _require_section(config, "raptor")
+        activation_root = section.source_activations_dir
+        selected_layers_path = section.selected_layers_path
+        generation_identity = _generation_identity(
+            section.generation, section.candidate_labels
+        )
+
+        def run_one(concept_id: str) -> dict[str, Any]:
+            return run_raptor_intervention(
+                output_dir=destination,
+                model=bundle.model,
+                tokenizer=bundle.tokenizer,
+                config=section,
+                concept_id=concept_id,
+                overwrite=args.overwrite,
+                candidate_only=True,
+                score_batch_size=1,
+            )
+
+    concepts = _configured_concepts(
+        section.concept_ids,
+        args.concept_id,
+        method=f"{args.method} candidate rescore",
+    )
+    source_concepts = {
+        str(entry.get("concept_id")) for entry in source_index.get("entries", [])
+    }
+    if set(concepts) - source_concepts:
+        raise ValueError("candidate rescore concepts are absent from source index")
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        dataset_hash=_activation_dataset_hash(activation_root),
+        notes={
+            "workflow": "candidate_score_rescore_v1",
+            "generation": generation_identity,
+            **_shared_protocol_identity(selected_layers_path),
+            "candidate_rescore": {
+                "schema_version": 1,
+                "method": args.method,
+                "source_method_root": str(source_root),
+                "source_method_index_sha256": sha256_file(source_index_path),
+                "source_method_manifest_sha256": sha256_file(
+                    source_manifest_path
+                ),
+                "scoring_contract": CANONICAL_SCORE_CONTRACT,
+            },
+        },
+    )
+    destination.mkdir(parents=True, exist_ok=True)
+    manifest_path = destination / "manifest.json"
+    if manifest_path.is_file():
+        if json.loads(manifest_path.read_text(encoding="utf-8")) != manifest.__dict__:
+            raise ValueError("existing candidate rescore manifest differs")
+    else:
+        atomic_write_json(manifest_path, manifest)
+
+    bundle = _load_model_bundle(config)
+    results = [run_one(concept_id) for concept_id in concepts]
+    index = rebuild_candidate_rescore_index(
+        destination,
+        source_method_root=source_root,
+        method=args.method,
+        concept_ids=concepts,
+        index_builder=_index_builder_provenance(manifest),
+    )
+    payload = {"index": index, "results": results}
+    _finish_command(
+        args,
+        payload,
+        message=f"candidate rescore complete -> {destination / 'index.json'}",
+    )
+    return 0
 
 
 if __name__ == "__main__":  # pragma: no cover

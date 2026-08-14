@@ -366,8 +366,23 @@ def run_multilayer_j_intervention(
     concept_id: str,
     grid_index: int | None = None,
     overwrite: bool = False,
+    candidate_only: bool = False,
+    score_batch_size: int | None = None,
 ) -> dict[str, Any]:
-    """Run every J/full/non-J/random strength and decoding for one concept."""
+    """Run the J grid, optionally rescoring candidates without decoding.
+
+    Candidate-only runs are written to a separate caller-provided root and use
+    an explicit scoring batch size. They never rewrite or regenerate the
+    sealed generation artifacts from the source experiment.
+    """
+
+    effective_score_batch_size = (
+        int(config.score_batch_size)
+        if score_batch_size is None
+        else int(score_batch_size)
+    )
+    if effective_score_batch_size <= 0:
+        raise MultiLayerJError("score_batch_size must be positive")
 
     target_root = Path(output_dir) / "targets" / quote(concept_id, safe="")
     condition_ids = [
@@ -446,7 +461,7 @@ def run_multilayer_j_intervention(
             directions=layer_directions,
             residual_norms=residual_norms,
             strength=strength,
-            batch_size=config.score_batch_size,
+            batch_size=effective_score_batch_size,
         )
         for row in rows:
             row.update(
@@ -458,6 +473,8 @@ def run_multilayer_j_intervention(
                 }
             )
         score_rows.extend(rows)
+        if candidate_only:
+            continue
         generation_rows.extend(
             generate_full_grid(
                 model=model,
@@ -506,7 +523,11 @@ def run_multilayer_j_intervention(
         raise MultiLayerJError(f"zero-strength conditions differ by {zero_spread}")
     destination.mkdir(parents=True, exist_ok=True)
     atomic_write_jsonl(destination / "candidate_scores.jsonl", score_rows)
-    generation_files = write_generation_artifacts(destination, generation_rows)
+    generation_files = (
+        None
+        if candidate_only
+        else write_generation_artifacts(destination, generation_rows)
+    )
     summary_payload = {
         "schema_version": 1,
         "method": "j_component_intervention",
@@ -538,11 +559,22 @@ def run_multilayer_j_intervention(
         "candidate_scores_sha256": sha256_file(
             destination / "candidate_scores.jsonl"
         ),
+        "candidate_score_contract": {
+            "schema_version": 1,
+            "batch_size": effective_score_batch_size,
+            "batching": (
+                "one_prompt_per_forward"
+                if effective_score_batch_size == 1
+                else "deterministic_contiguous_batches"
+            ),
+        },
         "generation_rows": len(generation_rows),
         "generation_files": generation_files,
         "generation_contract": generation_contract,
         "llm_as_judge_run": False,
     }
+    if candidate_only:
+        summary_payload["artifact_kind"] = "candidate_score_rescore"
     atomic_write_json(destination / "summary.json", summary_payload)
     return {"status": "completed", **summary_payload}
 

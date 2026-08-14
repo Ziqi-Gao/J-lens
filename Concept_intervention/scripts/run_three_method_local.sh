@@ -11,6 +11,7 @@ Commands:
   smoke      Run every producer plus the four registered smoke shards and gate.
   full       Run remaining grids, method indexes, and final comparison.
   finalize   CPU-only validation/indexing of already-complete scientific grids.
+  rescore    Recompute all candidate scores at batch=1, then rebuild comparison.
   all        Run bootstrap, smoke, and full in order.
   status     Report local task markers and the final completion marker.
   plan       Print the registered local DAG without executing it.
@@ -27,7 +28,7 @@ if [[ "${1:-}" == "--dry-run" ]]; then
 fi
 COMMAND="${1:-}"
 case "${COMMAND}" in
-  bootstrap|smoke|full|finalize|all|status|plan) ;;
+  bootstrap|smoke|full|finalize|rescore|all|status|plan) ;;
   -h|--help|"") usage; exit 0 ;;
   *) echo "error: unknown command: ${COMMAND}" >&2; usage >&2; exit 2 ;;
 esac
@@ -52,6 +53,10 @@ finalize (CPU-only recovery; no grid task or old marker dependency)
   -> validate every existing J/ITI/RAPTOR shard and artifact hash
   -> three method indexes
   -> intervention comparison index
+
+rescore (sealed generations are read-only)
+  -> J + ITI + RAPTOR candidate scores at canonical batch=1
+  -> validate source/rescore identity and rebuild intervention comparison index
 EOF
 }
 if [[ "${COMMAND}" == "plan" ]]; then
@@ -160,6 +165,11 @@ run_finalize() {
   run_one cpu comparison-index
 }
 
+run_rescore() {
+  run_range gpu candidate-rescore 2 "${GPU_WORKERS}"
+  run_one cpu comparison-rescore-index
+}
+
 run_full() {
   local smoke_marker="${STATE_DIR}/smoke-check.done"
   if [[ "${DRY_RUN}" == "0" && ! -f "${smoke_marker}" ]]; then
@@ -177,10 +187,11 @@ case "${COMMAND}" in
   smoke) run_smoke ;;
   full) run_full ;;
   finalize) run_finalize ;;
+  rescore) run_rescore ;;
   all) run_bootstrap; run_smoke; run_full ;;
 esac
 
-if [[ "${DRY_RUN}" == "0" && "${COMMAND}" =~ ^(full|finalize|all)$ ]]; then
+if [[ "${DRY_RUN}" == "0" && "${COMMAND}" =~ ^(full|finalize|rescore|all)$ ]]; then
   /usr/bin/python3.12 -c \
     'import json,sys; payload=json.load(open(sys.argv[1])); assert payload.get("complete") is True, payload; print("three_method_complete=true")' \
     "${FINAL_INDEX}"

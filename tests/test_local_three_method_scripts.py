@@ -52,6 +52,14 @@ def test_local_occupancy_decoding_matches_registered_slurm_array() -> None:
     }
 
 
+def test_candidate_rescore_decoding_covers_three_methods() -> None:
+    assert _decode("candidate-rescore", 0) == {
+        "task": "candidate-rescore",
+        "task_index": "0",
+    }
+    assert _decode("candidate-rescore", 2)["task_index"] == "2"
+
+
 def test_local_top_level_plan_has_the_registered_smoke_indices() -> None:
     result = subprocess.run(
         ["bash", str(SCRIPTS / "run_three_method_local.sh"), "plan"],
@@ -104,6 +112,7 @@ def test_local_gpu_policy_uses_bounded_shared_slots_only_for_occupancy() -> None
         "gpu_utilization_tokens": "40",
     }
     assert _gpu_policy("occupancy", slots="3")["slots_per_device"] == "3"
+    assert _gpu_policy("candidate-rescore")["task_class"] == "standard"
     gpu_script = (SCRIPTS / "three_method_local_gpu.sh").read_text()
     controller = (SCRIPTS / "run_three_method_local.sh").read_text()
     assert "0,1,2,3" not in gpu_script
@@ -133,9 +142,7 @@ def test_local_gpu_policy_rejects_invalid_occupancy_slot_count() -> None:
 
 def test_local_finalize_is_cpu_only_and_independent_of_grid_markers() -> None:
     controller = (SCRIPTS / "run_three_method_local.sh").read_text()
-    finalize_body = controller.split("run_finalize() {", 1)[1].split(
-        "run_full() {", 1
-    )[0]
+    finalize_body = controller.split("run_finalize() {", 1)[1].split("\n}", 1)[0]
 
     assert 'run_range cpu method-index 2 "${CPU_WORKERS}"' in finalize_body
     assert "run_one cpu comparison-index" in finalize_body
@@ -143,3 +150,14 @@ def test_local_finalize_is_cpu_only_and_independent_of_grid_markers() -> None:
     assert "-grid" not in finalize_body
     assert "smoke-check.done" not in finalize_body
     assert "finalize) run_finalize ;;" in controller
+
+
+def test_local_rescore_runs_three_gpu_methods_then_cpu_comparison() -> None:
+    controller = (SCRIPTS / "run_three_method_local.sh").read_text()
+    rescore_body = controller.split("run_rescore() {", 1)[1].split(
+        "run_full() {", 1
+    )[0]
+
+    assert 'run_range gpu candidate-rescore 2 "${GPU_WORKERS}"' in rescore_body
+    assert "run_one cpu comparison-rescore-index" in rescore_body
+    assert "rescore) run_rescore ;;" in controller
