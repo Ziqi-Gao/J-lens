@@ -2,6 +2,8 @@
 # Persistent CPU/API controller for the frozen three-method LLM-judge study.
 set -euo pipefail
 
+readonly BASE_BATCH_LIMIT=16
+
 usage() {
   cat <<'EOF'
 Usage: run_three_method_llm_judge_v1_local.sh [--dry-run]
@@ -46,7 +48,7 @@ config=${CONFIG}
 output_root=${OUTPUT_ROOT}
 runtime_root=${RUNTIME_ROOT}
 gpu_devices=disabled
-base_batch_limit=25
+base_batch_limit=${BASE_BATCH_LIMIT}
 expert_batch_limit=1
 jobs=2
 validation=2 judges x (4480 pointwise + 2688 pairwise)
@@ -253,8 +255,8 @@ jlens judge validate --config "${CONFIG}" --json
 CURRENT_STAGE=validation
 write_status running "${CURRENT_STAGE}"
 for role in primary secondary; do
-  run_until_complete "${role}" pointwise validation 25 2
-  run_until_complete "${role}" pairwise validation 25 2
+  run_until_complete "${role}" pointwise validation "${BASE_BATCH_LIMIT}" 2
+  run_until_complete "${role}" pairwise validation "${BASE_BATCH_LIMIT}" 2
 done
 
 CURRENT_STAGE=calibration
@@ -273,14 +275,14 @@ fi
 CURRENT_STAGE=test
 write_status running "${CURRENT_STAGE}"
 for role in primary secondary; do
-  run_until_complete "${role}" pointwise test 25 2
-  run_until_complete "${role}" pairwise test 25 2
+  run_until_complete "${role}" pointwise test "${BASE_BATCH_LIMIT}" 2
+  run_until_complete "${role}" pairwise test "${BASE_BATCH_LIMIT}" 2
 done
 
 CURRENT_STAGE=arbitration
 write_status running "${CURRENT_STAGE}"
 jlens judge review-prepare --config "${CONFIG}" --tier arbitration --json
-run_until_complete arbitration arbitration "" 25 2
+run_until_complete arbitration arbitration "" "${BASE_BATCH_LIMIT}" 2
 
 CURRENT_STAGE=expert_review
 write_status running "${CURRENT_STAGE}"

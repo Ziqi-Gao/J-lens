@@ -149,6 +149,25 @@ def test_registered_config_uses_cost_bounded_independent_judges() -> None:
     assert payload["pricing"]["output_per_million"][
         "mistralai/mistral-small-2603"
     ] == 0.60
+    attempts = payload["openrouter"]["max_retries"] + 1
+    tokens_per_task = (
+        payload["budget"]["max_estimated_prompt_tokens_per_request"]
+        + payload["openrouter"]["max_tokens"]
+    )
+    assert 16 * tokens_per_task * attempts == 262_144
+    assert 16 * tokens_per_task * attempts <= payload["budget"][
+        "max_estimated_total_tokens_per_invocation"
+    ]
+    assert 17 * tokens_per_task * attempts > payload["budget"][
+        "max_estimated_total_tokens_per_invocation"
+    ]
+    controller_path = (
+        Path(__file__).resolve().parents[1]
+        / "Concept_intervention/scripts/run_three_method_llm_judge_v1_local.sh"
+    )
+    assert "readonly BASE_BATCH_LIMIT=16" in controller_path.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_client_retains_secret_safe_raw_audit() -> None:

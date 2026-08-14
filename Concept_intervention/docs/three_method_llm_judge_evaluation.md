@@ -85,6 +85,9 @@ reserves USD 25 of live OpenRouter credit and refuses any invocation whose
 conservative projection would exceed either that reserve or the USD 50 study
 cap. Based on the completed v16 token profile and selective-review rates, the
 central projection is about USD 41; the cap is a bound, not a spending target.
+The controller uses 16-task base and arbitration batches: with a 7,168-token
+prompt bound, 1,024 completion-token limit, and two allowed attempts, the
+per-invocation token ceiling is 262,144, below the registered 275,000 cap.
 
 Each successful task has one atomic response file containing the blinded request
 payload, raw provider response, usage/cost, provider, exact model, timestamps,
