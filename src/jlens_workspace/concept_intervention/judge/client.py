@@ -8,19 +8,29 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import Any
 
-from jlens_workspace.concept_intervention.judge.config import OpenRouterConfig
 from jlens_workspace.concept_intervention.judge.prompts import (
     render_messages,
     response_schema,
     validate_judgment,
 )
+from jlens_workspace.concept_intervention.judge.three_method_config import OpenRouterConfig
 
 
 class OpenRouterError(RuntimeError):
     """Raised when a judge request cannot produce a registered valid response."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        attempt_records: tuple[dict[str, Any], ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.attempt_records = attempt_records
 
 
 class OpenRouterContentFilterError(OpenRouterError):
@@ -45,6 +55,11 @@ class JudgeResponse:
     judgment: dict[str, Any]
     attempts: int
     validation_warnings: tuple[str, ...] = ()
+    request_payload: dict[str, Any] = field(default_factory=dict)
+    raw_provider_response: dict[str, Any] = field(default_factory=dict)
+    attempt_records: tuple[dict[str, Any], ...] = ()
+    request_started_at: str | None = None
+    response_received_at: str | None = None
 
 
 Transport = Callable[[str, Mapping[str, str], bytes, float], Mapping[str, Any]]
@@ -164,6 +179,7 @@ class OpenRouterClient:
         attempts = self.config.max_retries + 1
         provider_order = self.config.provider_order_by_model.get(model, [])
         content_filter_attempts = 0
+        attempt_records: list[dict[str, Any]] = []
         for attempt in range(1, attempts + 1):
             provider_policy: dict[str, Any] = {
                 "data_collection": self.config.data_collection,
@@ -177,6 +193,14 @@ class OpenRouterClient:
                 )
             request_payload["provider"] = provider_policy
             body = json.dumps(request_payload, separators=(",", ":")).encode("utf-8")
+            request_started_at = datetime.now(UTC).isoformat()
+            attempt_record: dict[str, Any] = {
+                "attempt": attempt,
+                "request_started_at": request_started_at,
+                "provider_order": list(provider_policy.get("order", [])),
+                "request_payload": json.loads(body.decode("utf-8")),
+            }
+            payload: Mapping[str, Any] | None = None
             try:
                 payload = self.transport(
                     self.config.endpoint,
@@ -184,31 +208,100 @@ class OpenRouterClient:
                     body,
                     self.config.timeout_seconds,
                 )
-                return self._parse_response(
+                response_received_at = datetime.now(UTC).isoformat()
+                response = self._parse_response(
                     payload, model=model, task=task, attempts=attempt
                 )
+                attempt_record.update(
+                    {
+                        "response_received_at": response_received_at,
+                        "outcome": "validated",
+                        "response_id": response.response_id,
+                        "provider": response.provider,
+                        "returned_model": response.returned_model,
+                        "finish_reason": response.finish_reason,
+                    }
+                )
+                attempt_records.append(attempt_record)
+                return replace(
+                    response,
+                    request_payload=json.loads(body.decode("utf-8")),
+                    raw_provider_response=dict(payload),
+                    attempt_records=tuple(attempt_records),
+                    request_started_at=request_started_at,
+                    response_received_at=response_received_at,
+                )
+            except OpenRouterError as error:
+                attempt_record.update(
+                    {
+                        "response_received_at": datetime.now(UTC).isoformat(),
+                        "outcome": "registration_error",
+                        "error_type": type(error).__name__,
+                        "error": str(error),
+                    }
+                )
+                if payload is not None:
+                    attempt_record["raw_provider_response"] = dict(payload)
+                attempt_records.append(attempt_record)
+                raise OpenRouterError(
+                    str(error),
+                    attempt_records=tuple(attempt_records),
+                ) from error
             except urllib.error.HTTPError as error:
                 last_error = error
+                attempt_record.update(
+                    {
+                        "response_received_at": datetime.now(UTC).isoformat(),
+                        "outcome": "http_error",
+                        "error_type": type(error).__name__,
+                        "http_status": error.code,
+                    }
+                )
+                attempt_records.append(attempt_record)
                 retryable = error.code == 429 or 500 <= error.code < 600
                 if not retryable or attempt == attempts:
                     break
             except (urllib.error.URLError, TimeoutError) as error:
                 last_error = error
+                attempt_record.update(
+                    {
+                        "response_received_at": datetime.now(UTC).isoformat(),
+                        "outcome": "transport_error",
+                        "error_type": type(error).__name__,
+                    }
+                )
+                attempt_records.append(attempt_record)
                 if attempt == attempts:
                     break
             except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
                 last_error = error
-                if "finish_reason='content_filter'" in str(error):
+                content_filtered = "finish_reason='content_filter'" in str(error)
+                attempt_record.update(
+                    {
+                        "response_received_at": datetime.now(UTC).isoformat(),
+                        "outcome": (
+                            "content_filter" if content_filtered else "validation_error"
+                        ),
+                        "error_type": type(error).__name__,
+                        "error": str(error),
+                    }
+                )
+                if payload is not None:
+                    attempt_record["raw_provider_response"] = dict(payload)
+                attempt_records.append(attempt_record)
+                if content_filtered:
                     content_filter_attempts += 1
                 if attempt == attempts:
                     if content_filter_attempts == attempts:
                         raise OpenRouterContentFilterError(
                             "all registered provider attempts returned content_filter: "
-                            f"{attempts} attempt(s)"
+                            f"{attempts} attempt(s)",
+                            attempt_records=tuple(attempt_records),
                         ) from error
                     raise OpenRouterError(
                         "judge response failed registered validation after "
-                        f"{attempt} attempt(s): {error}"
+                        f"{attempt} attempt(s): {error}",
+                        attempt_records=tuple(attempt_records),
                     ) from error
             self.sleeper(min(30.0, 2.0 ** (attempt - 1)))
         if isinstance(last_error, urllib.error.HTTPError):
@@ -216,7 +309,8 @@ class OpenRouterClient:
         else:
             detail = type(last_error).__name__ if last_error else "unknown error"
         raise OpenRouterError(
-            f"OpenRouter request failed after {attempt} attempt(s): {detail}"
+            f"OpenRouter request failed after {attempt} attempt(s): {detail}",
+            attempt_records=tuple(attempt_records),
         ) from last_error
 
     @staticmethod

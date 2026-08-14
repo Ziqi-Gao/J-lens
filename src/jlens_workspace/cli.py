@@ -2717,29 +2717,13 @@ def _cmd_intervention_smoke_check(args: argparse.Namespace) -> int:
 
 
 def _cmd_judge_validate(args: argparse.Namespace) -> int:
-    from jlens_workspace.concept_intervention.judge.config import load_judge_config
+    from jlens_workspace.concept_intervention.judge import validate_evaluation
 
-    config = load_judge_config(args.config)
-    payload = {
-        "valid": True,
-        "schema_version": config.schema_version,
-        "protocol_version": config.protocol_version,
-        "experiment_name": config.experiment_name,
-        "output_dir": config.output_dir,
-        "concept_count": len(config.source.concept_ids),
-        "judge_models": {
-            "primary": config.judges.primary,
-            "secondary": config.judges.secondary,
-            "arbitration": config.judges.arbitration,
-            "expert_review": config.judges.expert_review,
-        },
-        "api_key_env": config.openrouter.api_key_env,
-        "api_key_stored_in_config": False,
-    }
+    payload = validate_evaluation(args.config)
     _finish_command(
         args,
         payload,
-        message=f"valid judge registration: {config.experiment_name}",
+        message=f"valid three-method judge registration: {payload['experiment_name']}",
     )
     return 0
 

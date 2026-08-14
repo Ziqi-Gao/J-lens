@@ -12,6 +12,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
@@ -30,8 +31,10 @@ from jlens_workspace.concept_intervention.judge.client import (
     OpenRouterContentFilterError,
 )
 from jlens_workspace.concept_intervention.judge.config import (
-    JudgeEvaluationConfig,
-    load_judge_config,
+    JudgeConfigurationError,
+)
+from jlens_workspace.concept_intervention.judge.config import (
+    load_judge_config as load_legacy_judge_config,
 )
 from jlens_workspace.concept_intervention.judge.prompts import (
     PROMPT_VERSION,
@@ -40,10 +43,28 @@ from jlens_workspace.concept_intervention.judge.prompts import (
     rubric_hash,
 )
 from jlens_workspace.concept_intervention.judge.statistics import agreement_metrics
+from jlens_workspace.concept_intervention.judge.three_method_config import (
+    JudgeEvaluationConfig,
+)
+from jlens_workspace.concept_intervention.judge.three_method_config import (
+    load_judge_config as load_three_method_judge_config,
+)
 
 
 class JudgeWorkflowError(ValueError):
     """Raised when source identity, blinding, or registered workflow state is invalid."""
+
+
+def _load_runtime_config(config_path: str | Path) -> Any:
+    """Load the new registration while preserving historical two-method workflows."""
+
+    try:
+        return load_three_method_judge_config(config_path)
+    except JudgeConfigurationError as three_method_error:
+        try:
+            return load_legacy_judge_config(config_path)
+        except JudgeConfigurationError:
+            raise three_method_error from None
 
 
 @dataclass(frozen=True)
@@ -343,7 +364,7 @@ def prepare_evaluation(config_path: str | Path) -> dict[str, Any]:
     """Select on candidate validation data, validate shards, and freeze blind tasks."""
 
     registration = Path(config_path)
-    config = load_judge_config(registration)
+    config = _load_runtime_config(registration)
     destination = Path(config.output_dir)
     definitions = _load_concept_definitions(config, config_path=registration)
     all_public: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -583,6 +604,46 @@ def _formal_calibration_passed(root: Path) -> bool:
     return bool(payload.get("passed"))
 
 
+def _require_formal_budget_approval(
+    config_path: str | Path,
+    *,
+    config: JudgeEvaluationConfig,
+    root: Path,
+) -> dict[str, Any]:
+    """Require an exact config/manifest-bound operator approval for non-smoke calls."""
+
+    path = Path(config.budget.formal_budget_approval_file)
+    if not path.is_file() or path.is_symlink():
+        raise JudgeWorkflowError(
+            "formal remote judging is locked pending explicit budget approval"
+        )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    manifest_path = root / "manifest.json"
+    expected = {
+        "approved": True,
+        "experiment_name": config.experiment_name,
+        "config_sha256": sha256_file(config_path),
+        "manifest_sha256": sha256_file(manifest_path),
+        "approved_max_cost_usd": config.budget.max_experiment_cost_usd,
+    }
+    if not isinstance(payload, Mapping) or any(
+        payload.get(key) != value for key, value in expected.items()
+    ):
+        raise JudgeWorkflowError(
+            "formal budget approval does not match the frozen config and manifest"
+        )
+    mode = path.stat().st_mode & 0o777
+    if mode != 0o600:
+        raise JudgeWorkflowError(
+            f"formal budget approval must have mode 0600, observed {mode:04o}"
+        )
+    return {
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "approved_max_cost_usd": payload["approved_max_cost_usd"],
+    }
+
+
 @contextmanager
 def _exclusive_budget_lock(root: Path) -> Iterator[None]:
     """Prevent concurrent invocations from racing the same experiment budget."""
@@ -817,7 +878,7 @@ def run_judge_tasks(
 ) -> dict[str, Any]:
     """Run or resume one budgeted batch while holding the experiment lock."""
 
-    config = load_judge_config(config_path)
+    config = _load_runtime_config(config_path)
     root = Path(config.output_dir)
     if not (root / "manifest.json").is_file():
         raise JudgeWorkflowError("prepare the registered judge tasks before running")
@@ -847,11 +908,27 @@ def _run_judge_tasks_locked(
 ) -> dict[str, Any]:
     """Run exact-model tasks with one atomic response file per task and safe resume."""
 
-    config = load_judge_config(config_path)
+    config = _load_runtime_config(config_path)
     root = Path(config.output_dir)
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
         raise JudgeWorkflowError("prepare the registered judge tasks before running")
+    three_method_study = (
+        getattr(config, "study_design_version", None) == "three_method_llm_judge_v1"
+    )
+    if three_method_study and smoke and (
+        task_set != "pointwise"
+        or split != "validation"
+        or role not in {"primary", "secondary"}
+    ):
+        raise JudgeWorkflowError(
+            "authorized smoke scope is one validation pointwise task per base judge"
+        )
+    approval = (
+        _require_formal_budget_approval(config_path, config=config, root=root)
+        if three_method_study and not smoke
+        else None
+    )
     if task_set == "arbitration" and role != "arbitration":
         raise JudgeWorkflowError("arbitration tasks require the arbitration model role")
     if task_set == "expert_review" and role != "expert_review":
@@ -935,8 +1012,13 @@ def _run_judge_tasks_locked(
         atomic_write_json(destination / f"{task['task_id']}.json", payload)
         return payload
 
-    failures: list[dict[str, str]] = []
-    provider_filtered: list[dict[str, str]] = []
+    failure_destination = root / (
+        "smoke_errors" if smoke else "errors"
+    ) / _model_directory(model) / (
+        task_set if split is None else f"{task_set}_{split}"
+    )
+    failures: list[dict[str, Any]] = []
+    provider_filtered: list[dict[str, Any]] = []
     worker_count = jobs or config.openrouter.concurrency
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {executor.submit(execute, task): task for task in pending}
@@ -949,7 +1031,26 @@ def _run_judge_tasks_locked(
                     "task_id": str(task["task_id"]),
                     "error_type": type(error).__name__,
                     "error": str(error),
+                    "attempt_records": list(
+                        getattr(error, "attempt_records", ())
+                    ),
                 }
+                failure_event = {
+                    "schema_version": 1,
+                    "experiment_name": config.experiment_name,
+                    "recorded_at": datetime.now(UTC).isoformat(),
+                    "task_sha256": _canonical_hash(task),
+                    "task_type": task["task_type"],
+                    "split": task["split"],
+                    "judge_role": role,
+                    "requested_model": model,
+                    **failure,
+                }
+                failure_destination.mkdir(parents=True, exist_ok=True)
+                atomic_write_json(
+                    failure_destination / f"{task['task_id']}.json",
+                    failure_event,
+                )
                 if (
                     config.review.expert_provider_filter_escalation
                     and task_set == "expert_review"
@@ -1043,6 +1144,7 @@ def _run_judge_tasks_locked(
         "provider_reported_or_estimated_cost_usd": actual_or_estimated_cost,
         "registered_price_estimate_usd": estimated_cost,
         "budget": budget_report,
+        "formal_budget_approval": approval,
     }
     atomic_write_json(destination / "index.json", index)
     return index
@@ -1081,7 +1183,7 @@ def _pairwise_consistency(
 def calibrate_judges(config_path: str | Path) -> dict[str, Any]:
     """Gate test access on validation completion, inter-judge, and order agreement."""
 
-    config = load_judge_config(config_path)
+    config = _load_runtime_config(config_path)
     root = Path(config.output_dir)
     models = {
         "primary": config.judges.primary,
@@ -1215,7 +1317,7 @@ def prepare_review_tasks(
 ) -> dict[str, Any]:
     """Freeze disagreement/audit tasks without changing the primary two-judge score."""
 
-    config = load_judge_config(config_path)
+    config = _load_runtime_config(config_path)
     root = Path(config.output_dir)
     base_tasks = {
         task["task_id"]: task
@@ -1386,7 +1488,7 @@ def prepare_review_tasks(
 def export_human_audit(config_path: str | Path) -> dict[str, Any]:
     """Export a deterministic method-blind test subset and empty annotation template."""
 
-    config = load_judge_config(config_path)
+    config = _load_runtime_config(config_path)
     root = Path(config.output_dir)
     tasks = [
         task
@@ -1468,6 +1570,14 @@ def export_human_audit(config_path: str | Path) -> dict[str, Any]:
 def aggregate_evaluation(config_path: str | Path) -> dict[str, Any]:
     """Delegate final inference to the aggregation module."""
 
-    from jlens_workspace.concept_intervention.judge.aggregation import aggregate_evaluation as run
+    config = _load_runtime_config(config_path)
+    if getattr(config, "study_design_version", None) == "three_method_llm_judge_v1":
+        from jlens_workspace.concept_intervention.judge.three_method_aggregation import (
+            aggregate_evaluation as run,
+        )
+    else:
+        from jlens_workspace.concept_intervention.judge.aggregation import (
+            aggregate_evaluation as run,
+        )
 
     return run(config_path)
