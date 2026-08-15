@@ -140,6 +140,25 @@ def test_local_gpu_policy_rejects_invalid_occupancy_slot_count() -> None:
     assert "must be positive" in result.stderr
 
 
+def test_pointwise_v2_judge_controller_registers_no_pairwise_or_review() -> None:
+    controller = SCRIPTS / "run_three_method_pointwise_judge_v2_local.sh"
+    subprocess.run(["bash", "-n", str(controller)], check=True)
+    result = subprocess.run(
+        ["bash", str(controller), "--dry-run"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "validation=2 judges x 4480 pointwise" in result.stdout
+    assert "test=2 judges x 4480 pointwise" in result.stdout
+    assert "pairwise=not_registered" in result.stdout
+    assert "selective_review=not_registered" in result.stdout
+    assert "three-method-pointwise-v2/formal_budget_approval.json" in result.stdout
+    source = controller.read_text(encoding="utf-8")
+    assert "review-prepare" not in source
+    assert "--task-set pairwise" not in source
+
+
 def test_local_finalize_is_cpu_only_and_independent_of_grid_markers() -> None:
     controller = (SCRIPTS / "run_three_method_local.sh").read_text()
     finalize_body = controller.split("run_finalize() {", 1)[1].split("\n}", 1)[0]

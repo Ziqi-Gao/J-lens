@@ -916,10 +916,13 @@ def _run_judge_tasks_locked(
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
         raise JudgeWorkflowError("prepare the registered judge tasks before running")
-    three_method_study = (
-        getattr(config, "study_design_version", None) == "three_method_llm_judge_v1"
-    )
-    if three_method_study and smoke and (
+    study_design = getattr(config, "study_design_version", None)
+    registered_study = study_design in {
+        "three_method_llm_judge_v1",
+        "three_method_pointwise_judge_v2",
+    }
+    pointwise_only = study_design == "three_method_pointwise_judge_v2"
+    if registered_study and smoke and (
         task_set != "pointwise"
         or split != "validation"
         or role not in {"primary", "secondary"}
@@ -929,7 +932,7 @@ def _run_judge_tasks_locked(
         )
     approval = (
         _require_formal_budget_approval(config_path, config=config, root=root)
-        if three_method_study and not smoke
+        if registered_study and not smoke
         else None
     )
     protocol_amendment = (
@@ -939,9 +942,15 @@ def _run_judge_tasks_locked(
             experiment_name=config.experiment_name,
             verify_response_seals=False,
         )
-        if three_method_study and not smoke
+        if study_design == "three_method_llm_judge_v1" and not smoke
         else None
     )
+    if pointwise_only and (
+        task_set != "pointwise"
+        or split not in {"validation", "test"}
+        or role not in {"primary", "secondary"}
+    ):
+        raise JudgeWorkflowError("pointwise v2 rejects pairwise and review tasks")
     if task_set == "arbitration" and role != "arbitration":
         raise JudgeWorkflowError("arbitration tasks require the arbitration model role")
     if task_set == "expert_review" and role != "expert_review":
@@ -1194,11 +1203,114 @@ def _pairwise_consistency(
     return consistency, stable
 
 
+def _calibrate_pointwise_only(
+    config: JudgeEvaluationConfig,
+    *,
+    root: Path,
+) -> dict[str, Any]:
+    """Apply only the preregistered pointwise gates for the v2 adaptation."""
+
+    models = {
+        "primary": config.judges.primary,
+        "secondary": config.judges.secondary,
+    }
+    tasks = _read_jsonl(root / "tasks" / "pointwise_validation.jsonl")
+    task_ids = {str(task["task_id"]) for task in tasks}
+    results = {
+        role: _load_results(
+            _result_directory(
+                root,
+                model=model,
+                task_set="pointwise",
+                split="validation",
+            )
+        )
+        for role, model in models.items()
+    }
+    completion = {
+        role: len(task_ids.intersection(results[role])) / len(task_ids)
+        for role in models
+    }
+    common = sorted(task_ids.intersection(results["primary"], results["secondary"]))
+    if not common:
+        raise JudgeWorkflowError("pointwise calibration requires completed judgments")
+    pointwise = agreement_metrics(
+        [
+            float(results["primary"][task]["judgment"]["target_expression"])
+            for task in common
+        ],
+        [
+            float(results["secondary"][task]["judgment"]["target_expression"])
+            for task in common
+        ],
+    )
+    human: dict[str, Any] | None = None
+    if config.calibration.human_annotations_path:
+        human_path = Path(config.calibration.human_annotations_path)
+        annotations = {str(row["task_id"]): row for row in _read_jsonl(human_path)}
+        common_human = sorted(
+            task_ids.intersection(
+                annotations, results["primary"], results["secondary"]
+            )
+        )
+        consensus = [
+            (
+                float(results["primary"][task]["judgment"]["target_expression"])
+                + float(results["secondary"][task]["judgment"]["target_expression"])
+            )
+            / 2.0
+            for task in common_human
+        ]
+        human = agreement_metrics(
+            consensus,
+            [float(annotations[task]["target_expression"]) for task in common_human],
+        )
+        human["path"] = str(human_path)
+        human["sha256"] = sha256_file(human_path)
+    gates = {
+        "completion": min(completion.values())
+        >= config.calibration.min_completion_rate,
+        "pointwise_spearman": pointwise["spearman"]
+        >= config.calibration.min_pointwise_spearman,
+        "pointwise_mae": pointwise["mae"]
+        <= config.calibration.max_pointwise_mae,
+        "human": (
+            human is not None
+            and human["spearman"] >= config.calibration.min_human_spearman
+        )
+        if config.calibration.require_human_gate
+        else True,
+    }
+    result = {
+        "schema_version": 1,
+        "protocol_version": config.protocol_version,
+        "study_design_version": config.study_design_version,
+        "passed": all(gates.values()),
+        "gates": gates,
+        "not_applicable_gates": [
+            "pairwise_order_consistency",
+            "pairwise_cross_judge_agreement",
+        ],
+        "completion_rate": completion,
+        "pointwise_target_expression": pointwise,
+        "pairwise_order_consistency": None,
+        "pairwise_cross_judge_agreement": None,
+        "pairwise_common_stable_groups": 0,
+        "human_agreement": human,
+        "response_reuse": False,
+        "test_unlock_policy": "all registered pointwise gates must pass",
+    }
+    atomic_write_json(root / "calibration.json", result)
+    return result
+
+
 def calibrate_judges(config_path: str | Path) -> dict[str, Any]:
     """Gate test access on validation completion, inter-judge, and order agreement."""
 
     config = _load_runtime_config(config_path)
     root = Path(config.output_dir)
+    if getattr(config, "study_design_version", None) == "three_method_pointwise_judge_v2":
+        return _calibrate_pointwise_only(config, root=root)
     models = {
         "primary": config.judges.primary,
         "secondary": config.judges.secondary,
@@ -1504,19 +1616,25 @@ def export_human_audit(config_path: str | Path) -> dict[str, Any]:
 
     config = _load_runtime_config(config_path)
     root = Path(config.output_dir)
+    task_sets = getattr(config, "task_sets", ["pointwise", "pairwise"])
     tasks = [
         task
-        for kind in ("pointwise", "pairwise")
+        for kind in task_sets
         for task in _read_jsonl(root / "tasks" / f"{kind}_test.jsonl")
     ]
     by_stratum: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for task in tasks:
         by_stratum[(str(task["concept_id"]), str(task["task_type"]))].append(task)
     selected: list[dict[str, Any]] = []
-    pointwise_count = (config.review.human_audit_per_concept + 1) // 2
-    pairwise_count = config.review.human_audit_per_concept // 2
+    if task_sets == ["pointwise"]:
+        strata = (("pointwise", config.review.human_audit_per_concept),)
+    else:
+        strata = (
+            ("pointwise", (config.review.human_audit_per_concept + 1) // 2),
+            ("pairwise", config.review.human_audit_per_concept // 2),
+        )
     for concept_id in config.source.concept_ids:
-        for task_type, count in (("pointwise", pointwise_count), ("pairwise", pairwise_count)):
+        for task_type, count in strata:
             ordered = sorted(
                 by_stratum[(concept_id, task_type)],
                 key=lambda task: _canonical_hash(
@@ -1585,7 +1703,12 @@ def aggregate_evaluation(config_path: str | Path) -> dict[str, Any]:
     """Delegate final inference to the aggregation module."""
 
     config = _load_runtime_config(config_path)
-    if getattr(config, "study_design_version", None) == "three_method_llm_judge_v1":
+    study_design = getattr(config, "study_design_version", None)
+    if study_design == "three_method_pointwise_judge_v2":
+        from jlens_workspace.concept_intervention.judge.pointwise_v2_aggregation import (
+            aggregate_evaluation as run,
+        )
+    elif study_design == "three_method_llm_judge_v1":
         from jlens_workspace.concept_intervention.judge.three_method_aggregation import (
             aggregate_evaluation as run,
         )

@@ -905,6 +905,68 @@ def _reuse_assessment(
     }
 
 
+def _validate_adaptation(config: JudgeEvaluationConfig) -> dict[str, Any] | None:
+    """Verify the failed parent and prove that its test set remains unopened."""
+
+    adaptation = config.adaptation
+    if adaptation is None:
+        return None
+    artifacts = {
+        "manifest": (
+            Path(adaptation.parent_manifest),
+            adaptation.parent_manifest_sha256,
+        ),
+        "calibration": (
+            Path(adaptation.parent_calibration),
+            adaptation.parent_calibration_sha256,
+        ),
+        "outcome": (
+            Path(adaptation.parent_outcome),
+            adaptation.parent_outcome_sha256,
+        ),
+    }
+    payloads: dict[str, dict[str, Any]] = {}
+    for label, (path, expected_hash) in artifacts.items():
+        if not path.is_file() or sha256_file(path) != expected_hash:
+            raise JudgeWorkflowError(f"parent {label} seal mismatch: {path}")
+        payloads[label] = _load_json(path, label=f"parent {label}")
+    if (
+        payloads["manifest"].get("experiment_name")
+        != adaptation.parent_experiment_name
+        or payloads["calibration"].get("passed") is not False
+        or payloads["calibration"].get("gates", {}).get(
+            "pairwise_order_consistency"
+        )
+        is not False
+        or payloads["calibration"].get("gates", {}).get("pointwise_spearman")
+        is not True
+        or payloads["calibration"].get("gates", {}).get("pointwise_mae")
+        is not True
+        or payloads["outcome"].get("pipeline_status") != "blocked_calibration"
+        or payloads["outcome"].get("test_unlock_allowed") is not False
+    ):
+        raise JudgeWorkflowError("parent failure does not justify this adaptation")
+    parent_root = Path(adaptation.parent_manifest).parent
+    test_responses = sum(
+        1
+        for path in (parent_root / "responses").glob("*/*_test/*.json")
+        if path.name != "index.json"
+    )
+    if test_responses != adaptation.parent_test_responses_at_registration:
+        raise JudgeWorkflowError("parent test response count changed after registration")
+    return {
+        "reason": adaptation.reason,
+        "parent_experiment_name": adaptation.parent_experiment_name,
+        "artifacts": {
+            label: {"path": str(path), "sha256": expected_hash}
+            for label, (path, expected_hash) in artifacts.items()
+        },
+        "parent_test_responses_at_registration": test_responses,
+        "reuse_parent_responses": False,
+        "interpretation": "post_hoc_descriptive_only",
+    }
+
+
 def validate_evaluation(config_path: str | Path) -> dict[str, Any]:
     """Validate config and all top-level sealed source identities without writing."""
 
@@ -914,6 +976,7 @@ def validate_evaluation(config_path: str | Path) -> dict[str, Any]:
     definitions, definition_record = _concept_definitions(
         config, config_path=registration
     )
+    adaptation = _validate_adaptation(config)
     return {
         "valid": True,
         "schema_version": config.schema_version,
@@ -921,6 +984,8 @@ def validate_evaluation(config_path: str | Path) -> dict[str, Any]:
         "study_design_version": config.study_design_version,
         "experiment_name": config.experiment_name,
         "descriptive_only": True,
+        "task_sets": config.task_sets,
+        "adaptation": adaptation,
         "concept_count": len(definitions),
         "methods": list(METHODS),
         "comparison_index_sha256": source_record["comparison_index_sha256"],
@@ -949,6 +1014,7 @@ def prepare_evaluation(config_path: str | Path) -> dict[str, Any]:
     definitions, definition_record = _concept_definitions(
         config, config_path=registration
     )
+    adaptation = _validate_adaptation(config)
     public_rows: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     private_rows: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     selections: dict[str, Any] = {}
@@ -1106,6 +1172,8 @@ def prepare_evaluation(config_path: str | Path) -> dict[str, Any]:
     expected_per_split = {"pointwise": 4480, "pairwise": 2688}
     task_artifacts: dict[str, Any] = {}
     for (task_type, split), rows in sorted(public_rows.items()):
+        if task_type not in config.task_sets:
+            continue
         if len(rows) != expected_per_split[task_type]:
             raise JudgeWorkflowError(
                 f"{task_type} {split}: expected {expected_per_split[task_type]} "
@@ -1117,9 +1185,9 @@ def prepare_evaluation(config_path: str | Path) -> dict[str, Any]:
             str(row["task_id"]): row
             for row in private_rows[(task_type, split)]
         }
-        random.Random(f"{config.seed}:{task_type}:{split}:three-method-v1").shuffle(
-            rows
-        )
+        random.Random(
+            f"{config.seed}:{task_type}:{split}:{config.study_design_version}"
+        ).shuffle(rows)
         ordered_private = [private_by_id[str(row["task_id"])] for row in rows]
         public_path = destination / "tasks" / f"{task_type}_{split}.jsonl"
         private_path = (
@@ -1156,6 +1224,8 @@ def prepare_evaluation(config_path: str | Path) -> dict[str, Any]:
         "experiment_name": config.experiment_name,
         "llm_as_judge_run": False,
         "descriptive_only": True,
+        "task_sets": config.task_sets,
+        "adaptation": adaptation,
         "implementation": {
             "files": implementation_files,
             "combined_sha256": _canonical_hash(implementation_files),
@@ -1170,9 +1240,11 @@ def prepare_evaluation(config_path: str | Path) -> dict[str, Any]:
         "methods": list(METHODS),
         "primary_pointwise_roles": list(PRIMARY_ROLES),
         "secondary_pointwise_roles": list(SECONDARY_ROLES),
-        "primary_method_pairs": [
-            f"{left}_vs_{right}" for left, right in METHOD_PAIRS
-        ],
+        "primary_method_pairs": (
+            [f"{left}_vs_{right}" for left, right in METHOD_PAIRS]
+            if "pairwise" in config.task_sets
+            else []
+        ),
         "primary_contrasts": config.analysis.primary_contrasts,
         "blinding": {
             "hidden_from_judges": [
@@ -1187,10 +1259,10 @@ def prepare_evaluation(config_path: str | Path) -> dict[str, Any]:
                 "provenance",
             ],
             "target_concept_definition_visible": True,
-            "pairwise_both_orders": True,
+            "pairwise_both_orders": "pairwise" in config.task_sets,
             "public_task_keys": {
-                "pointwise": sorted(public_rows[("pointwise", "validation")][0]),
-                "pairwise": sorted(public_rows[("pairwise", "validation")][0]),
+                task_set: sorted(public_rows[(task_set, "validation")][0])
+                for task_set in config.task_sets
             },
         },
         "selection": selections,

@@ -47,6 +47,9 @@ documentation in [`docs/iti_comparison_v1.md`](docs/iti_comparison_v1.md).
 The separate blinded J-component/RAPTOR LLM-as-judge pilot, which can run
 before ITI finishes, is documented in
 [`docs/llm_judge_evaluation.md`](docs/llm_judge_evaluation.md).
+The post-calibration, descriptive-only three-method pointwise judge adaptation
+is registered separately in
+[`docs/three_method_pointwise_judge_v2.md`](docs/three_method_pointwise_judge_v2.md).
 
 ## Inputs
 

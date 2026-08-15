@@ -25,6 +25,7 @@ from jlens_workspace.concept_intervention.judge.three_method_prepare import (
 )
 from jlens_workspace.concept_intervention.judge.workflow import (
     JudgeWorkflowError,
+    calibrate_judges,
     run_judge_tasks,
 )
 
@@ -100,6 +101,34 @@ def _config_payload(tmp_path: Path) -> dict[str, Any]:
     }
 
 
+def _pointwise_v2_payload(tmp_path: Path) -> dict[str, Any]:
+    payload = _config_payload(tmp_path)
+    payload.update(
+        {
+            "protocol_version": "concept_intervention_llm_judge_pointwise_v2",
+            "study_design_version": "three_method_pointwise_judge_v2",
+            "experiment_name": "qwen35_4b_three_method_pointwise_judge_v2",
+            "output_dir": str(tmp_path / "llm_judge_three_method_pointwise_v2"),
+            "task_sets": ["pointwise"],
+            "adaptation": {
+                "reason": (
+                    "post_calibration_design_adaptation_after_pairwise_gate_failure"
+                ),
+                "parent_experiment_name": "qwen35_4b_three_method_llm_judge_v1",
+                "parent_manifest": str(tmp_path / "parent/manifest.json"),
+                "parent_manifest_sha256": "a" * 64,
+                "parent_calibration": str(tmp_path / "parent/calibration.json"),
+                "parent_calibration_sha256": "b" * 64,
+                "parent_outcome": str(tmp_path / "parent/outcome.json"),
+                "parent_outcome_sha256": "c" * 64,
+                "parent_test_responses_at_registration": 0,
+                "reuse_parent_responses": False,
+            },
+        }
+    )
+    return payload
+
+
 def _public_point_task() -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -124,6 +153,74 @@ def test_three_method_config_is_fixed_and_isolated(tmp_path: Path) -> None:
     payload["analysis"]["primary_contrasts"] = ["j_minus_raptor"]
     with pytest.raises(ValueError, match="primary_contrasts"):
         JudgeEvaluationConfig.model_validate(payload)
+
+
+def test_pointwise_v2_config_is_isolated_and_rejects_pairwise(tmp_path: Path) -> None:
+    config = JudgeEvaluationConfig.model_validate(_pointwise_v2_payload(tmp_path))
+    assert config.task_sets == ["pointwise"]
+    assert config.adaptation is not None
+    assert config.adaptation.reuse_parent_responses is False
+    assert Path(config.output_dir).name == "llm_judge_three_method_pointwise_v2"
+
+    payload = _pointwise_v2_payload(tmp_path)
+    payload["task_sets"] = ["pointwise", "pairwise"]
+    with pytest.raises(ValueError, match="registered study design"):
+        JudgeEvaluationConfig.model_validate(payload)
+
+
+def test_pointwise_v2_calibration_needs_no_pairwise_artifacts(tmp_path: Path) -> None:
+    payload = _pointwise_v2_payload(tmp_path)
+    config_path = tmp_path / "pointwise-v2.yaml"
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    root = Path(payload["output_dir"])
+    task_path = root / "tasks" / "pointwise_validation.jsonl"
+    task_path.parent.mkdir(parents=True)
+    tasks = [
+        {"task_id": "task-a", "task_type": "pointwise", "split": "validation"},
+        {"task_id": "task-b", "task_type": "pointwise", "split": "validation"},
+    ]
+    task_path.write_text(
+        "".join(json.dumps(task) + "\n" for task in tasks),
+        encoding="utf-8",
+    )
+    scores = {
+        "mistralai/mistral-small-2603": [10, 90],
+        "anthropic/claude-haiku-4.5": [15, 85],
+    }
+    for model, values in scores.items():
+        destination = (
+            root
+            / "responses"
+            / model.replace("/", "__")
+            / "pointwise_validation"
+        )
+        destination.mkdir(parents=True)
+        for task, score in zip(tasks, values, strict=True):
+            (destination / f"{task['task_id']}.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": task["task_id"],
+                        "judgment": {"target_expression": score},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+    result = calibrate_judges(config_path)
+
+    assert result["passed"] is True
+    assert result["gates"] == {
+        "completion": True,
+        "pointwise_spearman": True,
+        "pointwise_mae": True,
+        "human": True,
+    }
+    assert result["not_applicable_gates"] == [
+        "pairwise_order_consistency",
+        "pairwise_cross_judge_agreement",
+    ]
+    assert result["pairwise_order_consistency"] is None
+    assert not (root / "tasks" / "pairwise_validation.jsonl").exists()
 
 
 def test_registered_config_uses_cost_bounded_independent_judges() -> None:
@@ -171,6 +268,30 @@ def test_registered_config_uses_cost_bounded_independent_judges() -> None:
     )
     assert "validate_format_amendment" in controller_path.read_text(
         encoding="utf-8"
+    )
+
+
+def test_registered_pointwise_v2_yaml_is_budget_locked() -> None:
+    root = Path(__file__).resolve().parents[1]
+    config_path = (
+        root
+        / "Concept_intervention/configs/"
+        "qwen35_4b_three_method_pointwise_judge_v2.yaml"
+    )
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config = JudgeEvaluationConfig.model_validate(payload)
+
+    assert config.task_sets == ["pointwise"]
+    assert config.budget.max_experiment_cost_usd == 22.0
+    assert config.budget.reserve_openrouter_credit_usd == 25.0
+    assert config.legacy_assessment is None
+    assert config.adaptation is not None
+    assert config.adaptation.parent_test_responses_at_registration == 0
+    assert config.adaptation.reuse_parent_responses is False
+    assert config.openrouter.allow_provider_fallbacks is False
+    assert config.openrouter.data_collection == "deny"
+    assert "three-method-pointwise-v2/formal_budget_approval.json" in (
+        config.budget.formal_budget_approval_file
     )
 
 

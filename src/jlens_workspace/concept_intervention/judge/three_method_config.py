@@ -158,19 +158,68 @@ class LegacyAssessmentConfig(StrictModel):
     expected_manifest_sha256: str
 
 
+class AdaptationConfig(StrictModel):
+    """Sealed parent evidence for the post-calibration pointwise adaptation."""
+
+    reason: Literal[
+        "post_calibration_design_adaptation_after_pairwise_gate_failure"
+    ]
+    parent_experiment_name: Literal["qwen35_4b_three_method_llm_judge_v1"]
+    parent_manifest: str
+    parent_manifest_sha256: str
+    parent_calibration: str
+    parent_calibration_sha256: str
+    parent_outcome: str
+    parent_outcome_sha256: str
+    parent_test_responses_at_registration: Literal[0] = 0
+    reuse_parent_responses: Literal[False] = False
+
+    @model_validator(mode="after")
+    def validate_parent_seals(self) -> AdaptationConfig:
+        for label, value in (
+            ("parent_manifest", self.parent_manifest),
+            ("parent_calibration", self.parent_calibration),
+            ("parent_outcome", self.parent_outcome),
+        ):
+            if not Path(value).is_absolute():
+                raise ValueError(f"{label} must be absolute")
+        for label, value in (
+            ("parent_manifest_sha256", self.parent_manifest_sha256),
+            ("parent_calibration_sha256", self.parent_calibration_sha256),
+            ("parent_outcome_sha256", self.parent_outcome_sha256),
+        ):
+            if len(value) != 64 or any(
+                character not in "0123456789abcdef" for character in value
+            ):
+                raise ValueError(f"{label} must be a lowercase SHA-256 digest")
+        return self
+
+
 class JudgeEvaluationConfig(StrictModel):
     """Complete three-method blinded judge registration."""
 
     schema_version: Literal[1] = 1
-    protocol_version: Literal["concept_intervention_llm_judge_v3"] = (
+    protocol_version: Literal[
+        "concept_intervention_llm_judge_v3",
+        "concept_intervention_llm_judge_pointwise_v2",
+    ] = (
         "concept_intervention_llm_judge_v3"
     )
-    study_design_version: Literal["three_method_llm_judge_v1"] = (
+    study_design_version: Literal[
+        "three_method_llm_judge_v1",
+        "three_method_pointwise_judge_v2",
+    ] = (
         "three_method_llm_judge_v1"
     )
-    experiment_name: Literal["qwen35_4b_three_method_llm_judge_v1"]
+    experiment_name: Literal[
+        "qwen35_4b_three_method_llm_judge_v1",
+        "qwen35_4b_three_method_pointwise_judge_v2",
+    ]
     output_dir: str
     seed: Literal[42] = 42
+    task_sets: list[Literal["pointwise", "pairwise"]] = Field(
+        default_factory=lambda: ["pointwise", "pairwise"]
+    )
     source: SourceConfig
     selection: SelectionConfig = Field(default_factory=SelectionConfig)
     judges: JudgeModelsConfig
@@ -180,6 +229,7 @@ class JudgeEvaluationConfig(StrictModel):
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
     legacy_assessment: LegacyAssessmentConfig | None = None
+    adaptation: AdaptationConfig | None = None
     pricing: PricingConfig = Field(default_factory=PricingConfig)
 
     @model_validator(mode="after")
@@ -215,10 +265,35 @@ class JudgeEvaluationConfig(StrictModel):
                 raise ValueError(
                     "expert filter escalation requires one route per attempt"
                 )
+        registrations = {
+            "three_method_llm_judge_v1": {
+                "protocol": "concept_intervention_llm_judge_v3",
+                "experiment": "qwen35_4b_three_method_llm_judge_v1",
+                "output": "llm_judge_three_method_v1",
+                "task_sets": ["pointwise", "pairwise"],
+                "adaptation": False,
+            },
+            "three_method_pointwise_judge_v2": {
+                "protocol": "concept_intervention_llm_judge_pointwise_v2",
+                "experiment": "qwen35_4b_three_method_pointwise_judge_v2",
+                "output": "llm_judge_three_method_pointwise_v2",
+                "task_sets": ["pointwise"],
+                "adaptation": True,
+            },
+        }
+        registered = registrations[self.study_design_version]
         output = Path(self.output_dir)
-        if not output.is_absolute() or output.name != "llm_judge_three_method_v1":
+        if (
+            self.protocol_version != registered["protocol"]
+            or self.experiment_name != registered["experiment"]
+            or not output.is_absolute()
+            or output.name != registered["output"]
+            or self.task_sets != registered["task_sets"]
+            or (self.adaptation is not None) is not registered["adaptation"]
+        ):
             raise ValueError(
-                "output_dir must be an isolated llm_judge_three_method_v1 root"
+                "protocol, experiment, output, task sets, and adaptation must "
+                "match the registered study design"
             )
         return self
 

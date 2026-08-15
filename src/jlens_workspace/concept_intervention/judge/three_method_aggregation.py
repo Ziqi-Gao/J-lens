@@ -78,7 +78,7 @@ def _assert_complete_results(
     *,
     model: str,
     role: str,
-    protocol_amendment: Mapping[str, Any],
+    protocol_amendment: Mapping[str, Any] | None,
 ) -> None:
     if set(results) != set(tasks):
         raise JudgeWorkflowError(
