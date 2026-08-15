@@ -13,6 +13,9 @@ from scipy.stats import binomtest
 
 from jlens_workspace.artifacts import atomic_write_json, sha256_file
 from jlens_workspace.concept_intervention.evaluation import atomic_write_jsonl
+from jlens_workspace.concept_intervention.judge.amendment import (
+    validate_format_amendment,
+)
 from jlens_workspace.concept_intervention.judge.prompts import rubric_hash
 from jlens_workspace.concept_intervention.judge.statistics import (
     agreement_metrics,
@@ -75,6 +78,7 @@ def _assert_complete_results(
     *,
     model: str,
     role: str,
+    protocol_amendment: Mapping[str, Any],
 ) -> None:
     if set(results) != set(tasks):
         raise JudgeWorkflowError(
@@ -88,6 +92,7 @@ def _assert_complete_results(
         if (
             result.get("task_sha256") != _canonical_hash(task)
             or result.get("rubric_sha256") != expected_rubric
+            or result.get("protocol_amendment") != protocol_amendment
             or result.get("requested_model") != model
             or result.get("returned_model") != model
             or result.get("judge_role") != role
@@ -503,7 +508,7 @@ def _verify_frozen_registration(
     *,
     config: JudgeEvaluationConfig,
     root: Path,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     manifest_path = root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     frozen_path = root / "frozen_config.yaml"
@@ -511,17 +516,14 @@ def _verify_frozen_registration(
         manifest.get("config_sha256") != sha256_file(config_path)
         or not frozen_path.is_file()
         or sha256_file(frozen_path) != manifest.get("config_sha256")
-        or manifest.get("rubric_sha256") != rubric_hash()
     ):
-        raise JudgeWorkflowError("frozen config/rubric seal mismatch")
-    implementation = manifest.get("implementation", {}).get("files", {})
-    implementation_root = Path(__file__).parent
-    current = {
-        path.name: sha256_file(path)
-        for path in sorted(implementation_root.glob("*.py"))
-    }
-    if implementation != current:
-        raise JudgeWorkflowError("judge implementation differs from prepared manifest")
+        raise JudgeWorkflowError("frozen config seal mismatch")
+    protocol_amendment = validate_format_amendment(
+        config_path,
+        root=root,
+        experiment_name=config.experiment_name,
+        verify_response_seals=True,
+    )
     for artifact in manifest.get("task_artifacts", {}).values():
         for path_key, hash_key in (
             ("path", "sha256"),
@@ -531,7 +533,7 @@ def _verify_frozen_registration(
             if sha256_file(path) != artifact[hash_key]:
                 raise JudgeWorkflowError(f"task artifact seal mismatch: {path}")
     source_validation = validate_evaluation(config_path)
-    return manifest, source_validation
+    return manifest, source_validation, protocol_amendment
 
 
 def aggregate_evaluation(config_path: str | Path) -> dict[str, Any]:
@@ -540,7 +542,7 @@ def aggregate_evaluation(config_path: str | Path) -> dict[str, Any]:
     registration = Path(config_path)
     config = load_judge_config(registration)
     root = Path(config.output_dir)
-    manifest, source_validation = _verify_frozen_registration(
+    manifest, source_validation, protocol_amendment = _verify_frozen_registration(
         registration,
         config=config,
         root=root,
@@ -585,12 +587,14 @@ def aggregate_evaluation(config_path: str | Path) -> dict[str, Any]:
             point_results[role],
             model=model,
             role=role,
+            protocol_amendment=protocol_amendment,
         )
         _assert_complete_results(
             pair_tasks,
             pair_results[role],
             model=model,
             role=role,
+            protocol_amendment=protocol_amendment,
         )
 
     point_rows = _pointwise_rows(
@@ -722,6 +726,7 @@ def aggregate_evaluation(config_path: str | Path) -> dict[str, Any]:
         "confirmatory_interpretation_allowed": False,
         "analysis_valid": analysis_valid,
         "methods": manifest["methods"],
+        "protocol_amendment": protocol_amendment,
         "primary_contrasts": config.analysis.primary_contrasts,
         "primary_estimand": (
             "equal-concept macro mean of prompt-clustered paired differences, "
@@ -825,10 +830,15 @@ def aggregate_evaluation(config_path: str | Path) -> dict[str, Any]:
         },
         "hashes": {
             "config_sha256": manifest["config_sha256"],
-            "rubric_sha256": manifest["rubric_sha256"],
-            "implementation_combined_sha256": manifest["implementation"][
+            "rubric_sha256": protocol_amendment["amended_rubric_sha256"],
+            "implementation_combined_sha256": protocol_amendment[
+                "amended_implementation_combined_sha256"
+            ],
+            "parent_rubric_sha256": manifest["rubric_sha256"],
+            "parent_implementation_combined_sha256": manifest["implementation"][
                 "combined_sha256"
             ],
+            "protocol_amendment_sha256": protocol_amendment["sha256"],
             "manifest_sha256": sha256_file(root / "manifest.json"),
             "source_registry_sha256": _canonical_hash(
                 manifest["source_registry"]

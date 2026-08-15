@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from jlens_workspace.concept_intervention.judge.client import OpenRouterClient
+from jlens_workspace.concept_intervention.judge.prompts import validate_judgment
 from jlens_workspace.concept_intervention.judge.three_method_aggregation import (
     PRIMARY_CONTRASTS,
     _pairwise_analysis,
@@ -168,6 +169,88 @@ def test_registered_config_uses_cost_bounded_independent_judges() -> None:
     assert "readonly BASE_BATCH_LIMIT=16" in controller_path.read_text(
         encoding="utf-8"
     )
+    assert "validate_format_amendment" in controller_path.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_format_amendment_normalizes_tie_without_changing_preferences() -> None:
+    task = {
+        "task_type": "pairwise",
+        "response_a": "Response A",
+        "response_b": "Response B",
+    }
+    judgment = {
+        "target_preference": "tie",
+        "quality_preference": "A",
+        "target_strength": "small",
+        "confidence": 75,
+        "evidence_a": [],
+        "evidence_b": [],
+        "rationale": "The target expression is indistinguishable.",
+    }
+    warnings: list[str] = []
+    validated = validate_judgment(task, judgment, warnings=warnings)
+    assert validated["target_preference"] == "tie"
+    assert validated["quality_preference"] == "A"
+    assert validated["target_strength"] == "none"
+    assert warnings == [
+        "target_strength: normalized to none because target_preference=tie"
+    ]
+
+    judgment["target_preference"] = "B"
+    judgment["target_strength"] = "none"
+    with pytest.raises(ValueError, match="non-tie"):
+        validate_judgment(task, judgment)
+
+
+def test_length_truncated_pairwise_recovers_only_unique_decision_fields() -> None:
+    task = {
+        "task_type": "pairwise",
+        "response_a": "Response A",
+        "response_b": "Response B",
+    }
+    content = (
+        '{"target_preference":"B","quality_preference":"A",'
+        '"target_strength":"large","confidence":92,'
+        '"evidence_a":["repeated evidence repeated evidence'
+    )
+    payload = {
+        "id": "truncated-1",
+        "model": "anthropic/claude-haiku-4.5",
+        "provider": "anthropic",
+        "choices": [{"finish_reason": "length", "message": {"content": content}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 1024},
+    }
+    response = OpenRouterClient._parse_response(
+        payload,
+        model="anthropic/claude-haiku-4.5",
+        task=task,
+        attempts=1,
+    )
+    assert response.judgment == {
+        "target_preference": "B",
+        "quality_preference": "A",
+        "target_strength": "large",
+        "confidence": 92,
+        "evidence_a": [],
+        "evidence_b": [],
+        "rationale": "",
+    }
+    assert response.validation_warnings == (
+        "pairwise: recovered complete decision fields from length-truncated JSON; "
+        "omitted evidence and rationale",
+    )
+
+    ambiguous = content + ',"target_preference":"A"'
+    payload["choices"][0]["message"]["content"] = ambiguous
+    with pytest.raises(ValueError, match="unique target_preference"):
+        OpenRouterClient._parse_response(
+            payload,
+            model="anthropic/claude-haiku-4.5",
+            task=task,
+            attempts=1,
+        )
 
 
 def test_client_retains_secret_safe_raw_audit() -> None:

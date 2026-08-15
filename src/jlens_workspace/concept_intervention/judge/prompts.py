@@ -52,6 +52,8 @@ short contiguous substrings copied character-for-character from the response.
 Preserve case, spelling, whitespace, and punctuation; never paraphrase, normalize,
 or add quotation marks that are absent from the response. If an exact copy is
 uncertain, or no target expression is present, return an empty evidence array.
+Never repeat evidence. Prefer an empty evidence array to any long, repeated, or
+uncertain excerpt.
 Keep the rationale concise and no more than 600 characters.
 """
 
@@ -91,8 +93,9 @@ for a clear difference, and large only for an unmistakable difference. Confidenc
 never changes either preference. For each response, give up to two short contiguous
 substrings copied character-for-character, preserving case, spelling, whitespace,
 and punctuation. Never paraphrase, normalize, or add quotation marks. Return an
-empty evidence array whenever an exact copy is uncertain. Keep the rationale
-concise and no more than 600 characters.
+empty evidence array whenever an exact copy is uncertain. Never repeat evidence.
+Prefer an empty evidence array to any long, repeated, or uncertain excerpt. Keep the
+rationale concise and no more than 600 characters.
 """
 
 
@@ -323,7 +326,11 @@ def validate_judgment(
         ):
             raise ValueError("invalid pairwise confidence")
         if judgment["target_preference"] == "tie" and judgment["target_strength"] != "none":
-            raise ValueError("a target tie requires target_strength=none")
+            validated["target_strength"] = "none"
+            if warnings is not None:
+                warnings.append(
+                    "target_strength: normalized to none because target_preference=tie"
+                )
         if judgment["target_preference"] != "tie" and judgment["target_strength"] == "none":
             raise ValueError("a non-tie target preference requires nonzero strength")
         validated["evidence_a"] = _sanitize_evidence(

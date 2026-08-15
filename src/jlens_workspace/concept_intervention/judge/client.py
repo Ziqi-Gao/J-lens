@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -95,6 +96,47 @@ def _urllib_key_transport(
     if not isinstance(payload, Mapping):
         raise OpenRouterError("OpenRouter key endpoint returned a non-object response")
     return payload
+
+
+def _recover_truncated_pairwise_judgment(content: str) -> dict[str, Any]:
+    """Recover only complete, unique decision fields from length-truncated JSON."""
+
+    if not content.lstrip().startswith("{"):
+        raise _InvalidJudgeResponse("truncated pairwise response is not a JSON object")
+    specifications = {
+        "target_preference": r'"target_preference"\s*:\s*"(A|B|tie)"',
+        "quality_preference": r'"quality_preference"\s*:\s*"(A|B|tie)"',
+        "target_strength": r'"target_strength"\s*:\s*"(none|small|moderate|large)"',
+        "confidence": r'"confidence"\s*:\s*(-?\d+)(?=\s*[,}])',
+    }
+    recovered: dict[str, Any] = {}
+    positions: list[int] = []
+    for schema_field, pattern in specifications.items():
+        if len(re.findall(rf'"{schema_field}"\s*:', content)) != 1:
+            raise _InvalidJudgeResponse(
+                f"truncated pairwise response lacks one unique {schema_field} field"
+            )
+        matches = list(re.finditer(pattern, content))
+        if len(matches) != 1:
+            raise _InvalidJudgeResponse(
+                f"truncated pairwise response has no unambiguous {schema_field} value"
+            )
+        match = matches[0]
+        positions.append(match.start())
+        value: Any = match.group(1)
+        recovered[schema_field] = (
+            int(value) if schema_field == "confidence" else value
+        )
+    if positions != sorted(positions):
+        raise _InvalidJudgeResponse(
+            "truncated pairwise decision fields are outside registered schema order"
+        )
+    return {
+        **recovered,
+        "evidence_a": [],
+        "evidence_b": [],
+        "rationale": "",
+    }
 
 
 class OpenRouterClient:
@@ -349,10 +391,23 @@ class OpenRouterClient:
                 "judge message content is not a JSON string "
                 f"(finish_reason={finish_reason!r}, reasoning_present={reasoning_present})"
             )
-        judgment_payload = json.loads(content)
+        validation_warnings: list[str] = []
+        try:
+            judgment_payload = json.loads(content)
+        except json.JSONDecodeError:
+            finish_reason = str(choice.get("finish_reason", ""))
+            if (
+                task.get("task_type") != "pairwise"
+                or finish_reason not in {"length", "max_tokens"}
+            ):
+                raise
+            judgment_payload = _recover_truncated_pairwise_judgment(content)
+            validation_warnings.append(
+                "pairwise: recovered complete decision fields from length-truncated JSON; "
+                "omitted evidence and rationale"
+            )
         if not isinstance(judgment_payload, Mapping):
             raise _InvalidJudgeResponse("structured judgment is not an object")
-        validation_warnings: list[str] = []
         judgment = validate_judgment(
             task, judgment_payload, warnings=validation_warnings
         )

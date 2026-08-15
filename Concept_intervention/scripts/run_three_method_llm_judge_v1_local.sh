@@ -130,8 +130,9 @@ import json
 import sys
 from pathlib import Path
 
-from jlens_workspace.concept_intervention.judge.prompts import rubric_hash
-from jlens_workspace.concept_intervention.judge.workflow import _canonical_hash
+from jlens_workspace.concept_intervention.judge.amendment import (
+    validate_format_amendment,
+)
 
 config_path = Path(sys.argv[1])
 root = Path(sys.argv[2])
@@ -145,17 +146,12 @@ if manifest.get("config_sha256") != digest:
 frozen = Path(manifest["frozen_config"])
 if hashlib.sha256(frozen.read_bytes()).hexdigest() != digest:
     raise SystemExit("frozen config seal mismatch")
-if manifest.get("rubric_sha256") != rubric_hash():
-    raise SystemExit("runtime rubric differs from prepared registration")
-implementation_root = Path(__import__(
-    "jlens_workspace.concept_intervention.judge", fromlist=["__file__"]
-).__file__).parent
-files = {
-    path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-    for path in sorted(implementation_root.glob("*.py"))
-}
-if manifest.get("implementation", {}).get("combined_sha256") != _canonical_hash(files):
-    raise SystemExit("runtime implementation differs from prepared registration")
+amendment = validate_format_amendment(
+    config_path,
+    root=root,
+    experiment_name=manifest["experiment_name"],
+    verify_response_seals=True,
+)
 for record in manifest.get("task_artifacts", {}).values():
     for path_key, hash_key in (
         ("path", "sha256"),
@@ -164,7 +160,10 @@ for record in manifest.get("task_artifacts", {}).values():
         path = Path(record[path_key])
         if hashlib.sha256(path.read_bytes()).hexdigest() != record[hash_key]:
             raise SystemExit(f"prepared task seal mismatch: {path}")
-print("three_method_judge_preflight=true", flush=True)
+print(
+    f"three_method_judge_preflight=true amendment={amendment['amendment_id']}",
+    flush=True,
+)
 PY
 
 jlens() {

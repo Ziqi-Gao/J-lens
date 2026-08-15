@@ -26,6 +26,9 @@ from jlens_workspace.concept_intervention.generation import (
     validate_equivalent_generation_outputs,
     validate_generation_artifacts,
 )
+from jlens_workspace.concept_intervention.judge.amendment import (
+    validate_format_amendment,
+)
 from jlens_workspace.concept_intervention.judge.client import (
     OpenRouterClient,
     OpenRouterContentFilterError,
@@ -929,6 +932,16 @@ def _run_judge_tasks_locked(
         if three_method_study and not smoke
         else None
     )
+    protocol_amendment = (
+        validate_format_amendment(
+            config_path,
+            root=root,
+            experiment_name=config.experiment_name,
+            verify_response_seals=False,
+        )
+        if three_method_study and not smoke
+        else None
+    )
     if task_set == "arbitration" and role != "arbitration":
         raise JudgeWorkflowError("arbitration tasks require the arbitration model role")
     if task_set == "expert_review" and role != "expert_review":
@@ -1002,6 +1015,7 @@ def _run_judge_tasks_locked(
             "protocol_version": config.protocol_version,
             "rubric_version": PROMPT_VERSION,
             "rubric_sha256": rubric_hash(),
+            "protocol_amendment": protocol_amendment,
             "task_id": task["task_id"],
             "task_sha256": _canonical_hash(task),
             "task_type": task["task_type"],
