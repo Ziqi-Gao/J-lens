@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "experiment_name": "qwen35_4b_three_method_pointwise_judge_v2",
+  "protocol_version": "concept_intervention_llm_judge_pointwise_v2",
+  "study_design_version": "three_method_pointwise_judge_v2",
+  "parent_experiment_name": "qwen35_4b_three_method_llm_judge_v1",
+  "parent_generation_suite": "qwen35_4b_three_method_intervention_v1",
+  "artifact_relative_to_data_root": "runs/qwen35_4b_three_method_intervention_v1/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/llm_judge_three_method_pointwise_v2",
+  "status": {
+    "complete": true,
+    "calibration_passed": true,
+    "analysis_valid": false,
+    "descriptive_only": true,
+    "confirmatory_interpretation_allowed": false,
+    "result_status": "post_hoc_descriptive_guardrail_failure",
+    "all_primary_guardrails_passed": false,
+    "invalid_guardrail_passed": false
+  },
+  "design": {
+    "methods": [
+      "j_component_intervention",
+      "raptor_intervention",
+      "iti_intervention"
+    ],
+    "judges": {
+      "primary": "mistralai/mistral-small-2603",
+      "secondary": "anthropic/claude-haiku-4.5"
+    },
+    "concept_count": 7,
+    "concept_aggregation": "equal-weight macro average",
+    "unit_of_resampling": "prompt_id cluster",
+    "test_data_used_for_method_selection": false,
+    "parent_response_reuse": false
+  },
+  "execution": {
+    "tasks_per_judge_per_split": 4480,
+    "response_count": 17920,
+    "test_analysis_rows": 4480,
+    "missing_tasks": 0,
+    "provider_filtered_tasks": 0,
+    "prompt_tokens": 17637045,
+    "completion_tokens": 2225237,
+    "total_tokens": 19862282,
+    "approved_cost_usd": 22.0,
+    "observed_cost_usd": 18.50969747,
+    "completed_at": "2026-08-15"
+  },
+  "calibration": {
+    "primary_completion_rate": 1.0,
+    "secondary_completion_rate": 1.0,
+    "target_expression_spearman": 0.7036726668924638,
+    "target_expression_mae": 13.757589285714285,
+    "target_expression_within_10": 0.60625,
+    "target_expression_within_20": 0.8006696428571428,
+    "pairwise_gates": "not_applicable"
+  },
+  "primary_condition_means": {
+    "common_baseline": {
+      "rows": 448,
+      "target_expression": 21.690848214285715,
+      "coherence": 72.81026785714286,
+      "relevance": 81.95089285714286,
+      "quality": 77.38058035714286,
+      "invalid_rate": 0.018973214285714284,
+      "refusal_rate": 0.0
+    },
+    "j_component": {
+      "rows": 448,
+      "target_expression": 30.926339285714285,
+      "coherence": 5.8828125,
+      "relevance": 8.166294642857142,
+      "quality": 7.024553571428571,
+      "invalid_rate": 0.6004464285714286,
+      "refusal_rate": 0.0
+    },
+    "raptor": {
+      "rows": 448,
+      "target_expression": 14.748883928571429,
+      "coherence": 21.688616071428573,
+      "relevance": 21.779017857142858,
+      "quality": 21.733816964285715,
+      "invalid_rate": 0.3392857142857143,
+      "refusal_rate": 0.002232142857142857
+    },
+    "iti_native": {
+      "rows": 448,
+      "target_expression": 15.066964285714286,
+      "coherence": 6.088169642857143,
+      "relevance": 6.635044642857143,
+      "quality": 6.361607142857143,
+      "invalid_rate": 0.7287946428571429,
+      "refusal_rate": 0.0
+    }
+  },
+  "primary_contrasts": {
+    "j_minus_raptor": {
+      "target_expression": {
+        "estimate": 16.177455357142858,
+        "ci_lower": 13.5267578125,
+        "ci_upper": 18.718805803571428
+      },
+      "quality": {
+        "estimate": -14.709263392857142,
+        "ci_lower": -15.916922433035714,
+        "ci_upper": -13.527845982142859
+      },
+      "quality_guardrail_passed": false,
+      "refusal_guardrail_passed": true
+    },
+    "j_minus_iti_native": {
+      "target_expression": {
+        "estimate": 15.859375,
+        "ci_lower": 14.036830357142858,
+        "ci_upper": 17.641824776785715
+      },
+      "quality": {
+        "estimate": 0.6629464285714286,
+        "ci_lower": -0.5686383928571429,
+        "ci_upper": 1.8699916294642855
+      },
+      "quality_guardrail_passed": true,
+      "refusal_guardrail_passed": true
+    },
+    "raptor_minus_iti_native": {
+      "target_expression": {
+        "estimate": -0.31808035714285715,
+        "ci_lower": -2.4296875,
+        "ci_upper": 1.966545758928571
+      },
+      "quality": {
+        "estimate": 15.372209821428571,
+        "ci_lower": 14.014494977678572,
+        "ci_upper": 16.7421875
+      },
+      "quality_guardrail_passed": true,
+      "refusal_guardrail_passed": true
+    }
+  },
+  "invalid": {
+    "registered_maximum_rate": 0.020000000000000018,
+    "observed_rate": 0.3333705357142857,
+    "primary_judge_rate": 0.24397321428571428,
+    "secondary_judge_rate": 0.42276785714285714
+  },
+  "refusal": {
+    "observed_rate": 0.0002232142857142857
+  },
+  "cross_judge_agreement": {
+    "target_expression": {
+      "spearman": 0.6882788294564349,
+      "mae": 13.277232142857143,
+      "within_20": 0.809375
+    },
+    "coherence": {
+      "spearman": 0.9302370545605411,
+      "mae": 14.363392857142857,
+      "within_20": 0.7299107142857143
+    },
+    "relevance": {
+      "spearman": 0.8851561020577677,
+      "mae": 12.126339285714286,
+      "within_20": 0.7854910714285714
+    },
+    "invalid_exact": 0.8185267857142857,
+    "refusal_exact": 0.9995535714285714
+  },
+  "human_audit": {
+    "method_blind": true,
+    "task_count": 56,
+    "completed_annotations_registered": false,
+    "tasks_sha256": "f2167e89f6b38d411a06622a2c7ecd20f63075dd161eb70ed3ece5da9f3f7538",
+    "annotations_template_sha256": "dc9be45f45b513658689c594d04138a805bbcb7030d9cfd396dace83ba5891f1"
+  },
+  "integrity": {
+    "config_sha256": "a2f1a29a768009b2cd9f1222d35b1c79e430b70047775eb18c9d088e78413d8a",
+    "manifest_sha256": "d8ba46c2d9146e922023fe196917f1d38c8807ab8cecbc1261dda23c7991554c",
+    "calibration_sha256": "37f8995986071d157b325603561d3ee5c25dfdec7f5dbded0337834956e5cba9",
+    "report_sha256": "c4eee6e0f91521dba9ee1d3f9de78f65de13617a7e57f9e18f2448cc93e82bf2",
+    "pointwise_rows_sha256": "b512e3b6be7a26152d0f31ca8a33ded20f36ce87b2c352979e926dd00d43e674",
+    "response_artifacts_sha256": "fd3b70aa00c5e2a27604f65cdeaa44f4febd2259966c920cbaa888c9004c048b",
+    "rubric_sha256": "6060712756f74814fbef87b15fd98cfec2bb33dfc66a108d4b211cac7d02f21b",
+    "implementation_combined_sha256": "ce58dfdc4426967be6dbce5c24b4c59b0dcff7efb38e204ac7eeb8d2d7d92050",
+    "source_registry_sha256": "e2b69bca9b0ff4d2de8c0c383802c0a6253df576f1d0a561196f3d6e44913d62",
+    "source_validation_sha256": "e27ce09b39a13453fd75922e516915103607b599bb760368147441f0dd63ef94",
+    "human_audit_manifest_sha256": "563cb036424449e5df0b1cb434c5b6b8c4e5da0d945d3849117b87ebd6b3e8a4"
+  },
+  "excluded_from_git": [
+    "public and private task rows",
+    "private unblinding maps",
+    "per-call requests and responses",
+    "unblinded pointwise rows",
+    "human-audit task and annotation rows",
+    "API credentials and runtime state"
+  ]
+}

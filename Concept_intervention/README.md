@@ -182,6 +182,12 @@ policy, hook coordinate, or coordinate-changing model wrapper.
 
 ## Recorded runs
 
+- [Qwen3.5-4B three-method pointwise LLM judge (v2)](reports/qwen35_4b_three_method_pointwise_judge_v2.md)
+  records the completed 17,920-call descriptive evaluation, calibration,
+  primary contrasts, invalid-output failure, cross-judge agreement, cost, and
+  artifact hashes. Raw responses and private unblinding maps remain excluded
+  from Git.
+
 - [Three-method intervention protocol](docs/three_method_interventions.md)
   defines the immutable parent experiment and independent J-component, ITI,
   and RAPTOR child roots. Completion requires the parent experiment's
