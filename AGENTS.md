@@ -18,6 +18,68 @@ alignment, and intervention work to `Concept_intervention/`; route rank,
 singular-spectrum, PCA/energy-basis, and layerwise-subspace work to `J_space/`.
 Neither direction may depend on the other direction's scripts or artifacts.
 
+## Server ownership and project isolation
+
+J-lens is an independent project with exactly three writable directory trees:
+
+1. `/home/del6500/projects/J-lens` for Git-controlled code and small metadata;
+2. `/data/del6500/J-lens` for persistent datasets and durable artifacts; and
+3. `/scr/del6500/J-lens` for environments, caches, runtime state, temporary
+   checkpoints, and logs.
+
+Everything outside those trees is read-only for a J-lens agent. This includes
+`/home/del6500/projects/FedFisher`, `/data/del6500/FedFisher`, and
+`/scr/del6500/FedFisher`. J-lens and FedFisher must not share environments,
+caches, locks, logs, data, artifacts, launchers, or maintenance policy.
+
+A single agent, task, or session that writes J-lens must not also modify
+FedFisher. If a request requires changes in both projects, stop and divide the
+work into separately owned agents/tasks before either side is edited. Read-only
+inspection of another project's public maintenance rules is allowed when it is
+necessary to preserve server policy; it does not authorize a write there.
+Before writing through a symlink, resolve its target and require that it remains
+inside one of the three J-lens trees.
+
+Keep large or durable outputs out of the code checkout. Pretrained download
+caches and build/runtime files belong under `/scr/del6500/J-lens`; prepared
+scientific data, fitted lenses, generation shards, and final indexes belong
+under `/data/del6500/J-lens`. Do not install packages globally or alter user
+shell configuration.
+
+## Shared GPU non-interference
+
+Processes, Screen/tmux sessions, containers, and GPU contexts not launched by
+the current J-lens task are foreign experiments. Existing GPU use does not by
+itself prohibit a J-lens overlay: the user has authorized additive execution
+even when it lengthens a foreign training step, provided memory headroom and
+resource admission make task failure unlikely. Never encode a status-derived
+GPU number in a launcher. Discover visible devices dynamically; treat
+`JLENS_LOCAL_GPU_IDS` only as an optional operator allow-list.
+
+Use the checked-in local scheduler, J-lens-owned locks and leases, and an
+explicit `CUDA_VISIBLE_DEVICES`. It must classify J-lens versus foreign compute
+PIDs, record the pre-existing snapshot, take rolling min-free/max-utilization
+samples, rank clean devices before bounded overlays, acquire CPU/RAM/GPU
+tokens, and revalidate after taking the device lock. Every new shard repeats
+admission, so a newly freed GPU joins automatically. Task profiles distinguish
+CPU-heavy, low-memory occupancy from exclusive model/capture/generation work.
+
+Never terminate, signal, pause, renice, debug, or change the affinity,
+environment, files, clocks, power settings, MIG layout, MPS state, or driver
+state of a foreign process. Never use GPU reset, `killall`, or broad `pkill`.
+The scheduler does not preempt a task in the middle of a scientific shard. If
+a J-lens overlay causes OOM or instability, adjust or stop only the exact
+J-lens process/session launched by the current task after verifying ownership,
+then increase the affected task profile or reserve before retrying. Leave every
+foreign workload untouched.
+
+Within J-lens, ordinary GPU tasks remain mutually exclusive per device.
+Measured low-memory, CPU-heavy occupancy tasks may use a bounded shared gate
+with explicit per-device slots and utilization/memory tokens. CPU and host RAM
+leases apply to GPU and CPU tasks alike. Profile, token, worker-pool, or
+slot-count changes require a clean commit and a controlled DAG restart; never
+hot-edit a running checkout.
+
 ## Non-negotiable invariants
 
 1. Pin the official Jacobian-lens implementation to commit

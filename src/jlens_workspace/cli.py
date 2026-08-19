@@ -15,9 +15,10 @@ import json
 import re
 import shutil
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 _LAYER_DIRECTORY = re.compile(r"layer_(\d+)")
 _CORE_PACKAGES = (
@@ -34,6 +35,7 @@ _OPTIONAL_PACKAGES = (
     ("huggingface-hub", "huggingface_hub"),
     ("jlens", "jlens"),
 )
+_EXPECTED_JLENS_REVISION = "581d398613e5602a5af361e1c34d3a92ea82ba8e"
 
 
 def _add_json_flag(parser: argparse.ArgumentParser) -> None:
@@ -174,6 +176,47 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json_flag(fit_probes)
     fit_probes.set_defaults(handler=_cmd_concept_fit_probes)
 
+    bootstrap_probes = concept_subparsers.add_parser(
+        "bootstrap-probes",
+        help="fit fixed-C group-bootstrap probe directions for stability",
+    )
+    _add_config_argument(bootstrap_probes)
+    bootstrap_probes.add_argument(
+        "--activations", type=Path, required=True, help="activation artifact directory"
+    )
+    bootstrap_probes.add_argument(
+        "--primary-probes", type=Path, required=True, help="primary probe artifact"
+    )
+    bootstrap_probes.add_argument(
+        "--output", type=Path, required=True, help="bootstrap probe output directory"
+    )
+    bootstrap_probes.add_argument(
+        "--layer", type=int, action="append", help="layer to fit; may be repeated"
+    )
+    bootstrap_probes.add_argument(
+        "--concept-id", action="append", help="concept ID to fit; may be repeated"
+    )
+    _add_overwrite_flag(bootstrap_probes)
+    _add_json_flag(bootstrap_probes)
+    bootstrap_probes.set_defaults(handler=_cmd_concept_bootstrap_probes)
+
+    bootstrap_index = concept_subparsers.add_parser(
+        "bootstrap-probes-index",
+        help="validate bootstrap probe shards and rebuild their shared manifest",
+    )
+    _add_config_argument(bootstrap_index)
+    bootstrap_index.add_argument(
+        "--activations", type=Path, required=True, help="activation artifact directory"
+    )
+    bootstrap_index.add_argument(
+        "--primary-probes", type=Path, required=True, help="primary probe artifact"
+    )
+    bootstrap_index.add_argument(
+        "--output", type=Path, required=True, help="bootstrap probe output directory"
+    )
+    _add_json_flag(bootstrap_index)
+    bootstrap_index.set_defaults(handler=_cmd_concept_bootstrap_probes_index)
+
     align = concept_subparsers.add_parser(
         "align", help="align fitted probes with token J-directions"
     )
@@ -210,6 +253,275 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json_flag(concept_run)
     concept_run.set_defaults(handler=_cmd_concept_run)
 
+    layer_select = concept_subparsers.add_parser(
+        "layer-select",
+        help="fit shared RAPTOR-style probes and select common intervention layers",
+    )
+    _add_config_argument(layer_select)
+    layer_select.add_argument("--output", type=Path, help="shared protocol directory")
+    _add_overwrite_flag(layer_select)
+    _add_json_flag(layer_select)
+    layer_select.set_defaults(handler=_cmd_concept_layer_select)
+
+    intervention = subparsers.add_parser(
+        "intervention", help="causal residual-stream intervention workflows"
+    )
+    intervention_subparsers = intervention.add_subparsers(
+        dest="intervention_command", required=True
+    )
+    intervention_concepts = intervention_subparsers.add_parser(
+        "concepts-v2",
+        help="compare full, sparse-J, non-J, and matched-random concept directions",
+    )
+    _add_config_argument(intervention_concepts)
+    intervention_concepts.add_argument(
+        "--output", type=Path, help="intervention output directory"
+    )
+    intervention_concepts.add_argument(
+        "--concept-id", action="append", help="target concept; may be repeated"
+    )
+    _add_overwrite_flag(intervention_concepts)
+    _add_json_flag(intervention_concepts)
+    intervention_concepts.set_defaults(handler=_cmd_intervention_concepts_v2)
+
+    intervention_index = intervention_subparsers.add_parser(
+        "index", help="validate intervention shards and rebuild the shared index"
+    )
+    _add_config_argument(intervention_index)
+    intervention_index.add_argument(
+        "--output", type=Path, help="intervention output directory"
+    )
+    _add_json_flag(intervention_index)
+    intervention_index.set_defaults(handler=_cmd_intervention_index)
+
+    j_component = intervention_subparsers.add_parser(
+        "j-component",
+        help="run the immutable-suite multi-layer J-component experiment",
+    )
+    _add_config_argument(j_component)
+    j_component.add_argument("--output", type=Path)
+    j_component.add_argument("--concept-id", action="append")
+    j_component.add_argument(
+        "--grid-index",
+        type=int,
+        help="run one deterministic condition/strength shard",
+    )
+    _add_overwrite_flag(j_component)
+    _add_json_flag(j_component)
+    j_component.set_defaults(handler=_cmd_j_component_intervention)
+
+    j_component_index = intervention_subparsers.add_parser(
+        "j-component-index", help="index the multi-layer J-component experiment"
+    )
+    _add_config_argument(j_component_index)
+    j_component_index.add_argument("--output", type=Path)
+    _add_json_flag(j_component_index)
+    j_component_index.set_defaults(handler=_cmd_j_component_index)
+
+    raptor = intervention_subparsers.add_parser(
+        "raptor", help="run the pinned external RAPTOR intervention"
+    )
+    _add_config_argument(raptor)
+    raptor.add_argument("--output", type=Path)
+    raptor.add_argument("--concept-id", action="append")
+    raptor.add_argument(
+        "--grid-index",
+        type=int,
+        help="run one deterministic no-hook/target-probability shard",
+    )
+    _add_overwrite_flag(raptor)
+    _add_json_flag(raptor)
+    raptor.set_defaults(handler=_cmd_raptor_intervention)
+
+    raptor_index = intervention_subparsers.add_parser(
+        "raptor-index", help="index the RAPTOR intervention experiment"
+    )
+    _add_config_argument(raptor_index)
+    raptor_index.add_argument("--output", type=Path)
+    _add_json_flag(raptor_index)
+    raptor_index.set_defaults(handler=_cmd_raptor_index)
+    candidate_rescore = intervention_subparsers.add_parser(
+        "candidate-rescore",
+        help="rescore a sealed method grid with canonical one-prompt batches",
+    )
+    _add_config_argument(candidate_rescore)
+    candidate_rescore.add_argument(
+        "--method",
+        choices=(
+            "j_component_intervention",
+            "iti_intervention",
+            "raptor_intervention",
+        ),
+        required=True,
+    )
+    candidate_rescore.add_argument("--source-output", type=Path, required=True)
+    candidate_rescore.add_argument("--output", type=Path, required=True)
+    candidate_rescore.add_argument("--concept-id", action="append")
+    _add_overwrite_flag(candidate_rescore)
+    _add_json_flag(candidate_rescore)
+    candidate_rescore.set_defaults(handler=_cmd_intervention_candidate_rescore)
+
+    compare_index = intervention_subparsers.add_parser(
+        "compare-index", help="build the identity-checked three-method comparison"
+    )
+    compare_index.add_argument("--shared-layer-selection", type=Path, required=True)
+    compare_index.add_argument("--j-output", type=Path, required=True)
+    compare_index.add_argument("--iti-output", type=Path, required=True)
+    compare_index.add_argument("--raptor-output", type=Path, required=True)
+    compare_index.add_argument(
+        "--j-candidate-rescore", type=Path
+    )
+    compare_index.add_argument(
+        "--iti-candidate-rescore", type=Path
+    )
+    compare_index.add_argument(
+        "--raptor-candidate-rescore", type=Path
+    )
+    compare_index.add_argument("--output", type=Path, required=True)
+    compare_index.add_argument("--concept-id", action="append", required=True)
+    _add_json_flag(compare_index)
+    compare_index.set_defaults(handler=_cmd_intervention_compare_index)
+
+    smoke_check = intervention_subparsers.add_parser(
+        "smoke-check",
+        help="validate registered GPU smokes before full-grid submission",
+    )
+    smoke_check.add_argument("--j-output", type=Path, required=True)
+    smoke_check.add_argument("--iti-output", type=Path, required=True)
+    smoke_check.add_argument("--raptor-output", type=Path, required=True)
+    smoke_check.add_argument("--output", type=Path, required=True)
+    smoke_check.add_argument(
+        "--concept-id", default="goemotions:admiration"
+    )
+    _add_json_flag(smoke_check)
+    smoke_check.set_defaults(handler=_cmd_intervention_smoke_check)
+
+    iti = subparsers.add_parser(
+        "iti", help="pinned honest_llama inference-time intervention workflows"
+    )
+    iti_subparsers = iti.add_subparsers(dest="iti_command", required=True)
+
+    iti_capture = iti_subparsers.add_parser(
+        "capture", help="capture full-attention pre-o_proj head outputs"
+    )
+    _add_config_argument(iti_capture)
+    iti_capture.add_argument("--output", type=Path, help="head activation directory")
+    _add_overwrite_flag(iti_capture)
+    _add_json_flag(iti_capture)
+    iti_capture.set_defaults(handler=_cmd_iti_capture)
+
+    iti_fit = iti_subparsers.add_parser(
+        "fit", help="fit original ITI head probes and direction artifacts"
+    )
+    _add_config_argument(iti_fit)
+    iti_fit.add_argument("--output", type=Path, help="ITI direction directory")
+    iti_fit.add_argument(
+        "--concept-id", action="append", help="target concept; may be repeated"
+    )
+    _add_overwrite_flag(iti_fit)
+    _add_json_flag(iti_fit)
+    iti_fit.set_defaults(handler=_cmd_iti_fit)
+
+    iti_run = iti_subparsers.add_parser(
+        "run", help="select ITI hyperparameters and score held-out prompt templates"
+    )
+    _add_config_argument(iti_run)
+    iti_run.add_argument("--output", type=Path, help="ITI experiment output directory")
+    iti_run.add_argument(
+        "--concept-id", action="append", help="target concept; may be repeated"
+    )
+    iti_run.add_argument(
+        "--grid-index",
+        type=int,
+        help="run one deterministic variant/control/K/strength shard",
+    )
+    _add_overwrite_flag(iti_run)
+    _add_json_flag(iti_run)
+    iti_run.set_defaults(handler=_cmd_iti_run)
+
+    iti_index = iti_subparsers.add_parser(
+        "index", help="validate ITI shards and build the held-out J comparison"
+    )
+    _add_config_argument(iti_index)
+    iti_index.add_argument("--output", type=Path, help="ITI experiment output directory")
+    _add_json_flag(iti_index)
+    iti_index.set_defaults(handler=_cmd_iti_index)
+
+    judge = subparsers.add_parser(
+        "judge", help="blinded LLM-as-judge evaluation of concept interventions"
+    )
+    judge_subparsers = judge.add_subparsers(dest="judge_command", required=True)
+
+    judge_validate = judge_subparsers.add_parser(
+        "validate", help="validate the standalone judge registration"
+    )
+    _add_config_argument(judge_validate)
+    _add_json_flag(judge_validate)
+    judge_validate.set_defaults(handler=_cmd_judge_validate)
+
+    judge_prepare = judge_subparsers.add_parser(
+        "prepare", help="select validation hyperparameters and freeze blind tasks"
+    )
+    _add_config_argument(judge_prepare)
+    _add_json_flag(judge_prepare)
+    judge_prepare.set_defaults(handler=_cmd_judge_prepare)
+
+    judge_run = judge_subparsers.add_parser(
+        "run", help="run or resume one exact judge role and task set"
+    )
+    _add_config_argument(judge_run)
+    judge_run.add_argument(
+        "--role",
+        choices=("primary", "secondary", "arbitration", "expert_review"),
+        required=True,
+    )
+    judge_run.add_argument(
+        "--task-set",
+        choices=("pointwise", "pairwise", "arbitration", "expert_review"),
+        required=True,
+    )
+    judge_run.add_argument("--split", choices=("validation", "test"))
+    judge_run.add_argument("--limit", type=int)
+    judge_run.add_argument(
+        "--smoke",
+        action="store_true",
+        help="write a limited run outside the formal response artifacts",
+    )
+    judge_run.add_argument("--jobs", type=int)
+    _add_json_flag(judge_run)
+    judge_run.set_defaults(handler=_cmd_judge_run)
+
+    judge_calibrate = judge_subparsers.add_parser(
+        "calibrate", help="apply the registered validation agreement gates"
+    )
+    _add_config_argument(judge_calibrate)
+    _add_json_flag(judge_calibrate)
+    judge_calibrate.set_defaults(handler=_cmd_judge_calibrate)
+
+    judge_review = judge_subparsers.add_parser(
+        "review-prepare", help="freeze arbitration or expert-review tasks"
+    )
+    _add_config_argument(judge_review)
+    judge_review.add_argument(
+        "--tier", choices=("arbitration", "expert_review"), required=True
+    )
+    _add_json_flag(judge_review)
+    judge_review.set_defaults(handler=_cmd_judge_review_prepare)
+
+    judge_aggregate = judge_subparsers.add_parser(
+        "aggregate", help="unblind and compute registered clustered inference"
+    )
+    _add_config_argument(judge_aggregate)
+    _add_json_flag(judge_aggregate)
+    judge_aggregate.set_defaults(handler=_cmd_judge_aggregate)
+
+    judge_audit = judge_subparsers.add_parser(
+        "audit-export", help="export a deterministic method-blind human audit subset"
+    )
+    _add_config_argument(judge_audit)
+    _add_json_flag(judge_audit)
+    judge_audit.set_defaults(handler=_cmd_judge_audit_export)
+
     matrix = subparsers.add_parser("matrix", help="J-space matrix workflows")
     matrix_subparsers = matrix.add_subparsers(dest="matrix_command", required=True)
     matrix_run = matrix_subparsers.add_parser(
@@ -226,6 +538,61 @@ def build_parser() -> argparse.ArgumentParser:
     _add_overwrite_flag(matrix_run)
     _add_json_flag(matrix_run)
     matrix_run.set_defaults(handler=_cmd_matrix_run)
+
+    occupancy = subparsers.add_parser(
+        "occupancy", help="sparse J-space occupancy workflows"
+    )
+    occupancy_subparsers = occupancy.add_subparsers(
+        dest="occupancy_command", required=True
+    )
+    occupancy_concepts = occupancy_subparsers.add_parser(
+        "concepts",
+        help="decompose probe concept vectors over token J-directions "
+        "(concept_occupancy_method_v1)",
+    )
+    _add_config_argument(occupancy_concepts)
+    occupancy_concepts.add_argument(
+        "--probes", type=Path, required=True, help="fitted probe artifact directory"
+    )
+    occupancy_concepts.add_argument(
+        "--probe-replicates",
+        type=Path,
+        help="fixed-C bootstrap probe artifact directory",
+    )
+    occupancy_concepts.add_argument(
+        "--output", type=Path, help="occupancy run directory (default: output_dir)"
+    )
+    occupancy_concepts.add_argument(
+        "--layer", type=int, action="append", help="restrict layers; may be repeated"
+    )
+    occupancy_concepts.add_argument(
+        "--convention",
+        choices=("raw", "rmsnorm_weighted"),
+        action="append",
+        help="restrict coordinate conventions; may be repeated",
+    )
+    occupancy_concepts.add_argument(
+        "--replicate-id",
+        action="append",
+        help="restrict probe replicates; may be repeated",
+    )
+    occupancy_concepts.add_argument(
+        "--k-max", type=int, help="override configured maximum support size"
+    )
+    _add_overwrite_flag(occupancy_concepts)
+    _add_json_flag(occupancy_concepts)
+    occupancy_concepts.set_defaults(handler=_cmd_occupancy_concepts)
+
+    occupancy_index = occupancy_subparsers.add_parser(
+        "index",
+        help="validate completed occupancy shards and rebuild the shared index",
+    )
+    _add_config_argument(occupancy_index)
+    occupancy_index.add_argument(
+        "--output", type=Path, help="occupancy run directory (default: output_dir)"
+    )
+    _add_json_flag(occupancy_index)
+    occupancy_index.set_defaults(handler=_cmd_occupancy_index)
     return parser
 
 
@@ -255,6 +622,24 @@ def _package_status(distribution: str, module: str) -> dict[str, Any]:
     return {"available": available, "version": version}
 
 
+def _installed_vcs_commit(distribution: str) -> str | None:
+    """Read a PEP 610 VCS commit from an installed distribution."""
+
+    try:
+        payload = importlib.metadata.distribution(distribution).read_text(
+            "direct_url.json"
+        )
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    if not payload:
+        return None
+    try:
+        value = json.loads(payload).get("vcs_info", {}).get("commit_id")
+    except json.JSONDecodeError:
+        return None
+    return str(value) if value else None
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     core = {
         name: _package_status(name, module) for name, module in _CORE_PACKAGES
@@ -265,7 +650,11 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     python_ok = sys.version_info >= (3, 11)
     core_ok = python_ok and all(status["available"] for status in core.values())
     llm_ok = all(status["available"] for status in optional.values())
-    ok = core_ok and (llm_ok or not args.require_llm)
+    observed_jlens_revision = _installed_vcs_commit("jlens")
+    jlens_revision_ok = observed_jlens_revision == _EXPECTED_JLENS_REVISION
+    ok = core_ok and (
+        (llm_ok and jlens_revision_ok) or not args.require_llm
+    )
     payload = {
         "ok": ok,
         "python": {
@@ -276,7 +665,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         "optional_llm": optional,
         "optional_llm_complete": llm_ok,
         "require_llm": args.require_llm,
-        "expected_jlens_revision": "581d398613e5602a5af361e1c34d3a92ea82ba8e",
+        "expected_jlens_revision": _EXPECTED_JLENS_REVISION,
+        "observed_jlens_revision": observed_jlens_revision,
+        "jlens_revision_ok": jlens_revision_ok,
     }
     installed_optional = sum(status["available"] for status in optional.values())
     _emit(
@@ -352,6 +743,133 @@ def _experiment_manifest(
     )
 
 
+def _index_builder_provenance(manifest: Any) -> dict[str, Any]:
+    """Record the index process separately from historical scientific shards."""
+
+    return {
+        "git_commit": manifest.git_commit,
+        "platform": manifest.platform,
+        "python": manifest.python,
+        "packages": dict(manifest.packages),
+    }
+
+
+def _activation_dataset_hash(path: str | Path) -> str:
+    """Read the source dataset fingerprint from a captured activation artifact."""
+
+    metadata_path = Path(path) / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    value = metadata.get("manifest", {}).get("dataset_hash")
+    if not isinstance(value, str) or not value:
+        raise ValueError(
+            f"activation artifact lacks a source dataset hash: {metadata_path}"
+        )
+    return value
+
+
+def _generation_identity(
+    value: Any,
+    candidate_labels: Mapping[str, str],
+) -> dict[str, Any]:
+    """Content-address both prompt banks together with decoding parameters."""
+
+    from jlens_workspace.artifacts import resolve_repository_resource, sha256_file
+    from jlens_workspace.concept_intervention.generation import (
+        candidate_prompt_splits,
+        prompt_ids_sha256,
+    )
+
+    candidate_path = resolve_repository_resource(value.candidate_prompts_path)
+    open_path = resolve_repository_resource(value.open_prompts_path)
+    candidate_payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+    open_payload = json.loads(open_path.read_text(encoding="utf-8"))
+    candidate_ids = [
+        str(row["prompt_id"]) for row in candidate_payload.get("prompts", [])
+    ]
+    open_ids = [str(row["prompt_id"]) for row in open_payload.get("prompts", [])]
+    prompt_ids = [*candidate_ids, *open_ids]
+    if (
+        candidate_payload.get("schema_version") != 1
+        or open_payload.get("schema_version") != 1
+        or not candidate_ids
+        or not open_ids
+        or len(set(prompt_ids)) != len(prompt_ids)
+        or len(candidate_labels) != 7
+        or len(set(candidate_labels)) != 7
+    ):
+        raise ValueError(
+            "generation prompt banks require unique IDs and seven candidate labels"
+        )
+    sample_seeds = list(value.sample_seeds)
+
+    return {
+        **value.model_dump(),
+        "candidate_labels": {
+            str(concept_id): str(label)
+            for concept_id, label in candidate_labels.items()
+        },
+        "candidate_prompt_splits": candidate_prompt_splits(candidate_ids),
+        "candidate_prompts_sha256": sha256_file(candidate_path),
+        "open_prompts_sha256": sha256_file(open_path),
+        "candidate_prompt_count": len(candidate_ids),
+        "open_prompt_count": len(open_ids),
+        "prompt_count": len(prompt_ids),
+        "prompt_ids_sha256": prompt_ids_sha256(prompt_ids),
+        "expected_rows_per_grid_point": len(prompt_ids)
+        * (1 + len(sample_seeds)),
+    }
+
+
+def _shared_protocol_identity(path: str | Path) -> dict[str, Any]:
+    """Resolve and verify the selected-layer and balanced-row identities."""
+
+    from jlens_workspace.artifacts import sha256_file
+
+    selection_path = Path(path)
+    selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    row_manifest_path = selection_path.parent / str(selection["row_manifest"])
+    row_hash = sha256_file(row_manifest_path)
+    if selection.get("row_manifest_sha256") != row_hash:
+        raise ValueError(
+            f"shared row manifest identity mismatch: {row_manifest_path}"
+        )
+    return {
+        "selected_layers_sha256": sha256_file(selection_path),
+        "row_manifest_path": str(row_manifest_path),
+        "row_manifest_sha256": row_hash,
+        "activation_artifact_hash": selection.get("activation_artifact_hash"),
+    }
+
+
+def _write_immutable_shard_manifest(
+    path: str | Path,
+    manifest: Any,
+    *,
+    scientific_summary: str | Path,
+) -> None:
+    """Create a shard manifest once and reject historical-artifact reuse."""
+
+    from dataclasses import asdict, is_dataclass
+
+    from jlens_workspace.artifacts import atomic_write_json
+
+    destination = Path(path)
+    summary = Path(scientific_summary)
+    payload = asdict(manifest) if is_dataclass(manifest) else dict(manifest)
+    if summary.is_file() and not destination.is_file():
+        raise ValueError(
+            f"scientific shard predates its immutable manifest: {summary}"
+        )
+    if destination.is_file():
+        existing = json.loads(destination.read_text(encoding="utf-8"))
+        if existing != payload:
+            raise ValueError(
+                f"scientific shard manifest identity changed: {destination}"
+            )
+        return
+    atomic_write_json(destination, payload)
+
+
 def _normalize_config_argument(args: argparse.Namespace) -> None:
     """Resolve ``--config`` and the backwards-compatible positional form."""
 
@@ -371,7 +889,20 @@ def _cmd_config_validate(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     sections = [
         name
-        for name in ("dataset", "lens", "activations", "probe", "alignment", "matrix")
+        for name in (
+            "dataset",
+            "lens",
+            "activations",
+            "probe",
+            "alignment",
+            "intervention",
+            "shared_layer_selection",
+            "j_component",
+            "raptor",
+            "iti",
+            "occupancy",
+            "matrix",
+        )
         if getattr(config, name) is not None
     ]
     payload = {
@@ -641,6 +1172,87 @@ def _cmd_concept_fit_probes(args: argparse.Namespace) -> int:
         args,
         payload,
         message=f"fit {len(result.probes)} probes -> {result.output_dir}",
+    )
+    return 0
+
+
+def _cmd_concept_bootstrap_probes(args: argparse.Namespace) -> int:
+    from jlens_workspace.workflows.probe_replicates import (
+        build_probe_bootstrap_replicates,
+    )
+
+    config = _load_config(args.config)
+    occupancy = _require_section(config, "occupancy")
+    probe = _require_section(config, "probe")
+    layers = tuple(args.layer) if args.layer else tuple(occupancy.layers)
+    concepts = (
+        tuple(args.concept_id)
+        if args.concept_id
+        else tuple(occupancy.concept_ids or ())
+    )
+    if not concepts:
+        raise ValueError("bootstrap probes require explicit concept_ids")
+    summary = build_probe_bootstrap_replicates(
+        activation_artifact=args.activations,
+        primary_probes=args.primary_probes,
+        output_dir=args.output,
+        layers=layers,
+        concept_ids=concepts,
+        seeds=occupancy.bootstrap_seeds,
+        standardize=probe.standardize,
+        class_weight=probe.class_weight,
+        max_iter=probe.max_iter,
+        row_manifest_path=occupancy.row_manifest_path,
+        overwrite=args.overwrite,
+    )
+    _finish_command(
+        args,
+        summary,
+        message=(
+            f"bootstrap probes: {summary['completed']} completed, "
+            f"{summary['skipped']} skipped -> {summary['output']}"
+        ),
+    )
+    return 0
+
+
+def _cmd_concept_bootstrap_probes_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.workflows.probe_replicates import (
+        rebuild_probe_replicate_manifest,
+    )
+
+    config = _load_config(args.config)
+    occupancy = _require_section(config, "occupancy")
+    concepts = tuple(occupancy.concept_ids or ())
+    if not concepts:
+        raise ValueError("bootstrap probe indexing requires explicit concept_ids")
+    expected = (
+        len(occupancy.layers) * len(concepts) * len(occupancy.bootstrap_seeds)
+    )
+    manifest = rebuild_probe_replicate_manifest(
+        args.output,
+        activation_artifact=args.activations,
+        primary_probes=args.primary_probes,
+        expected_entries=expected,
+    )
+    if not manifest["complete"]:
+        raise ValueError(
+            f"bootstrap probes incomplete: {manifest['observed_entries']}/"
+            f"{manifest['expected_entries']}"
+        )
+    payload = {
+        "output": str(args.output / "manifest.json"),
+        "observed_entries": manifest["observed_entries"],
+        "expected_entries": manifest["expected_entries"],
+        "complete": manifest["complete"],
+    }
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"bootstrap probe manifest: {manifest['observed_entries']}/"
+            f"{manifest['expected_entries']} complete -> {args.output}"
+        ),
     )
     return 0
 
@@ -1432,6 +2044,44 @@ def _cmd_concept_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_concept_layer_select(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.shared_protocol import (
+        run_shared_layer_selection,
+    )
+
+    config = _load_config(args.config)
+    shared = _require_section(config, "shared_layer_selection")
+    concepts = tuple(shared.concept_ids)
+    destination = args.output or Path(shared.output_dir)
+    result = run_shared_layer_selection(
+        activation_artifact=shared.source_activations_dir,
+        output_dir=destination,
+        candidate_layers=shared.candidate_layers,
+        selected_layer_count=shared.selected_layer_count,
+        concept_ids=concepts,
+        c_grid=shared.c_grid,
+        cv_folds=shared.cv_folds,
+        max_iter=shared.max_iter,
+        seed=shared.seed,
+        raptor_upstream_checkout=shared.upstream_checkout,
+        overwrite=args.overwrite,
+    )
+    payload = {
+        "output": str(destination),
+        "layer_selection": str(destination / "layer_selection.json"),
+        "row_manifest": str(destination / "row_manifest.json"),
+        "concepts": len(result["concepts"]),
+        "candidate_layers": result["candidate_layers"],
+        "selected_layer_count": result["selected_layer_count"],
+    }
+    _finish_command(
+        args,
+        payload,
+        message=f"selected shared intervention layers -> {destination}",
+    )
+    return 0
+
+
 def _cmd_matrix_run(args: argparse.Namespace) -> int:
     from jlens_workspace.artifacts import atomic_write_json
     from jlens_workspace.workflows import MatrixWorkflowOptions, run_matrix_layers
@@ -1514,6 +2164,1394 @@ def _cmd_matrix_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_unembedding_tensors_lightweight(config: Any) -> tuple[Any, Any]:
+    """Load only ``W_U`` and the final RMSNorm weight from cached safetensors.
+
+    Occupancy needs the unembedding and norm scale but never a forward pass,
+    so the full multi-GB causal LM is deliberately not instantiated. Fails
+    offline-safe: files must already be in the local Hugging Face cache.
+    """
+
+    import torch
+    from huggingface_hub import snapshot_download
+    from safetensors import safe_open
+
+    snapshot = Path(
+        snapshot_download(
+            config.model.model_id,
+            revision=config.model.revision,
+            local_files_only=True,
+            allow_patterns=["*.safetensors", "*.safetensors.index.json", "config.json"],
+        )
+    )
+    index_path = snapshot / "model.safetensors.index.json"
+    if index_path.is_file():
+        weight_map = json.loads(index_path.read_text(encoding="utf-8"))["weight_map"]
+    else:
+        single = sorted(snapshot.glob("*.safetensors"))
+        if len(single) != 1:
+            raise ValueError(f"cannot resolve safetensors layout in {snapshot}")
+        with safe_open(single[0], framework="pt", device="cpu") as handle:
+            weight_map = {name: single[0].name for name in handle.keys()}
+
+    def read_tensor(candidates: tuple[str, ...]) -> Any:
+        for name in candidates:
+            shard = weight_map.get(name)
+            if shard is None:
+                continue
+            with safe_open(snapshot / shard, framework="pt", device="cpu") as handle:
+                return handle.get_tensor(name)
+        raise ValueError(f"none of {candidates} found in model safetensors")
+
+    unembedding = read_tensor(
+        (
+            "lm_head.weight",
+            "model.lm_head.weight",
+            "model.language_model.lm_head.weight",
+            "model.embed_tokens.weight",
+            "model.language_model.embed_tokens.weight",
+        )
+    )
+    norm_weight = read_tensor(("model.norm.weight", "model.language_model.norm.weight"))
+
+    class _CachedRMSNorm(torch.nn.Module):
+        def __init__(self, weight: Any) -> None:
+            super().__init__()
+            self.weight = torch.nn.Parameter(weight.detach().clone())
+            self.variance_epsilon = 1e-6
+
+    return unembedding.detach(), _CachedRMSNorm(norm_weight)
+
+
+def _cmd_intervention_concepts_v2(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import (
+        atomic_write_json,
+        resolve_repository_resource,
+        sha256_file,
+    )
+    from jlens_workspace.concept_intervention.j_component import (
+        run_concept_intervention,
+    )
+
+    config = _load_config(args.config)
+    intervention = _require_section(config, "intervention")
+    if intervention.method != "concept_j_component_intervention_v2":
+        raise ValueError(
+            "intervention concepts-v2 requires "
+            "method=concept_j_component_intervention_v2"
+        )
+    configured = tuple(intervention.concept_ids or ())
+    concepts = tuple(args.concept_id) if args.concept_id else configured
+    unknown = sorted(set(concepts) - set(configured))
+    if unknown:
+        raise ValueError(f"concepts absent from intervention config: {unknown}")
+    if not concepts:
+        raise ValueError("at least one intervention concept is required")
+    assert intervention.layer is not None
+    assert intervention.candidate_labels is not None
+    assert intervention.prompts_path is not None
+    assert intervention.source_occupancy_dir is not None
+    assert intervention.source_probes_dir is not None
+    assert intervention.source_activations_dir is not None
+    assert intervention.expected_occupancy_index_sha256 is not None
+    assert intervention.source_occupancy_git_commit is not None
+
+    destination = args.output or Path(config.output_dir)
+    bundle = _load_model_bundle(config)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        notes={
+            "workflow": "concept_j_component_intervention_v2",
+            "method": intervention.method,
+            "coordinate": "resid_post",
+            "layer": intervention.layer,
+            "concept_ids": list(concepts),
+            "source_occupancy_dir": intervention.source_occupancy_dir,
+            "source_occupancy_index_sha256": (
+                intervention.expected_occupancy_index_sha256
+            ),
+            "source_occupancy_git_commit": (
+                intervention.source_occupancy_git_commit
+            ),
+            "prompts_path": intervention.prompts_path,
+            "prompts_sha256": sha256_file(
+                resolve_repository_resource(intervention.prompts_path)
+            ),
+        },
+    )
+    destination.mkdir(parents=True, exist_ok=True)
+    shard_name = "concepts_" + "-".join(
+        quote(concept_id, safe="") for concept_id in concepts
+    )
+    shard_manifest = destination / "manifests" / f"{shard_name}.json"
+    atomic_write_json(shard_manifest, manifest)
+
+    summaries: list[dict[str, Any]] = []
+    for concept_id in concepts:
+        result = run_concept_intervention(
+            output_dir=destination,
+            model=bundle.model,
+            tokenizer=bundle.tokenizer,
+            target_concept_id=concept_id,
+            candidate_labels=intervention.candidate_labels,
+            prompts_path=intervention.prompts_path,
+            occupancy_dir=intervention.source_occupancy_dir,
+            probes_dir=intervention.source_probes_dir,
+            activations_dir=intervention.source_activations_dir,
+            expected_occupancy_index_sha256=(
+                intervention.expected_occupancy_index_sha256
+            ),
+            expected_occupancy_git_commit=(
+                intervention.source_occupancy_git_commit
+            ),
+            layer=intervention.layer,
+            convention=intervention.convention,
+            strengths=intervention.strengths,
+            random_seeds=intervention.random_control_seeds,
+            score_batch_size=intervention.score_batch_size,
+            generation_prompt_count=intervention.generation_prompt_count,
+            max_new_tokens=intervention.max_new_tokens,
+            run_metadata={
+                "experiment_name": config.experiment_name,
+                "config_sha256": manifest.notes.get("config_sha256"),
+                "git_commit": manifest.git_commit,
+                "seed": intervention.seed,
+            },
+            overwrite=args.overwrite,
+        )
+        summaries.append(
+            {
+                "concept_id": concept_id,
+                "status": result["status"],
+                "summary": result["summary"],
+            }
+        )
+    payload = {
+        "output": str(destination),
+        "concepts": summaries,
+        "manifest": str(shard_manifest),
+    }
+    _finish_command(
+        args,
+        payload,
+        message=f"intervention: {len(summaries)} concepts -> {destination}",
+    )
+    return 0
+
+
+def _cmd_intervention_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json
+    from jlens_workspace.concept_intervention.j_component import (
+        rebuild_intervention_index,
+    )
+
+    config = _load_config(args.config)
+    intervention = _require_section(config, "intervention")
+    if intervention.method != "concept_j_component_intervention_v2":
+        raise ValueError(
+            "intervention index requires method=concept_j_component_intervention_v2"
+        )
+    concepts = tuple(intervention.concept_ids or ())
+    destination = args.output or Path(config.output_dir)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        notes={
+            "workflow": "concept_j_component_intervention_v2",
+            "method": intervention.method,
+            "coordinate": "resid_post",
+            "expected_concepts": list(concepts),
+            "source_occupancy_git_commit": (
+                intervention.source_occupancy_git_commit
+            ),
+            "source_occupancy_index_sha256": (
+                intervention.expected_occupancy_index_sha256
+            ),
+        },
+    )
+    atomic_write_json(destination / "manifest.json", manifest)
+    index = rebuild_intervention_index(
+        destination,
+        expected_concepts=concepts,
+        run_metadata={
+            "experiment_name": config.experiment_name,
+            "config_sha256": manifest.notes.get("config_sha256"),
+            "git_commit": manifest.git_commit,
+        },
+    )
+    if not index["complete"]:
+        raise ValueError(
+            f"intervention incomplete: missing={index['missing_concepts']}, "
+            f"extra={index['extra_concepts']}"
+        )
+    payload = {
+        "output": str(destination / "index.json"),
+        "complete": index["complete"],
+        "observed_concepts": index["observed_concepts"],
+    }
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"intervention index: {len(index['observed_concepts'])}/"
+            f"{len(concepts)} complete -> {destination}"
+        ),
+    )
+    return 0
+
+
+def _configured_concepts(
+    configured: Sequence[str], requested: list[str] | None, *, method: str
+) -> tuple[str, ...]:
+    expected = tuple(str(value) for value in configured)
+    selected = tuple(requested) if requested else expected
+    unknown = sorted(set(selected) - set(expected))
+    if unknown or not selected:
+        raise ValueError(
+            f"{method} concept selection invalid: unknown={unknown}, selected={selected}"
+        )
+    return selected
+
+
+def _cmd_j_component_intervention(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json
+    from jlens_workspace.concept_intervention.j_component import (
+        run_multilayer_j_intervention,
+    )
+
+    config = _load_config(args.config)
+    section = _require_section(config, "j_component")
+    concepts = _configured_concepts(
+        section.concept_ids, args.concept_id, method="J-component"
+    )
+    if args.grid_index is not None and len(concepts) != 1:
+        raise ValueError("a J-component grid shard requires exactly one concept")
+    destination = args.output or Path(config.output_dir)
+    bundle = _load_model_bundle(config)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        dataset_hash=_activation_dataset_hash(section.source_activations_dir),
+        notes={
+            "workflow": "j_component_intervention",
+            "selected_layers_path": section.selected_layers_path,
+            "source_occupancy_dir": section.source_occupancy_dir,
+            "concept_ids": list(concepts),
+            "generation": _generation_identity(
+                section.generation,
+                section.candidate_labels,
+            ),
+            **_shared_protocol_identity(section.selected_layers_path),
+        },
+    )
+    destination.mkdir(parents=True, exist_ok=True)
+    manifest_path = (
+        destination / "manifest.json"
+        if args.grid_index is None
+        else destination
+        / "manifests"
+        / quote(concepts[0], safe="")
+        / f"grid_{args.grid_index:04d}.json"
+    )
+    if args.grid_index is None:
+        atomic_write_json(manifest_path, manifest)
+    else:
+        _write_immutable_shard_manifest(
+            manifest_path,
+            manifest,
+            scientific_summary=(
+                destination
+                / "targets"
+                / quote(concepts[0], safe="")
+                / "shards"
+                / f"grid_{args.grid_index:04d}"
+                / "summary.json"
+            ),
+        )
+    results = [
+        run_multilayer_j_intervention(
+            output_dir=destination,
+            model=bundle.model,
+            tokenizer=bundle.tokenizer,
+            config=section,
+            concept_id=concept_id,
+            grid_index=args.grid_index,
+            overwrite=args.overwrite,
+        )
+        for concept_id in concepts
+    ]
+    payload = {"output": str(destination), "concepts": list(concepts), "results": results}
+    _finish_command(
+        args,
+        payload,
+        message=f"J-component intervention: {len(results)} concepts -> {destination}",
+    )
+    return 0
+
+
+def _cmd_j_component_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import sha256_file
+    from jlens_workspace.concept_intervention.j_component import (
+        rebuild_multilayer_j_index,
+    )
+
+    config = _load_config(args.config)
+    section = _require_section(config, "j_component")
+    destination = args.output or Path(config.output_dir)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        dataset_hash=_activation_dataset_hash(section.source_activations_dir),
+        notes={
+            "workflow": "j_component_intervention",
+            "selected_layers_path": section.selected_layers_path,
+            "lens_sha256": sha256_file(config.lens.path_or_repo),
+            "generation": _generation_identity(
+                section.generation,
+                section.candidate_labels,
+            ),
+            **_shared_protocol_identity(section.selected_layers_path),
+        },
+    )
+    index = rebuild_multilayer_j_index(
+        destination,
+        concept_ids=section.concept_ids,
+        strengths=section.strengths,
+        random_control_seeds=section.random_control_seeds,
+        expected_manifest=manifest.__dict__,
+        index_builder=_index_builder_provenance(manifest),
+    )
+    if not index["complete"]:
+        raise ValueError(
+            f"J-component intervention incomplete: {index['missing_concepts']}"
+        )
+    _finish_command(
+        args,
+        index,
+        message=f"J-component index complete -> {destination / 'index.json'}",
+    )
+    return 0
+
+
+def _cmd_raptor_intervention(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json
+    from jlens_workspace.concept_intervention.raptor import (
+        run_raptor_intervention,
+    )
+
+    config = _load_config(args.config)
+    section = _require_section(config, "raptor")
+    concepts = _configured_concepts(
+        section.concept_ids, args.concept_id, method="RAPTOR"
+    )
+    if args.grid_index is not None and len(concepts) != 1:
+        raise ValueError("a RAPTOR grid shard requires exactly one concept")
+    destination = args.output or Path(config.output_dir)
+    bundle = _load_model_bundle(config)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        dataset_hash=_activation_dataset_hash(section.source_activations_dir),
+        notes={
+            "workflow": "raptor_intervention",
+            "selected_layers_path": section.selected_layers_path,
+            "upstream_repository": section.upstream_repository,
+            "upstream_commit": section.upstream_commit,
+            "concept_ids": list(concepts),
+            "generation": _generation_identity(
+                section.generation,
+                section.candidate_labels,
+            ),
+            **_shared_protocol_identity(section.selected_layers_path),
+        },
+    )
+    destination.mkdir(parents=True, exist_ok=True)
+    manifest_path = (
+        destination / "manifest.json"
+        if args.grid_index is None
+        else destination
+        / "manifests"
+        / quote(concepts[0], safe="")
+        / f"grid_{args.grid_index:04d}.json"
+    )
+    if args.grid_index is None:
+        atomic_write_json(manifest_path, manifest)
+    else:
+        _write_immutable_shard_manifest(
+            manifest_path,
+            manifest,
+            scientific_summary=(
+                destination
+                / "targets"
+                / quote(concepts[0], safe="")
+                / "shards"
+                / f"grid_{args.grid_index:04d}"
+                / "summary.json"
+            ),
+        )
+    results = [
+        run_raptor_intervention(
+            output_dir=destination,
+            model=bundle.model,
+            tokenizer=bundle.tokenizer,
+            config=section,
+            concept_id=concept_id,
+            grid_index=args.grid_index,
+            overwrite=args.overwrite,
+        )
+        for concept_id in concepts
+    ]
+    payload = {"output": str(destination), "concepts": list(concepts), "results": results}
+    _finish_command(
+        args,
+        payload,
+        message=f"RAPTOR intervention: {len(results)} concepts -> {destination}",
+    )
+    return 0
+
+
+def _cmd_raptor_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import sha256_file
+    from jlens_workspace.concept_intervention.raptor import rebuild_raptor_index
+
+    config = _load_config(args.config)
+    section = _require_section(config, "raptor")
+    destination = args.output or Path(config.output_dir)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        dataset_hash=_activation_dataset_hash(section.source_activations_dir),
+        notes={
+            "workflow": "raptor_intervention",
+            "selected_layers_path": section.selected_layers_path,
+            "lens_sha256": sha256_file(config.lens.path_or_repo),
+            "generation": _generation_identity(
+                section.generation,
+                section.candidate_labels,
+            ),
+            "upstream_commit": section.upstream_commit,
+            **_shared_protocol_identity(section.selected_layers_path),
+        },
+    )
+    index = rebuild_raptor_index(
+        destination,
+        concept_ids=section.concept_ids,
+        target_probabilities=section.target_probabilities,
+        expected_manifest=manifest.__dict__,
+        index_builder=_index_builder_provenance(manifest),
+    )
+    if not index["complete"]:
+        raise ValueError(
+            f"RAPTOR intervention incomplete: {index['missing_concepts']}"
+        )
+    _finish_command(
+        args,
+        index,
+        message=f"RAPTOR index complete -> {destination / 'index.json'}",
+    )
+    return 0
+
+
+def _cmd_intervention_compare_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import RunManifest
+    from jlens_workspace.concept_intervention.comparison import (
+        rebuild_intervention_comparison,
+    )
+
+    builder_manifest = RunManifest.for_workspace(Path.cwd())
+    candidate_rescores = (
+        args.j_candidate_rescore,
+        args.iti_candidate_rescore,
+        args.raptor_candidate_rescore,
+    )
+    if any(value is not None for value in candidate_rescores) and not all(
+        value is not None for value in candidate_rescores
+    ):
+        raise ValueError("pass all three candidate rescore roots or none")
+    rescore_roots = (
+        None
+        if candidate_rescores[0] is None
+        else {
+            "j_component_intervention": candidate_rescores[0],
+            "iti_intervention": candidate_rescores[1],
+            "raptor_intervention": candidate_rescores[2],
+        }
+    )
+    index = rebuild_intervention_comparison(
+        output_dir=args.output,
+        shared_layer_selection=args.shared_layer_selection,
+        j_root=args.j_output,
+        iti_root=args.iti_output,
+        raptor_root=args.raptor_output,
+        concept_ids=args.concept_id,
+        index_builder=_index_builder_provenance(builder_manifest),
+        candidate_rescore_roots=rescore_roots,
+    )
+    _finish_command(
+        args,
+        index,
+        message=f"three-method comparison complete -> {args.output / 'index.json'}",
+    )
+    return 0
+
+
+def _cmd_intervention_smoke_check(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.comparison import (
+        validate_three_method_smokes,
+    )
+
+    result = validate_three_method_smokes(
+        output_path=args.output,
+        j_root=args.j_output,
+        iti_root=args.iti_output,
+        raptor_root=args.raptor_output,
+        concept_id=args.concept_id,
+    )
+    _finish_command(
+        args,
+        result,
+        message=f"three-method GPU smokes complete -> {args.output}",
+    )
+    return 0
+
+
+def _cmd_judge_validate(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import validate_evaluation
+
+    payload = validate_evaluation(args.config)
+    _finish_command(
+        args,
+        payload,
+        message=f"valid three-method judge registration: {payload['experiment_name']}",
+    )
+    return 0
+
+
+def _cmd_judge_prepare(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import prepare_evaluation
+
+    result = prepare_evaluation(args.config)
+    _finish_command(
+        args,
+        result,
+        message=f"blinded judge tasks prepared -> {result['experiment_name']}",
+    )
+    return 0
+
+
+def _cmd_judge_run(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import run_judge_tasks
+
+    result = run_judge_tasks(
+        args.config,
+        role=args.role,
+        task_set=args.task_set,
+        split=args.split,
+        limit=args.limit,
+        smoke=args.smoke,
+        jobs=args.jobs,
+    )
+    _finish_command(
+        args,
+        result,
+        message=(
+            f"judge {args.role}: {result['completed_tasks']}/"
+            f"{result['requested_tasks']} -> {args.task_set}"
+        ),
+    )
+    return 0 if result["invocation_succeeded"] else 2
+
+
+def _cmd_judge_calibrate(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import calibrate_judges
+
+    result = calibrate_judges(args.config)
+    _finish_command(
+        args,
+        result,
+        message=f"judge calibration passed={result['passed']}",
+    )
+    return 0 if result["passed"] else 2
+
+
+def _cmd_judge_review_prepare(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import prepare_review_tasks
+
+    result = prepare_review_tasks(args.config, tier=args.tier)
+    _finish_command(
+        args,
+        result,
+        message=f"{args.tier} tasks: {result['tasks']} -> {result['task_path']}",
+    )
+    return 0
+
+
+def _cmd_judge_aggregate(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import aggregate_evaluation
+
+    result = aggregate_evaluation(args.config)
+    _finish_command(
+        args,
+        result,
+        message=f"judge analysis complete -> {result['report']}",
+    )
+    return 0
+
+
+def _cmd_judge_audit_export(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.judge import export_human_audit
+
+    result = export_human_audit(args.config)
+    _finish_command(
+        args,
+        result,
+        message=f"method-blind human audit -> {result['tasks']}",
+    )
+    return 0
+
+
+def _iti_concepts(section: Any, requested: list[str] | None) -> tuple[str, ...]:
+    configured = tuple(section.concept_ids)
+    concepts = tuple(requested) if requested else configured
+    unknown = sorted(set(concepts) - set(configured))
+    if unknown:
+        raise ValueError(f"concepts absent from ITI config: {unknown}")
+    if not concepts:
+        raise ValueError("at least one ITI concept is required")
+    return concepts
+
+
+def _cmd_iti_capture(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.iti import capture_iti_head_activations
+    from jlens_workspace.data import dataset_fingerprint
+
+    config = _load_config(args.config)
+    iti = _require_section(config, "iti")
+    examples = _load_examples(config)
+    bundle = _load_model_bundle(config)
+    destination = args.output or Path(iti.head_activations_dir)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        dataset_hash=dataset_fingerprint(examples),
+        notes={
+            "workflow": "iti_activation_capture",
+            "method": iti.method,
+            "coordinate": "attention_head_output_pre_o_proj",
+            "attention_layers": list(iti.attention_layers),
+            "upstream_repository": iti.upstream_repository,
+            "upstream_commit": iti.upstream_commit,
+            "source_residual_activations_dir": iti.source_residual_activations_dir,
+        },
+    )
+    output = capture_iti_head_activations(
+        model=bundle.model,
+        tokenizer=bundle.tokenizer,
+        examples=examples,
+        layers=iti.attention_layers,
+        output_dir=destination,
+        batch_size=iti.capture_batch_size,
+        max_length=iti.capture_max_length,
+        add_special_tokens=config.activations.add_special_tokens,
+        expected_num_heads=iti.num_heads,
+        expected_head_dim=iti.head_dim,
+        source_residual_activations=iti.source_residual_activations_dir,
+        manifest=manifest,
+        overwrite=args.overwrite,
+    )
+    metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    if (
+        int(metadata["num_heads"]) != iti.num_heads
+        or int(metadata["head_dim"]) != iti.head_dim
+    ):
+        raise ValueError(
+            "runtime ITI head layout differs from config: "
+            f"observed H={metadata['num_heads']}, D_head={metadata['head_dim']}"
+        )
+    payload = {
+        "output": str(output),
+        "n_examples": metadata["n_examples"],
+        "layers": metadata["layers"],
+        "num_heads": metadata["num_heads"],
+        "head_dim": metadata["head_dim"],
+        "coordinate": metadata["coordinate"],
+    }
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"captured ITI heads for {metadata['n_examples']} examples x "
+            f"{len(metadata['layers'])} layers -> {output}"
+        ),
+    )
+    return 0
+
+
+def _cmd_iti_fit(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json
+    from jlens_workspace.concept_intervention.iti import (
+        fit_iti_concept_directions,
+        fit_shared_iti_concept_directions,
+    )
+
+    config = _load_config(args.config)
+    iti = _require_section(config, "iti")
+    concepts = _iti_concepts(iti, args.concept_id)
+    destination = args.output or Path(iti.directions_dir)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        notes={
+            "workflow": "iti_direction_fit",
+            "method": iti.method,
+            "coordinate": "attention_head_output_pre_o_proj",
+            "upstream_repository": iti.upstream_repository,
+            "upstream_commit": iti.upstream_commit,
+            "head_activations_dir": iti.head_activations_dir,
+            "test_examples_used": 0,
+        },
+    )
+    results = []
+    for concept_id in concepts:
+        if iti.method == "honest_llama_mass_mean_qwen_full_attention":
+            assert iti.selected_layers_path is not None
+            metrics = fit_shared_iti_concept_directions(
+                activation_dir=iti.head_activations_dir,
+                output_dir=destination,
+                concept_id=concept_id,
+                selected_layers_path=iti.selected_layers_path,
+                row_manifest_path=(
+                    Path(iti.selected_layers_path).parent / "row_manifest.json"
+                ),
+                max_top_k=max(
+                    max(iti.top_k_grid), max(iti.layer_matched_top_k_grid)
+                ),
+                random_seeds=iti.random_control_seeds,
+                seed=config.seed,
+                variants=iti.variants,
+                overwrite=args.overwrite,
+            )
+        else:
+            metrics = fit_iti_concept_directions(
+                activation_dir=iti.head_activations_dir,
+                output_dir=destination,
+                concept_id=concept_id,
+                max_top_k=max(iti.top_k_grid),
+                random_seeds=iti.random_control_seeds,
+                seed=config.seed,
+                overwrite=args.overwrite,
+            )
+        encoded = quote(concept_id, safe="")
+        shard_manifest = destination / "manifests" / f"{encoded}.json"
+        atomic_write_json(shard_manifest, manifest)
+        results.append(
+            {
+                "concept_id": concept_id,
+                "metrics": str(destination / encoded / "metrics.json"),
+                "max_top_k": metrics["max_top_k"],
+            }
+        )
+    payload = {"output": str(destination), "concepts": results}
+    _finish_command(
+        args,
+        payload,
+        message=f"fitted ITI directions for {len(results)} concepts -> {destination}",
+    )
+    return 0
+
+
+def _cmd_iti_run(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import (
+        atomic_write_json,
+        resolve_repository_resource,
+        sha256_file,
+    )
+    from jlens_workspace.concept_intervention.iti import (
+        run_iti_intervention,
+        run_iti_intervention_experiment,
+    )
+
+    config = _load_config(args.config)
+    iti = _require_section(config, "iti")
+    concepts = _iti_concepts(iti, args.concept_id)
+    destination = args.output or Path(config.output_dir)
+    bundle = _load_model_bundle(config)
+    shared_identity = (
+        _shared_protocol_identity(iti.selected_layers_path)
+        if iti.selected_layers_path is not None
+        else {}
+    )
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        dataset_hash=_activation_dataset_hash(
+            iti.source_residual_activations_dir
+        ),
+        notes={
+            "workflow": "iti_intervention",
+            "method": iti.method,
+            "coordinate": "attention_head_output_pre_o_proj",
+            "upstream_repository": iti.upstream_repository,
+            "upstream_commit": iti.upstream_commit,
+            "prompts_path": iti.prompts_path,
+            "prompts_sha256": sha256_file(
+                resolve_repository_resource(iti.prompts_path)
+            ),
+            "validation_prompt_prefixes": list(iti.validation_prompt_prefixes),
+            "test_prompt_prefixes": list(iti.test_prompt_prefixes),
+            "generation": (
+                _generation_identity(iti.generation, iti.candidate_labels)
+                if iti.generation is not None
+                else None
+            ),
+            **shared_identity,
+        },
+    )
+    destination.mkdir(parents=True, exist_ok=True)
+    summaries = []
+    for concept_id in concepts:
+        encoded = quote(concept_id, safe="")
+        shard_manifest = (
+            destination / "manifests" / f"{encoded}.json"
+            if args.grid_index is None
+            else destination
+            / "manifests"
+            / encoded
+            / f"grid_{args.grid_index:04d}.json"
+        )
+        if args.grid_index is None:
+            atomic_write_json(shard_manifest, manifest)
+        else:
+            _write_immutable_shard_manifest(
+                shard_manifest,
+                manifest,
+                scientific_summary=(
+                    destination
+                    / "targets"
+                    / encoded
+                    / "shards"
+                    / f"grid_{args.grid_index:04d}"
+                    / "summary.json"
+                ),
+            )
+        if iti.method == "honest_llama_mass_mean_qwen_full_attention":
+            result = run_iti_intervention_experiment(
+                output_dir=destination,
+                model=bundle.model,
+                tokenizer=bundle.tokenizer,
+                config=iti,
+                concept_id=concept_id,
+                grid_index=args.grid_index,
+                overwrite=args.overwrite,
+            )
+        else:
+            result = run_iti_intervention(
+                output_dir=destination,
+                model=bundle.model,
+                tokenizer=bundle.tokenizer,
+                target_concept_id=concept_id,
+                candidate_labels=iti.candidate_labels,
+                prompts_path=iti.prompts_path,
+                direction_dir=iti.directions_dir,
+                top_k_grid=iti.top_k_grid,
+                strengths=iti.strengths,
+                random_seeds=iti.random_control_seeds,
+                validation_prompt_prefixes=iti.validation_prompt_prefixes,
+                test_prompt_prefixes=iti.test_prompt_prefixes,
+                num_heads=iti.num_heads,
+                head_dim=iti.head_dim,
+                score_batch_size=iti.score_batch_size,
+                generation_prompt_count=iti.generation_prompt_count,
+                max_new_tokens=iti.max_new_tokens,
+                run_metadata={
+                    "experiment_name": config.experiment_name,
+                    "config_sha256": manifest.notes.get("config_sha256"),
+                    "git_commit": manifest.git_commit,
+                    "seed": config.seed,
+                    "random_control_seeds": list(iti.random_control_seeds),
+                },
+                overwrite=args.overwrite,
+            )
+        summaries.append(
+            {
+                "concept_id": concept_id,
+                "status": result["status"],
+                "summary": result["summary"],
+            }
+        )
+    payload = {
+        "output": str(destination),
+        "concepts": summaries,
+    }
+    _finish_command(
+        args,
+        payload,
+        message=f"ITI intervention: {len(summaries)} concepts -> {destination}",
+    )
+    return 0
+
+
+def _cmd_iti_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import (
+        atomic_write_json,
+        resolve_repository_resource,
+        sha256_file,
+    )
+    from jlens_workspace.concept_intervention.iti import (
+        rebuild_iti_experiment_index,
+        rebuild_iti_index,
+    )
+
+    config = _load_config(args.config)
+    iti = _require_section(config, "iti")
+    destination = args.output or Path(config.output_dir)
+    source_residual_root = Path(iti.source_residual_activations_dir)
+    source_residual_metadata_path = source_residual_root / "metadata.json"
+    source_residual_labels_path = source_residual_root / "labels.npy"
+    source_residual_metadata = json.loads(
+        source_residual_metadata_path.read_text(encoding="utf-8")
+    )
+    shared_identity = (
+        _shared_protocol_identity(iti.selected_layers_path)
+        if iti.selected_layers_path is not None
+        else {}
+    )
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        dataset_hash=_activation_dataset_hash(
+            iti.source_residual_activations_dir
+        ),
+        notes={
+            "workflow": "iti_intervention",
+            "method": iti.method,
+            "coordinate": "attention_head_output_pre_o_proj",
+            "upstream_repository": iti.upstream_repository,
+            "upstream_commit": iti.upstream_commit,
+            "prompts_path": iti.prompts_path,
+            "prompts_sha256": sha256_file(
+                resolve_repository_resource(iti.prompts_path)
+            ),
+            "validation_prompt_prefixes": list(iti.validation_prompt_prefixes),
+            "test_prompt_prefixes": list(iti.test_prompt_prefixes),
+            "reference_j_intervention_dir": iti.reference_j_intervention_dir,
+            "source_residual_activations_dir": iti.source_residual_activations_dir,
+            "source_residual_metadata_sha256": sha256_file(
+                source_residual_metadata_path
+            ),
+            "source_residual_labels_sha256": sha256_file(source_residual_labels_path),
+            "source_residual_example_hash": source_residual_metadata.get(
+                "example_hash"
+            ),
+            "selected_layers_path": iti.selected_layers_path,
+            "lens_sha256": sha256_file(config.lens.path_or_repo),
+            "generation": (
+                _generation_identity(iti.generation, iti.candidate_labels)
+                if iti.generation is not None
+                else None
+            ),
+            **shared_identity,
+        },
+    )
+    if iti.method == "honest_llama_mass_mean_qwen_full_attention":
+        index = rebuild_iti_experiment_index(
+            destination,
+            concept_ids=iti.concept_ids,
+            config=iti,
+            expected_manifest=manifest.__dict__,
+            index_builder=_index_builder_provenance(manifest),
+        )
+    else:
+        atomic_write_json(destination / "manifest.json", manifest)
+        index = rebuild_iti_index(
+            destination,
+            expected_concepts=iti.concept_ids,
+            reference_j_intervention_dir=iti.reference_j_intervention_dir,
+            validation_prompt_prefixes=iti.validation_prompt_prefixes,
+            test_prompt_prefixes=iti.test_prompt_prefixes,
+            run_metadata={
+                "experiment_name": config.experiment_name,
+                "config_sha256": manifest.notes.get("config_sha256"),
+                "git_commit": manifest.git_commit,
+            },
+        )
+    if not index["complete"]:
+        raise ValueError(
+            f"ITI intervention incomplete: missing={index['missing_concepts']}, "
+            f"extra={index['extra_concepts']}"
+        )
+    payload = {
+        "output": str(destination / "index.json"),
+        "complete": True,
+        "observed_concepts": index["observed_concepts"],
+    }
+    if iti.method != "honest_llama_mass_mean_qwen_full_attention":
+        payload["comparison"] = str(destination / "comparison.json")
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"ITI index/comparison: {len(index['observed_concepts'])}/"
+            f"{len(iti.concept_ids)} complete -> {destination}"
+        ),
+    )
+    return 0
+
+
+def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
+    from transformers import AutoTokenizer
+
+    from jlens_workspace.artifacts import sha256_file
+    from jlens_workspace.jacobian import (
+        build_effective_unembedding,
+        restrict_effective_unembedding,
+    )
+    from jlens_workspace.pursuit import UnitNormDictionary, build_token_frame_dictionary
+    from jlens_workspace.workflows.occupancy import (
+        ConceptTarget,
+        run_concept_occupancy,
+        verify_lens_artifact_sha256,
+    )
+    from jlens_workspace.workflows.probe_replicates import (
+        load_bootstrap_probe_vectors,
+    )
+
+    config = _load_config(args.config)
+    occupancy = _require_section(config, "occupancy")
+    lens = _require_section(config, "lens")
+    if lens.source not in {"local", "fit"}:
+        raise ValueError(
+            "occupancy requires a local lens or a lens fitted by the same config"
+        )
+    if lens.source == "local" and not lens.path_or_repo:
+        raise ValueError("local occupancy lens requires path_or_repo")
+    layers = tuple(args.layer) if args.layer else tuple(occupancy.layers)
+    unknown_layers = sorted(set(layers) - set(occupancy.layers))
+    if unknown_layers:
+        raise ValueError(f"layers not declared in occupancy config: {unknown_layers}")
+    conventions = (
+        tuple(args.convention) if args.convention else tuple(occupancy.conventions)
+    )
+    unknown_conventions = sorted(set(conventions) - set(occupancy.conventions))
+    if unknown_conventions:
+        raise ValueError(
+            f"conventions not declared in occupancy config: {unknown_conventions}"
+        )
+    configured_replicates = tuple(occupancy.probe_replicates or ["primary"])
+    replicate_ids = (
+        tuple(args.replicate_id) if args.replicate_id else configured_replicates
+    )
+    unknown_replicates = sorted(set(replicate_ids) - set(configured_replicates))
+    if unknown_replicates:
+        raise ValueError(
+            f"replicates not declared in occupancy config: {unknown_replicates}"
+        )
+    if any(replicate != "primary" for replicate in replicate_ids):
+        if args.probe_replicates is None:
+            raise ValueError(
+                "--probe-replicates is required for non-primary replicate IDs"
+            )
+        replicate_manifest_path = args.probe_replicates / "manifest.json"
+        replicate_manifest = json.loads(
+            replicate_manifest_path.read_text(encoding="utf-8")
+        )
+        if not replicate_manifest.get("complete"):
+            raise ValueError(
+                f"bootstrap probe manifest is not complete: {replicate_manifest_path}"
+            )
+    requested_k_max = int(args.k_max or occupancy.k_max)
+    if requested_k_max < 1 or requested_k_max > occupancy.k_max:
+        raise ValueError(
+            f"k_max override must lie in [1, {occupancy.k_max}], "
+            f"got {requested_k_max}"
+        )
+
+    lens_path = (
+        Path(lens.path_or_repo)
+        if lens.source == "local"
+        else _fitted_lens_path(config, None)
+    )
+    if lens_path.is_dir():
+        lens_path = lens_path / (lens.filename or "lens.pt")
+    lens_sha = (
+        verify_lens_artifact_sha256(
+            lens_path, str(occupancy.expected_lens_sha256)
+        )
+        if occupancy.expected_lens_sha256 is not None
+        else sha256_file(lens_path)
+    )
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.model.tokenizer_id or config.model.model_id,
+        revision=config.model.tokenizer_revision or config.model.revision,
+    )
+    from jlens_workspace.jacobian import OfficialJLensAdapter
+
+    d_model_unembedding, cached_norm = _load_unembedding_tensors_lightweight(config)
+    managed_lens = OfficialJLensAdapter.load(
+        lens_path,
+        expected=_lens_expected(config, int(d_model_unembedding.shape[1])),
+    )
+    recorded_bos = managed_lens.metadata.extra.get("force_bos")
+    if recorded_bos is not None and recorded_bos != config.model.force_bos:
+        raise ValueError(
+            f"lens force_bos={recorded_bos!r} differs from configured "
+            f"force_bos={config.model.force_bos!r}"
+        )
+    missing_layers = sorted(set(layers) - set(managed_lens.source_layers))
+    if missing_layers:
+        raise ValueError(f"layers absent from fitted lens: {missing_layers}")
+
+    effectives: dict[str, Any] = {}
+    for convention in conventions:
+        effective = build_effective_unembedding(
+            d_model_unembedding,
+            convention=convention,
+            norm=cached_norm,
+            model_id=config.model.model_id,
+            model_revision=config.model.revision,
+        )
+        effectives[convention] = restrict_effective_unembedding(
+            effective, len(tokenizer)
+        )
+
+    expected_identity = _expected_probe_identity(config)
+    probes_manifest = json.loads(
+        (args.probes / "manifest.json").read_text(encoding="utf-8")
+    )
+    vector_hashes = {
+        (int(entry["layer"]), str(entry["concept_id"])): str(entry["vector_sha256"])
+        for entry in probes_manifest.get("probes", [])
+    }
+    targets: list[ConceptTarget] = []
+    for layer in layers:
+        primary_vectors = _load_probe_vectors(
+            args.probes, layer, expected_identity=expected_identity
+        )
+        selected = (
+            occupancy.concept_ids
+            if occupancy.concept_ids is not None
+            else sorted(primary_vectors)
+        )
+        unknown = sorted(set(selected) - set(primary_vectors))
+        if unknown:
+            raise ValueError(f"concepts absent from probes at layer {layer}: {unknown}")
+        for replicate_id in replicate_ids:
+            if replicate_id == "primary":
+                vectors_for_replicate = {
+                    concept_id: (
+                        primary_vectors[concept_id],
+                        vector_hashes.get((int(layer), concept_id), ""),
+                        {
+                            "probes_dir": str(args.probes),
+                            "activation_artifact_hash": probes_manifest.get(
+                                "activation_artifact_hash"
+                            ),
+                        },
+                    )
+                    for concept_id in selected
+                }
+            else:
+                assert args.probe_replicates is not None
+                bootstrap_vectors = load_bootstrap_probe_vectors(
+                    args.probe_replicates,
+                    layer=int(layer),
+                    replicate_id=replicate_id,
+                )
+                missing = sorted(set(selected) - set(bootstrap_vectors))
+                if missing:
+                    raise ValueError(
+                        f"concepts absent from {replicate_id} at layer "
+                        f"{layer}: {missing}"
+                    )
+                vectors_for_replicate = {
+                    concept_id: (
+                        bootstrap_vectors[concept_id][0],
+                        bootstrap_vectors[concept_id][1],
+                        {
+                            "probe_replicates_dir": str(args.probe_replicates),
+                            "bootstrap_metrics": bootstrap_vectors[concept_id][2],
+                        },
+                    )
+                    for concept_id in selected
+                }
+            for concept_id in selected:
+                vector, vector_hash, provenance = vectors_for_replicate[concept_id]
+                targets.append(
+                    ConceptTarget(
+                        layer=int(layer),
+                        concept_id=concept_id,
+                        vector=vector,
+                        vector_sha256=vector_hash,
+                        replicate_id=replicate_id,
+                        provenance=provenance,
+                    )
+                )
+
+    def dictionary_factory(layer: int, convention: str) -> Any:
+        dictionary = build_token_frame_dictionary(
+            effectives[convention],
+            managed_lens.jacobians[layer],
+            convention=convention,
+            chunk_size=occupancy.vocabulary_chunk_size,
+            compute_device=occupancy.device,
+        )
+        if occupancy.solver_method == "nonnegative_gradient_pursuit_standard":
+            return UnitNormDictionary(dictionary)
+        return dictionary
+
+    destination = args.output or Path(config.output_dir)
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        notes={
+            "workflow": "concept_occupancy",
+            "method": occupancy.method,
+            "mode": occupancy.mode,
+            "lens_artifact": {
+                "path": str(lens_path),
+                "sha256": lens_sha,
+                "identity_status": "content_hashed",
+            },
+            "probes_dir": str(args.probes),
+            "probes_manifest_sha256": sha256_file(args.probes / "manifest.json"),
+            "probe_replicates_dir": (
+                str(args.probe_replicates) if args.probe_replicates else None
+            ),
+            "layers": list(layers),
+            "conventions": list(conventions),
+            "replicate_ids": list(replicate_ids),
+            "selection_modes": list(occupancy.selection_modes),
+            "k_max": requested_k_max,
+            "random_seeds": list(occupancy.random_seeds),
+            "control_atom_fractions": list(occupancy.control_atom_fractions),
+        },
+    )
+    destination.mkdir(parents=True, exist_ok=True)
+    shard_name = (
+        "layers_"
+        + "-".join(f"{layer:02d}" for layer in layers)
+        + "__conventions_"
+        + "-".join(conventions)
+        + "__replicates_"
+        + "-".join(replicate_ids)
+        + ".json"
+    )
+    atomic_write_json_path = destination / "manifests" / shard_name
+    from jlens_workspace.artifacts import atomic_write_json
+
+    atomic_write_json(atomic_write_json_path, manifest)
+    summary = run_concept_occupancy(
+        output_dir=destination,
+        dictionary_factory=dictionary_factory,
+        targets=targets,
+        conventions=conventions,
+        selection_modes=occupancy.selection_modes,
+        signs=occupancy.signs,
+        k_max=requested_k_max,
+        report_grid=[
+            value for value in occupancy.report_grid if value <= requested_k_max
+        ],
+        random_seeds=occupancy.random_seeds,
+        control_atom_fractions=occupancy.control_atom_fractions,
+        absolute_thresholds=occupancy.absolute_thresholds,
+        chunk_size=occupancy.vocabulary_chunk_size,
+        decode_token=lambda token_id: tokenizer.decode([token_id]),
+        run_metadata={
+            "experiment_name": config.experiment_name,
+            "config_sha256": manifest.notes.get("config_sha256"),
+            "lens_sha256": lens_sha,
+            "seed": config.seed,
+        },
+        method=occupancy.method,
+        solver_method=occupancy.solver_method,
+        primary_crossing_rule=occupancy.primary_crossing_rule,
+        overwrite=args.overwrite,
+    )
+    payload = {
+        "output": summary["output"],
+        "completed": summary["completed"],
+        "skipped": summary["skipped"],
+        "layers": list(layers),
+        "n_targets": len(targets),
+        "manifest": str(atomic_write_json_path),
+    }
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"occupancy: {summary['completed']} combos completed, "
+            f"{summary['skipped']} skipped -> {summary['output']}"
+        ),
+    )
+    return 0
+
+
+def _cmd_occupancy_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json
+    from jlens_workspace.workflows.occupancy import rebuild_occupancy_index
+
+    config = _load_config(args.config)
+    occupancy = _require_section(config, "occupancy")
+    destination = args.output or Path(config.output_dir)
+    replicates = tuple(occupancy.probe_replicates or ["primary"])
+    concepts = tuple(occupancy.concept_ids or ())
+    if not concepts:
+        raise ValueError("occupancy indexing requires explicit concept_ids")
+    expected = (
+        len(occupancy.layers)
+        * len(concepts)
+        * len(occupancy.signs)
+        * len(occupancy.conventions)
+        * len(occupancy.selection_modes)
+        * len(replicates)
+    )
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        notes={
+            "workflow": "concept_occupancy",
+            "method": occupancy.method,
+            "solver_method": occupancy.solver_method,
+            "primary_crossing_rule": occupancy.primary_crossing_rule,
+            "expected_combinations": expected,
+            "coordinate": "resid_post",
+        },
+    )
+    atomic_write_json(destination / "manifest.json", manifest)
+    index = rebuild_occupancy_index(
+        destination,
+        method=occupancy.method,
+        expected_combinations=expected,
+        run_metadata={
+            "experiment_name": config.experiment_name,
+            "config_sha256": manifest.notes.get("config_sha256"),
+            "git_commit": manifest.git_commit,
+        },
+    )
+    if not index["complete"]:
+        raise ValueError(
+            f"occupancy incomplete: {index['observed_combinations']}/"
+            f"{index['expected_combinations']}"
+        )
+    payload = {
+        "output": str(destination / "occupancy" / "index.json"),
+        "observed_combinations": index["observed_combinations"],
+        "expected_combinations": index["expected_combinations"],
+        "complete": index["complete"],
+    }
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"occupancy index: {index['observed_combinations']}/"
+            f"{index['expected_combinations']} complete -> {destination}"
+        ),
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse ``argv`` and return a process exit code."""
 
@@ -1530,6 +3568,161 @@ def main(argv: list[str] | None = None) -> int:
             raise
         print(f"error: {error}", file=sys.stderr)
         return 2
+
+
+def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
+    from jlens_workspace.artifacts import atomic_write_json, sha256_file
+    from jlens_workspace.concept_intervention.candidate_rescore import (
+        CANONICAL_SCORE_CONTRACT,
+        rebuild_candidate_rescore_index,
+    )
+
+    config = _load_config(args.config)
+    source_root = args.source_output.resolve()
+    destination = args.output.resolve()
+    if source_root == destination:
+        raise ValueError("candidate rescore output must differ from source output")
+    source_index_path = source_root / "index.json"
+    source_manifest_path = source_root / "manifest.json"
+    if not source_index_path.is_file() or not source_manifest_path.is_file():
+        raise ValueError("candidate rescore source method index/manifest is missing")
+    source_index = json.loads(source_index_path.read_text(encoding="utf-8"))
+    if (
+        source_index.get("complete") is not True
+        or source_index.get("method") != args.method
+    ):
+        raise ValueError("candidate rescore source method index is incomplete")
+
+    if args.method == "j_component_intervention":
+        from jlens_workspace.concept_intervention.j_component import (
+            run_multilayer_j_intervention,
+        )
+
+        section = _require_section(config, "j_component")
+        activation_root = section.source_activations_dir
+        selected_layers_path = section.selected_layers_path
+        generation_identity = _generation_identity(
+            section.generation, section.candidate_labels
+        )
+
+        def run_one(concept_id: str) -> dict[str, Any]:
+            return run_multilayer_j_intervention(
+                output_dir=destination,
+                model=bundle.model,
+                tokenizer=bundle.tokenizer,
+                config=section,
+                concept_id=concept_id,
+                overwrite=args.overwrite,
+                candidate_only=True,
+                score_batch_size=1,
+            )
+
+    elif args.method == "iti_intervention":
+        from jlens_workspace.concept_intervention.iti import (
+            run_iti_intervention_experiment,
+        )
+
+        section = _require_section(config, "iti")
+        if section.method != "honest_llama_mass_mean_qwen_full_attention":
+            raise ValueError("candidate rescore requires registered three-method ITI")
+        if section.generation is None or section.selected_layers_path is None:
+            raise ValueError("registered ITI rescore lacks shared generation/layers")
+        activation_root = section.source_residual_activations_dir
+        selected_layers_path = section.selected_layers_path
+        generation_identity = _generation_identity(
+            section.generation, section.candidate_labels
+        )
+
+        def run_one(concept_id: str) -> dict[str, Any]:
+            return run_iti_intervention_experiment(
+                output_dir=destination,
+                model=bundle.model,
+                tokenizer=bundle.tokenizer,
+                config=section,
+                concept_id=concept_id,
+                overwrite=args.overwrite,
+                candidate_only=True,
+                score_batch_size=1,
+            )
+
+    else:
+        from jlens_workspace.concept_intervention.raptor import (
+            run_raptor_intervention,
+        )
+
+        section = _require_section(config, "raptor")
+        activation_root = section.source_activations_dir
+        selected_layers_path = section.selected_layers_path
+        generation_identity = _generation_identity(
+            section.generation, section.candidate_labels
+        )
+
+        def run_one(concept_id: str) -> dict[str, Any]:
+            return run_raptor_intervention(
+                output_dir=destination,
+                model=bundle.model,
+                tokenizer=bundle.tokenizer,
+                config=section,
+                concept_id=concept_id,
+                overwrite=args.overwrite,
+                candidate_only=True,
+                score_batch_size=1,
+            )
+
+    concepts = _configured_concepts(
+        section.concept_ids,
+        args.concept_id,
+        method=f"{args.method} candidate rescore",
+    )
+    source_concepts = {
+        str(entry.get("concept_id")) for entry in source_index.get("entries", [])
+    }
+    if set(concepts) - source_concepts:
+        raise ValueError("candidate rescore concepts are absent from source index")
+    manifest = _experiment_manifest(
+        config,
+        args.config,
+        dataset_hash=_activation_dataset_hash(activation_root),
+        notes={
+            "workflow": "candidate_score_rescore_v1",
+            "generation": generation_identity,
+            **_shared_protocol_identity(selected_layers_path),
+            "candidate_rescore": {
+                "schema_version": 1,
+                "method": args.method,
+                "source_method_root": str(source_root),
+                "source_method_index_sha256": sha256_file(source_index_path),
+                "source_method_manifest_sha256": sha256_file(
+                    source_manifest_path
+                ),
+                "scoring_contract": CANONICAL_SCORE_CONTRACT,
+            },
+        },
+    )
+    destination.mkdir(parents=True, exist_ok=True)
+    manifest_path = destination / "manifest.json"
+    if manifest_path.is_file():
+        if json.loads(manifest_path.read_text(encoding="utf-8")) != manifest.__dict__:
+            raise ValueError("existing candidate rescore manifest differs")
+    else:
+        atomic_write_json(manifest_path, manifest)
+
+    bundle = _load_model_bundle(config)
+    results = [run_one(concept_id) for concept_id in concepts]
+    index = rebuild_candidate_rescore_index(
+        destination,
+        source_method_root=source_root,
+        method=args.method,
+        concept_ids=concepts,
+        index_builder=_index_builder_provenance(manifest),
+    )
+    payload = {"index": index, "results": results}
+    _finish_command(
+        args,
+        payload,
+        message=f"candidate rescore complete -> {destination / 'index.json'}",
+    )
+    return 0
 
 
 if __name__ == "__main__":  # pragma: no cover

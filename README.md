@@ -92,15 +92,27 @@ See [research design](docs/design.md) and the
 [experiment protocol](docs/experiment_protocol.md) for the full invariants and
 evidence gates.
 
+The lightweight [experiment report](reports/index.html) presents the completed
+Concept Intervention and J-space runs as separate, data-driven views. It is
+fully local and does not commit generated tensor artifacts.
+
 ## Repository layout
 
 ```text
 Concept_intervention/   data, configs, launchers, and reports for steering
 J_space/                configs, launchers, and reports for matrix geometry
-src/jlens_workspace/    shared typed implementation
+src/jlens_workspace/    packaged, tested implementation
+└── concept_intervention/
+    ├── shared_protocol.py  common rows, probes, and layer selection
+    ├── evaluation.py   method-neutral prompt and score contract
+    ├── generation.py   exhaustive generation and blind export
+    ├── j_component/    resid_post J/full/non-J/random method
+    ├── iti/            pre-o_proj head-probe and ITI method
+    └── raptor/         pinned external adaptive steering adapter
 tests/                  fast offline tests plus opt-in LLM/GPU tests
 scripts/                tiny public-model integration checks
 docs/                   shared design and experiment protocol
+reports/                shared static HTML report renderer
 artifacts/               generated immutable run outputs; gitignored
 ```
 
@@ -163,6 +175,18 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 
 These are dependency/API integration checks, not scientific experiments.
 
+## Local non-Slurm server
+
+The managed local server uses a separate top-level DAG rather than invoking the
+Quest `.slurm` components. Code remains in `/home/del6500/projects/J-lens`,
+durable artifacts go to `/data/del6500/J-lens`, and environments/caches/runtime
+state go to `/scr/del6500/J-lens`. GPU work may overlay foreign jobs only when
+the capacity gate passes; the launcher never controls pre-existing processes.
+
+See the [local server runbook](Concept_intervention/docs/local_server.md) for
+environment setup, bootstrap, Screen launch, GPU thresholds, resume state, and
+the final completion check.
+
 ## Qwen3.5-4B on the cluster
 
 The checked-in Qwen configs pin the model and tokenizer revisions. The formal
@@ -223,16 +247,25 @@ jlens-workspace config validate CONFIG.yaml
 jlens-workspace data validate DATA.jsonl
 jlens-workspace lens fit CONFIG.yaml
 jlens-workspace concept capture CONFIG.yaml
+jlens-workspace concept layer-select CONFIG.yaml
+jlens-workspace iti capture CONFIG.yaml
+jlens-workspace iti fit CONFIG.yaml --concept-id CONCEPT
+jlens-workspace iti run CONFIG.yaml --concept-id CONCEPT --grid-index GRID
+jlens-workspace iti index CONFIG.yaml
+jlens-workspace intervention j-component CONFIG.yaml --concept-id CONCEPT --grid-index GRID
+jlens-workspace intervention raptor CONFIG.yaml --concept-id CONCEPT --grid-index GRID
+jlens-workspace intervention compare-index --help
 jlens-workspace concept fit-probes CONFIG.yaml
 jlens-workspace concept align CONFIG.yaml
 jlens-workspace concept run CONFIG.yaml
 jlens-workspace matrix run CONFIG.yaml
 ```
 
-Use the staged concept commands to inspect intermediate artifacts. The current
+Use the staged concept commands to inspect intermediate artifacts. The legacy
 `concept run` launcher executes capture, probe fitting, and J/non-J alignment;
-generation-time intervention is available as a library primitive and is not
-silently implied by that command.
+it does not silently run an intervention. The registered three-method
+experiment has separate J-component, ITI, and RAPTOR commands and is documented
+in [its protocol](Concept_intervention/docs/three_method_interventions.md).
 
 ## Formal and smoke concept data
 
@@ -262,13 +295,20 @@ by Git. The logical layout is:
 
 ```text
 artifacts/
-├── concept_intervention/<run>/
-│   ├── manifest.json      immutable pins, config hash, environment provenance
-│   ├── run.json           completed stage index
-│   ├── activations/       layer_XX.npy, labels.npy, rows.jsonl, metadata
-│   ├── probes/            raw-coordinate probe vectors and held-out metrics
-│   ├── alignment/         token rankings and J/non-J decompositions
-│   └── interventions/     generations, controls, and dose-response results
+├── concept_intervention/
+│   ├── qwen35_4b_three_method_intervention_v1/
+│   │   ├── shared_intervention_protocol/
+│   │   ├── j_component_intervention/
+│   │   ├── iti_intervention/
+│   │   ├── raptor_intervention/
+│   │   └── intervention_comparison/
+│   └── <legacy-run>/
+│       ├── manifest.json  immutable pins, config hash, environment provenance
+│       ├── run.json       completed stage index
+│       ├── activations/   layer_XX.npy, labels.npy, rows.jsonl, metadata
+│       ├── probes/        raw-coordinate probe vectors and held-out metrics
+│       ├── alignment/     token rankings and J/non-J decompositions
+│       └── interventions/ generations, controls, and dose-response results
 └── j_space/<run>/
     ├── manifest.json
     ├── metrics.json

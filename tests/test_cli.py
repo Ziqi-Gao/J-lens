@@ -78,7 +78,7 @@ def test_parser_exposes_required_commands_without_importing_optional_stack() -> 
     }
     parser = cli.build_parser()
     help_text = parser.format_help()
-    for command in ("doctor", "config", "data", "concept", "matrix"):
+    for command in ("doctor", "config", "data", "concept", "iti", "matrix"):
         assert command in help_text
     for argv in (
         ["doctor"],
@@ -89,7 +89,24 @@ def test_parser_exposes_required_commands_without_importing_optional_stack() -> 
         ["concept", "fit-probes", "--config", "experiment.yaml"],
         ["concept", "align", "--config", "experiment.yaml"],
         ["concept", "run", "--config", "experiment.yaml"],
+        ["iti", "capture", "--config", "experiment.yaml"],
+        ["iti", "fit", "--config", "experiment.yaml"],
+        ["iti", "run", "--config", "experiment.yaml"],
+        ["iti", "index", "--config", "experiment.yaml"],
         ["matrix", "run", "--config", "experiment.yaml"],
+        [
+            "intervention",
+            "candidate-rescore",
+            "--config",
+            "experiment.yaml",
+            "--method",
+            "j_component_intervention",
+            "--source-output",
+            "source",
+            "--output",
+            "rescore",
+            "--overwrite",
+        ],
     ):
         assert callable(parser.parse_args(argv).handler)
     assert {
@@ -117,6 +134,69 @@ def test_top_level_help_succeeds(capsys: pytest.CaptureFixture[str]) -> None:
         cli.main(["--help"])
     assert exit_info.value.code == 0
     assert "concept" in capsys.readouterr().out
+
+
+def test_installed_vcs_commit_reads_pep610_direct_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    distribution = SimpleNamespace(
+        read_text=lambda name: (
+            json.dumps(
+                {
+                    "vcs_info": {
+                        "commit_id": "581d398613e5602a5af361e1c34d3a92ea82ba8e"
+                    }
+                }
+            )
+            if name == "direct_url.json"
+            else None
+        )
+    )
+    monkeypatch.setattr(
+        cli.importlib.metadata,
+        "distribution",
+        lambda _name: distribution,
+    )
+
+    assert (
+        cli._installed_vcs_commit("jlens")
+        == "581d398613e5602a5af361e1c34d3a92ea82ba8e"
+    )
+
+
+def test_shard_manifest_is_immutable_and_blocks_historical_reuse(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "manifests/grid_0001.json"
+    summary_path = tmp_path / "targets/grid_0001/summary.json"
+    manifest = {"git_commit": "a" * 40, "notes": {"config_sha256": "b" * 64}}
+
+    cli._write_immutable_shard_manifest(
+        manifest_path,
+        manifest,
+        scientific_summary=summary_path,
+    )
+    cli._write_immutable_shard_manifest(
+        manifest_path,
+        manifest,
+        scientific_summary=summary_path,
+    )
+    with pytest.raises(ValueError, match="identity changed"):
+        cli._write_immutable_shard_manifest(
+            manifest_path,
+            {"git_commit": "c" * 40, "notes": {"config_sha256": "b" * 64}},
+            scientific_summary=summary_path,
+        )
+
+    manifest_path.unlink()
+    summary_path.parent.mkdir(parents=True)
+    summary_path.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="predates"):
+        cli._write_immutable_shard_manifest(
+            manifest_path,
+            manifest,
+            scientific_summary=summary_path,
+        )
 
 
 def test_config_validate_is_json_and_torch_free(

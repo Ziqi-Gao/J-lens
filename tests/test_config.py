@@ -1,14 +1,37 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
+from jlens_workspace.concept_intervention.iti.experiment import iti_experiment_grid
 from jlens_workspace.config import (
     AlignmentConfig,
     ExperimentConfig,
+    ITIConfig,
     MatrixConfig,
     ProbeConfig,
+    load_experiment_config,
 )
+
+
+def _iti_config(**overrides: object) -> ITIConfig:
+    values = {
+        "attention_layers": [3, 7],
+        "num_heads": 2,
+        "head_dim": 4,
+        "top_k_grid": [1, 4],
+        "concept_ids": ["concept:a"],
+        "source_residual_activations_dir": "residuals",
+        "head_activations_dir": "heads",
+        "directions_dir": "directions",
+        "reference_j_intervention_dir": "j",
+        "prompts_path": "prompts.json",
+        "candidate_labels": {"concept:a": "alpha"},
+    }
+    values.update(overrides)
+    return ITIConfig.model_validate(values)
 
 
 def test_probe_rejects_invalid_penalty_strength() -> None:
@@ -26,6 +49,14 @@ def test_alignment_control_seeds_are_unique() -> None:
         AlignmentConfig(random_control_seeds=[7, 7])
     with pytest.raises(ValidationError, match="non-negative"):
         AlignmentConfig(random_control_seeds=[-1])
+
+
+def test_iti_grid_and_prompt_splits_are_validation_safe() -> None:
+    assert _iti_config().top_k_grid == [1, 4]
+    with pytest.raises(ValidationError, match="top_k_grid"):
+        _iti_config(top_k_grid=[5])
+    with pytest.raises(ValidationError, match="disjoint"):
+        _iti_config(validation_prompt_prefixes=["same"], test_prompt_prefixes=["same"])
 
 
 def test_matrix_rank_sweep_contains_primary_tolerance() -> None:
@@ -68,3 +99,108 @@ def test_config_rejects_hybrid_research_directions() -> None:
                 "matrix": {"layers": [0]},
             }
         )
+
+
+def test_versioned_three_method_configs_preserve_legacy_scientific_yaml() -> None:
+    root = Path(__file__).parents[1]
+    config_root = root / "Concept_intervention/configs"
+    names = (
+        "j_component_intervention",
+        "iti_intervention",
+        "raptor_intervention",
+    )
+    legacy = {
+        name: load_experiment_config(config_root / f"qwen35_4b_{name}.yaml")
+        for name in names
+    }
+    for name, config in legacy.items():
+        assert config.experiment_name == name
+        assert config.output_dir == f"artifacts/concept_intervention/{name}"
+
+    versioned_files = {
+        "j_component_intervention": (
+            "qwen35_4b_three_method_intervention_v1_j_component.yaml"
+        ),
+        "iti_intervention": "qwen35_4b_three_method_intervention_v1_iti.yaml",
+        "raptor_intervention": (
+            "qwen35_4b_three_method_intervention_v1_raptor.yaml"
+        ),
+    }
+    configs = {
+        name: load_experiment_config(config_root / versioned_files[name])
+        for name in versioned_files
+    }
+    for name, config in configs.items():
+        assert (
+            config.experiment_name
+            == "qwen35_4b_three_method_intervention_v1"
+        )
+        assert (
+            "/qwen35_4b_three_method_intervention_v1/"
+            in config.output_dir
+        )
+        assert config.output_dir.endswith(f"/{name}")
+
+    reference = configs["j_component_intervention"]
+    for config in configs.values():
+        assert config.model == reference.model
+        assert config.dataset == reference.dataset
+        assert config.lens == reference.lens
+        assert config.activations == reference.activations
+        assert config.probe == reference.probe
+
+    generations = (
+        reference.j_component.generation,
+        configs["iti_intervention"].iti.generation,
+        configs["raptor_intervention"].raptor.generation,
+    )
+    assert generations[0] == generations[1] == generations[2]
+    expected_labels = {
+        "goemotions:admiration": "admiration",
+        "goemotions:approval": "approval",
+        "goemotions:curiosity": "curiosity",
+        "goemotions:disapproval": "rejection",
+        "goemotions:gratitude": "gratitude",
+        "goemotions:love": "love",
+        "goemotions:optimism": "optimism",
+    }
+    assert reference.j_component.candidate_labels == expected_labels
+    assert (
+        configs["iti_intervention"].iti.candidate_labels
+        == expected_labels
+    )
+    assert (
+        configs["raptor_intervention"].raptor.candidate_labels
+        == expected_labels
+    )
+    layer_paths = {
+        reference.j_component.selected_layers_path,
+        configs["iti_intervention"].iti.selected_layers_path,
+        configs["raptor_intervention"].raptor.selected_layers_path,
+    }
+    assert len(layer_paths) == 1
+
+    shared = load_experiment_config(
+        config_root / "qwen35_4b_three_method_intervention_v1_shared.yaml"
+    )
+    assert (
+        shared.experiment_name
+        == "qwen35_4b_three_method_intervention_v1"
+    )
+    assert shared.output_dir.endswith(
+        "/qwen35_4b_three_method_intervention_v1/"
+        "shared_intervention_protocol"
+    )
+    assert shared.shared_layer_selection.candidate_layers == [3, 7, 11, 15, 19, 23, 27]
+    assert shared.shared_layer_selection.selected_layer_count == 6
+    assert len(shared.shared_layer_selection.c_grid) == 100
+    assert len(iti_experiment_grid(configs["iti_intervention"].iti)) == 441
+
+    legacy_shared = load_experiment_config(
+        config_root / "qwen35_4b_shared_intervention_protocol.yaml"
+    )
+    assert legacy_shared.experiment_name == "shared_intervention_protocol"
+    assert (
+        legacy_shared.output_dir
+        == "artifacts/concept_intervention/shared_intervention_protocol"
+    )

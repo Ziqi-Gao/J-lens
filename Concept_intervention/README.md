@@ -36,6 +36,21 @@ A probe AUC or nearest token is not causal evidence. A steering claim requires
 a dose-response, random and non-J controls, off-target metrics, generation
 quality checks, and stability over seeds or prompt samples.
 
+The registered sparse-composition stage that measures how many J-directions
+are supported for each concept vector is documented in
+[`docs/concept_occupancy_v2.md`](docs/concept_occupancy_v2.md).
+The current same-model, same-data J-component/ITI/RAPTOR experiment is
+registered in
+[`docs/three_method_interventions.md`](docs/three_method_interventions.md).
+The earlier single-layer J/ITI protocol remains available as historical
+documentation in [`docs/iti_comparison_v1.md`](docs/iti_comparison_v1.md).
+The separate blinded J-component/RAPTOR LLM-as-judge pilot, which can run
+before ITI finishes, is documented in
+[`docs/llm_judge_evaluation.md`](docs/llm_judge_evaluation.md).
+The post-calibration, descriptive-only three-method pointwise judge adaptation
+is registered separately in
+[`docs/three_method_pointwise_judge_v2.md`](docs/three_method_pointwise_judge_v2.md).
+
 ## Inputs
 
 - [`configs/qwen35_4b.yaml`](configs/qwen35_4b.yaml) is the formal GoEmotions
@@ -117,10 +132,21 @@ as the first argument to `run_qwen35_4b.sh`. Never point a rerun at an existing
 scientific output; copy the YAML and give it a new `experiment_name` and
 `output_dir`.
 
-The current formal run stops after probe/J-direction alignment. The
-generation-time hook exists in `jlens_workspace.interventions`, but no
-intervention is run by this launcher; do not report alignment as causal
-steering evidence.
+The legacy `run_qwen35_4b.sh` workflow stops after probe/J-direction alignment.
+It must not be reported as causal steering evidence. The current three-method
+experiment is submitted from an immutable checkout with:
+
+```bash
+Concept_intervention/scripts/submit_three_method_interventions.sh
+```
+
+It prepares one shared deterministic balanced-row manifest and selects six
+layers per concept from `[3,7,11,15,19,23,27]` using validation accuracy of
+RAPTOR-style probes. J-component, ITI, and RAPTOR then run in separate code
+paths over those same inputs. Every scientific grid point saves greedy output
+and three fixed-seed samples. A fail-closed gate submits the full arrays only
+after positive single-concept smoke shards for all methods succeed and their
+artifact hashes validate. No LLM judge is called.
 
 ## Outputs
 
@@ -139,8 +165,16 @@ include:
   CV/validation/test metrics and an activation-identity manifest;
 - `alignment/`: signed cosine-ranked token IDs/tokens, matched-norm orthogonal
   random controls, and exact probe/lens identities for semantic inspection;
-- `interventions/`: prompts, generations, strengths, target/off-target scores,
-  and matched controls when the intervention stage is run.
+- immutable suite root `qwen35_4b_three_method_intervention_v1/`, containing
+  independent `j_component_intervention/`, `iti_intervention/`, and
+  `raptor_intervention/` children with grid scores, token IDs, text, per-token
+  log probabilities, dynamic injection telemetry, and future blind-judge
+  exports. Its launchers use only the four
+  `qwen35_4b_three_method_intervention_v1_{shared,j_component,iti,raptor}.yaml`
+  configs; the older unversioned scientific YAMLs remain unchanged;
+- `qwen35_4b_three_method_intervention_v1/intervention_comparison/index.json`:
+  the completion marker after all three method indexes pass identity and
+  completeness checks.
 
 Treat the config and each artifact's metadata/manifest as a unit. A probe or
 lens must never be reused after changing the model revision, tokenizer, BOS
@@ -148,9 +182,32 @@ policy, hook coordinate, or coordinate-changing model wrapper.
 
 ## Recorded runs
 
+- [Qwen3.5-4B three-method pointwise LLM judge (v2)](reports/qwen35_4b_three_method_pointwise_judge_v2.md)
+  records the completed 17,920-call descriptive evaluation, calibration,
+  primary contrasts, invalid-output failure, cross-judge agreement, cost, and
+  artifact hashes. Raw responses and private unblinding maps remain excluded
+  from Git.
+
+- [Three-method intervention protocol](docs/three_method_interventions.md)
+  defines the immutable parent experiment and independent J-component, ITI,
+  and RAPTOR child roots. Completion requires the parent experiment's
+  `intervention_comparison/index.json`; launchers alone are not a measured
+  result.
+
+- [Qwen3.5-4B ITI comparison v1 protocol](docs/iti_comparison_v1.md) pins the
+  original implementation commit, records the Qwen hybrid-attention adapter,
+  and defines the same-model/data held-out comparison. It is a registered
+  experiment protocol, not a completed result.
+
+- [Qwen3.5-4B concept-vector J-space occupancy (v2)](reports/qwen35_4b_concept_occupancy_v2.md)
+  records the completed 840-combination sparse decomposition, bootstrap
+  stability, numerical audit, supported layer-28 K values, and the causal
+  intervention gate.
 - [Qwen3.5-4B GoEmotions concept baseline (v1)](reports/qwen35_4b_goemotions_v1.md)
   records the completed probe/alignment run, held-out metrics, provenance, and
   limitations without committing the 3.2 GB artifact.
+- [Interactive experiment report](../reports/index.html#concept) renders the
+  registered Concept runs and SVG plots from lightweight summaries.
 
 Shared implementation belongs in `../src/jlens_workspace/`; this directory owns
 only direction-specific data, configs, launchers, and research reports. The

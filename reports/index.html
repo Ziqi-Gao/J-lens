@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="J-lens Concept Intervention and J-space experiment report"
+    >
+    <title>J-lens · Experiment report</title>
+    <link rel="stylesheet" href="assets/report.css">
+    <script defer src="assets/registry.js"></script>
+    <script defer src="../Concept_intervention/reports/data.js"></script>
+    <script defer src="../J_space/reports/data.js"></script>
+    <script defer src="assets/report.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#report-content">Skip to report content</a>
+
+    <header class="site-header">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true">J</span>
+        <div>
+          <p class="eyebrow">J-LENS / EXPERIMENT REPORT</p>
+          <h1>From concept directions to space geometry</h1>
+          <p class="header-deck">
+            Qwen3.5-4B · resid_post / block output · reproducible exploratory baselines
+          </p>
+        </div>
+      </div>
+      <div class="header-note">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>2 completed runs</span>
+        <span class="separator" aria-hidden="true">/</span>
+        <span>reported 2026-07-14</span>
+      </div>
+    </header>
+
+    <nav class="report-nav" aria-label="Experiment directions">
+      <div class="direction-switch" role="tablist" aria-label="Switch experiment direction">
+        <button
+          id="concept-tab"
+          class="direction-tab is-active"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="concept-view"
+          data-route="concept"
+        >
+          <span class="tab-index">01</span>
+          Concept intervention
+        </button>
+        <button
+          id="jspace-tab"
+          class="direction-tab"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="jspace-view"
+          data-route="jspace"
+        >
+          <span class="tab-index">02</span>
+          J-space properties
+        </button>
+      </div>
+
+      <div class="nav-tools">
+        <label class="run-picker" for="run-select">
+          <span>Run</span>
+          <select id="run-select" aria-label="Select experiment run"></select>
+        </label>
+        <button class="print-button" type="button" id="print-report">
+          Print / PDF
+        </button>
+      </div>
+    </nav>
+
+    <div class="app-error" id="app-error" role="alert" hidden></div>
+
+    <main id="report-content">
+      <section
+        class="report-view"
+        id="concept-view"
+        role="tabpanel"
+        aria-labelledby="concept-tab"
+      ></section>
+      <section
+        class="report-view"
+        id="jspace-view"
+        role="tabpanel"
+        aria-labelledby="jspace-tab"
+        hidden
+      ></section>
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        <strong>Evidence boundary.</strong>
+        Probe, alignment, and spectrum results are measurement evidence. Only signed
+        interventions with matched full, J, non-J, and random controls can support a causal claim.
+      </p>
+      <a href="README.md">Maintenance and new-run guide</a>
+    </footer>
+
+    <noscript>
+      <p class="noscript-message">This report requires JavaScript to draw local SVG charts.</p>
+    </noscript>
+  </body>
+</html>

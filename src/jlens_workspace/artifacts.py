@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import platform
-import subprocess
 import sys
 import tempfile
 from collections.abc import Iterable
@@ -16,12 +15,144 @@ from pathlib import Path
 from typing import Any
 
 
+class GitIdentityError(ValueError):
+    """Raised when a checkout's current commit cannot be resolved safely."""
+
+
+def _git_directories(checkout: Path) -> tuple[Path, Path]:
+    marker = checkout / ".git"
+    if marker.is_dir():
+        git_dir = marker.resolve()
+    elif marker.is_file():
+        value = marker.read_text(encoding="utf-8").strip()
+        prefix = "gitdir:"
+        if not value.casefold().startswith(prefix):
+            raise GitIdentityError(f"invalid linked-worktree marker: {marker}")
+        target = value[len(prefix) :].strip()
+        git_dir = Path(target)
+        if not git_dir.is_absolute():
+            git_dir = marker.parent / git_dir
+        git_dir = git_dir.resolve()
+        if not git_dir.is_dir():
+            raise GitIdentityError(f"linked-worktree git directory is missing: {git_dir}")
+    else:
+        raise GitIdentityError(f"checkout lacks a .git marker: {checkout}")
+
+    common_dir = git_dir
+    common_marker = git_dir / "commondir"
+    if common_marker.is_file():
+        target = common_marker.read_text(encoding="utf-8").strip()
+        common_dir = Path(target)
+        if not common_dir.is_absolute():
+            common_dir = git_dir / common_dir
+        common_dir = common_dir.resolve()
+        if not common_dir.is_dir():
+            raise GitIdentityError(f"Git common directory is missing: {common_dir}")
+    return git_dir, common_dir
+
+
+def _git_object_id(value: str, *, source: Path) -> str:
+    candidate = value.strip().casefold()
+    if len(candidate) not in {40, 64}:
+        raise GitIdentityError(f"invalid Git object ID in {source}")
+    try:
+        int(candidate, 16)
+    except ValueError as error:
+        raise GitIdentityError(f"invalid Git object ID in {source}") from error
+    return candidate
+
+
+def _safe_git_ref(root: Path, reference: str) -> Path:
+    if (
+        not reference.startswith("refs/")
+        or reference.startswith("/")
+        or any(part in {"", ".", ".."} for part in reference.split("/"))
+    ):
+        raise GitIdentityError(f"unsafe Git reference: {reference!r}")
+    path = (root / reference).resolve()
+    try:
+        path.relative_to(root.resolve())
+    except ValueError as error:
+        raise GitIdentityError(f"Git reference escapes metadata root: {reference}") from error
+    return path
+
+
+def _packed_ref(root: Path, reference: str) -> str | None:
+    path = root / "packed-refs"
+    if not path.is_file():
+        return None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", "^")):
+            continue
+        fields = stripped.split(" ", 1)
+        if len(fields) == 2 and fields[1] == reference:
+            return _git_object_id(fields[0], source=path)
+    return None
+
+
+def git_head_commit(checkout: str | Path) -> str:
+    """Resolve HEAD from Git metadata without requiring the Git executable."""
+
+    root = Path(checkout).resolve()
+    git_dir, common_dir = _git_directories(root)
+    head = git_dir / "HEAD"
+    if not head.is_file():
+        raise GitIdentityError(f"Git HEAD is missing: {head}")
+    value = head.read_text(encoding="utf-8").strip()
+    for _depth in range(8):
+        if not value.startswith("ref:"):
+            return _git_object_id(value, source=head)
+        reference = value.removeprefix("ref:").strip()
+        for metadata_root in (git_dir, common_dir):
+            ref_path = _safe_git_ref(metadata_root, reference)
+            if ref_path.is_file():
+                value = ref_path.read_text(encoding="utf-8").strip()
+                head = ref_path
+                break
+        else:
+            for metadata_root in (git_dir, common_dir):
+                packed = _packed_ref(metadata_root, reference)
+                if packed is not None:
+                    return packed
+            raise GitIdentityError(
+                f"cannot resolve Git reference {reference!r} for {root}"
+            )
+    raise GitIdentityError(f"Git symbolic-reference chain is too deep: {root}")
+
+
 def sha256_file(path: str | Path, chunk_size: int = 1024 * 1024) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
         while chunk := handle.read(chunk_size):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def resolve_repository_resource(path: str | Path) -> Path:
+    """Resolve a read-only resource when code and run roots are separate.
+
+    Relative artifact paths keep resolving against the current working
+    directory. If a relative path is absent there, ``JLENS_REPOSITORY_ROOT``
+    provides an explicit fallback for files committed with the immutable code
+    checkout, such as prompt banks. The fallback may never escape that root.
+    """
+
+    source = Path(path)
+    if source.is_absolute() or source.exists():
+        return source
+    root_value = os.environ.get("JLENS_REPOSITORY_ROOT")
+    if not root_value:
+        return source
+    root = Path(root_value).resolve()
+    candidate = (root / source).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as error:
+        raise ValueError(
+            f"repository resource escapes JLENS_REPOSITORY_ROOT: {source}"
+        ) from error
+    return candidate if candidate.is_file() else source
 
 
 def stable_hash(items: Iterable[str]) -> str:
@@ -41,11 +172,16 @@ def _package_version(name: str) -> str | None:
 
 
 def _git_commit(cwd: Path) -> str | None:
+    recorded = os.environ.get("JLENS_GIT_COMMIT")
+    if recorded is not None:
+        candidate = recorded.strip().casefold()
+        if len(candidate) not in {40, 64}:
+            raise ValueError("JLENS_GIT_COMMIT must be a 40- or 64-character hex digest")
+        int(candidate, 16)
+        return candidate
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=cwd, text=True, stderr=subprocess.DEVNULL
-        ).strip()
-    except (OSError, subprocess.CalledProcessError):
+        return git_head_commit(cwd)
+    except GitIdentityError:
         return None
 
 

@@ -138,6 +138,18 @@ class LogisticProbeResult:
         return expit(self.decision_function(X))
 
 
+@dataclass(frozen=True)
+class FixedProbeDirection:
+    """One fixed-C logistic direction in original residual coordinates."""
+
+    coef_raw: NDArray[np.float64]
+    intercept_raw: float
+    C: float
+    positive_label: Any
+    negative_label: Any
+    standardize: bool
+
+
 def _validate_binary_split(
     X_train: NDArray[np.float64],
     y_train: NDArray[Any],
@@ -349,5 +361,92 @@ def fit_logistic_probe(
         negative_label=negative_label,
         classes=fitted_classes,
         cv_strategy=cv_strategy,
+        standardize=standardize,
+    )
+
+
+def fit_fixed_logistic_direction(
+    X: FeatureArray,
+    y: LabelArray,
+    *,
+    C: float,
+    sample_weight: object | None = None,
+    positive_label: Any = 1,
+    standardize: bool = True,
+    class_weight: str | dict[Any, float] | None = "balanced",
+    random_state: int = 0,
+    max_iter: int = 5_000,
+    solver: str = "liblinear",
+) -> FixedProbeDirection:
+    """Fit one fixed-C probe without hyperparameter selection or test access.
+
+    This is used for group-bootstrap stability replicates after ``C`` has
+    already been selected by the primary train-only CV workflow. Bootstrap
+    multiplicities are supplied as ``sample_weight`` so large activation
+    matrices are not duplicated in memory.
+    """
+
+    features = _features_to_numpy(X, name="X")
+    labels = _labels_to_numpy(y, name="y")
+    if features.shape[0] != labels.shape[0]:
+        raise ValueError("X and y have different sample counts")
+    classes = np.unique(labels)
+    if classes.size != 2:
+        raise ValueError("fixed logistic direction requires exactly two classes")
+    positive_matches = np.flatnonzero(classes == positive_label)
+    if positive_matches.size != 1:
+        raise ValueError(f"positive_label={positive_label!r} is not a training class")
+    if not np.isfinite(C) or C <= 0:
+        raise ValueError("C must be finite and positive")
+
+    weights: NDArray[np.float64] | None = None
+    if sample_weight is not None:
+        weights = np.asarray(sample_weight, dtype=np.float64)
+        if weights.shape != (features.shape[0],):
+            raise ValueError("sample_weight must have shape [n_samples]")
+        if not np.isfinite(weights).all() or np.any(weights < 0):
+            raise ValueError("sample_weight must be finite and non-negative")
+        if not np.any(weights > 0):
+            raise ValueError("sample_weight must contain positive mass")
+        for label in classes:
+            if float(weights[labels == label].sum()) <= 0.0:
+                raise ValueError("sample_weight must retain both classes")
+
+    scaler: StandardScaler | None
+    if standardize:
+        scaler = StandardScaler()
+        scaled = scaler.fit_transform(features, sample_weight=weights)
+    else:
+        scaler = None
+        scaled = features
+
+    classifier = LogisticRegression(
+        solver=solver,
+        C=float(C),
+        class_weight=class_weight,
+        random_state=random_state,
+        max_iter=max_iter,
+    )
+    classifier.fit(scaled, labels, sample_weight=weights)
+    fitted_classes = np.asarray(classifier.classes_)
+    positive_index = int(np.flatnonzero(fitted_classes == positive_label)[0])
+    sign = 1.0 if positive_index == 1 else -1.0
+    coef_scaled = sign * np.asarray(classifier.coef_[0], dtype=np.float64)
+    intercept_scaled = sign * float(classifier.intercept_[0])
+    if scaler is None:
+        coef_raw = coef_scaled
+        intercept_raw = intercept_scaled
+    else:
+        scale = np.asarray(scaler.scale_, dtype=np.float64)
+        mean = np.asarray(scaler.mean_, dtype=np.float64)
+        coef_raw = coef_scaled / scale
+        intercept_raw = intercept_scaled - float(coef_raw @ mean)
+
+    return FixedProbeDirection(
+        coef_raw=np.asarray(coef_raw, dtype=np.float64),
+        intercept_raw=float(intercept_raw),
+        C=float(C),
+        positive_label=positive_label,
+        negative_label=classes[1 - positive_index],
         standardize=standardize,
     )

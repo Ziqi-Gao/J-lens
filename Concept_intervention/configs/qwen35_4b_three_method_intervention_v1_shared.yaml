@@ -1,0 +1,114 @@
+schema_version: 1
+direction: concept_intervention
+experiment_name: qwen35_4b_three_method_intervention_v1
+output_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol
+seed: 42
+model:
+  model_id: Qwen/Qwen3.5-4B
+  revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  tokenizer_id: Qwen/Qwen3.5-4B
+  tokenizer_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  dtype: bfloat16
+  device: auto
+  trust_remote_code: false
+  force_bos: false
+dataset:
+  source: jsonl
+  path: artifacts/data/go_emotions_7concept_full_ovr_v2
+  dataset_id: google-research-datasets/go_emotions
+  revision: add492243ff905527e67aeb8b80c082af02207c3
+  allowlist_path: Concept_intervention/data/go_emotions_7concept_full_allowlist.json
+  streaming: false
+  min_per_label_per_split: 150
+  min_per_concept: 50000
+lens:
+  source: fit
+  fit_prompts_path: artifacts/data/go_emotions_7concept_full_ovr_v2/fit_prompts.jsonl
+  fit_output_path: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/lens/qwen35_4b_fp32.pt
+  fit_checkpoint_path: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/lens/qwen35_4b_fp32.checkpoint.pt
+  layers: [3, 7, 11, 15, 19, 23, 27]
+  n_fit_prompts: 1000
+  fit_prompt_offset: 0
+  target_layer: 31
+  dim_batch: 32
+  max_seq_len: 128
+  skip_first: 16
+  compile_blocks: false
+  checkpoint_every: 10
+  resume: true
+  storage_dtype: float32
+activations:
+  layers: [3, 7, 11, 15, 19, 23, 27]
+  batch_size: 16
+  max_length: 256
+  share_examples_by_group: true
+  require_complete_concept_matrix: true
+probe:
+  penalty: l2
+  c_grid: [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+  cv_folds: 5
+  scoring: roc_auc
+  standardize: true
+  class_weight: balanced
+  max_iter: 5000
+  seed: 42
+alignment:
+  metric: cosine
+  convention: rmsnorm_weighted
+  top_k: 50
+  vocabulary_chunk_size: 4096
+  decompose: false
+  require_nonnegative: true
+  random_control_seeds: [101, 202, 303, 404, 505]
+shared_layer_selection:
+  method: raptor_validation_accuracy
+  upstream_checkout: third_party_external/RAPTOR
+  upstream_commit: cf7405899174af39f3970e093e4b86bf0972ff87
+  candidate_layers: [3, 7, 11, 15, 19, 23, 27]
+  selected_layer_count: 6
+  source_activations_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/activations
+  output_dir: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/selection
+  concept_ids:
+    - "goemotions:admiration"
+    - "goemotions:approval"
+    - "goemotions:curiosity"
+    - "goemotions:disapproval"
+    - "goemotions:gratitude"
+    - "goemotions:love"
+    - "goemotions:optimism"
+  cv_folds: 5
+  max_iter: 5000
+  seed: 42
+occupancy:
+  method: concept_occupancy_method
+  mode: exact
+  solver_method: nonnegative_gradient_pursuit_standard
+  primary_crossing_rule: first_nonexceed_v1
+  layers: [3, 7, 11, 15, 19, 23, 27]
+  concept_ids:
+    - "goemotions:admiration"
+    - "goemotions:approval"
+    - "goemotions:curiosity"
+    - "goemotions:disapproval"
+    - "goemotions:gratitude"
+    - "goemotions:love"
+    - "goemotions:optimism"
+  signs: ["+"]
+  conventions: [rmsnorm_weighted]
+  selection_modes: [positive_cosine]
+  k_max: 64
+  report_grid: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64]
+  random_seeds: [101, 202, 303, 404, 505]
+  absolute_thresholds: [0.01, 0.05, 0.10, 0.20]
+  vocabulary_chunk_size: 4096
+  device: cuda
+  control_atom_fractions: [1.0]
+  probe_replicates:
+    - primary
+    - bootstrap_1101
+    - bootstrap_2202
+    - bootstrap_3303
+    - bootstrap_4404
+  bootstrap_seeds: [1101, 2202, 3303, 4404]
+  bootstrap_k_max: 64
+  row_manifest_path: artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/selection/row_manifest.json
