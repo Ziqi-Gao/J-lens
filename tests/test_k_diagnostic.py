@@ -2543,6 +2543,151 @@ def test_v2_bundle_cli_benchmark_resource_contract_and_tamper_rejection(
     benchmark_path.write_text(json.dumps(benchmark), encoding="utf-8")
 
 
+def test_v2_measured_inode_budget_amendment(tmp_path: Path) -> None:
+    config = _diagnostic_config()
+    diagnostic = config.k_diagnostic
+    assert diagnostic.max_estimated_inodes == 600_000
+    assert diagnostic.max_total_estimated_inodes == 4_600_000
+    assert (
+        _diagnostic_config("raw_metric_full").k_diagnostic.max_total_estimated_inodes == 4_600_000
+    )
+    assert (
+        _diagnostic_config("transformed_metric").k_diagnostic.max_total_estimated_inodes
+        == 4_600_000
+    )
+    assert kdiag_experiment.REGISTERED_STAGE_RESOURCE_BUDGETS["pilot"]["inodes"] == 600_000
+
+    def write_measured_fixture(candidate, root: Path) -> None:
+        candidate_diagnostic = candidate.k_diagnostic
+        config_sha256 = kdiag_experiment._stage_manifest(candidate)["configuration_sha256"]
+        stage = root / candidate_diagnostic.artifact_root / candidate_diagnostic.stage
+        bundle_directory = stage / "bundles" / "worst"
+        bundle_directory.mkdir(parents=True)
+        memory_plan = shared_direction_memory_plan(
+            n_atoms=96,
+            d_model=8,
+            chunk_size=candidate_diagnostic.vocabulary_chunk_size,
+            available_bytes=16 * 2**30,
+        )
+        execution_hardware = _scheduled_blackwell_hardware()
+        (bundle_directory / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "null_execution_version": NULL_EXECUTION_VERSION,
+                    "dictionary_cardinality": 96,
+                    "dictionary_metric_dimension": 8,
+                    "shared_direction_memory_plan": memory_plan,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (stage / "bundles.json").write_text(
+            json.dumps(
+                {
+                    "physical_bundle_count": 264,
+                    "logical_replicate_count": 66_774,
+                    "bundles": [
+                        {
+                            "bundle_id": "worst",
+                            "conservative_cost_units": 100,
+                            "logical_shard_count": 279,
+                            "shard_ids": ["logical"],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (stage / "microbenchmark.json").write_text(
+            json.dumps(
+                {
+                    "approved": True,
+                    "schema_version": 5,
+                    "null_execution_version": NULL_EXECUTION_VERSION,
+                    "identity": candidate_diagnostic.identity,
+                    "stage": candidate_diagnostic.stage,
+                    "configuration_sha256": config_sha256,
+                    "bundle_id": "worst",
+                    "wall_seconds": 1.0,
+                    "shared_direction_memory_plan": memory_plan,
+                    "execution_hardware": execution_hardware,
+                    "execution_hardware_sha256": execution_hardware_sha256(execution_hardware),
+                    "execution_backend": execution_hardware["execution_backend"],
+                    "artifact_usage": {
+                        "bundle_bytes": 1,
+                        "bundle_inodes": 9,
+                        "max_logical_shard_bytes": 1,
+                        "max_logical_shard_inodes": 7,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        rotation_build_path = stage / "rotation_cache_build_preflight.json"
+        rotation_build_path.write_text(
+            json.dumps(
+                {
+                    "approved": True,
+                    "identity": candidate_diagnostic.identity,
+                    "stage": candidate_diagnostic.stage,
+                    "configuration_sha256": config_sha256,
+                    "binding_plan_sha256": "binding-plan",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (stage / "rotation_cache_index.json").write_text(
+            json.dumps(
+                {
+                    "complete": True,
+                    "identity": candidate_diagnostic.identity,
+                    "stage": candidate_diagnostic.stage,
+                    "configuration_sha256": config_sha256,
+                    "binding_plan_sha256": "binding-plan",
+                    "matrix_bytes": 0,
+                    "matrix_inodes": 124,
+                    "build_preflight_sha256": sha256_file(rotation_build_path),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    old_diagnostic = diagnostic.model_copy(
+        update={
+            "max_estimated_inodes": 500_000,
+            "max_total_estimated_inodes": 4_500_000,
+        }
+    )
+    old_config = config.model_copy(update={"k_diagnostic": old_diagnostic})
+    old_root = tmp_path / "old"
+    write_measured_fixture(old_config, old_root)
+    with pytest.raises(KDiagnosticExperimentError, match="resource preflight rejected"):
+        resource_preflight(old_config, run_root=old_root)
+    old_result = json.loads(
+        (
+            old_root
+            / old_diagnostic.artifact_root
+            / old_diagnostic.stage
+            / "resource_preflight.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert old_result["stage_upper_bound"]["inodes"] == 587_398
+    assert old_result["full_experiment_upper_bound"]["inodes"] == 4_587_398
+    assert old_result["checks"]["stage_inodes"] is False
+    assert old_result["checks"]["total_inodes"] is False
+
+    amended_root = tmp_path / "amended"
+    write_measured_fixture(config, amended_root)
+    amended = resource_preflight(config, run_root=amended_root)
+    assert amended["approved"] is True
+    assert amended["stage_upper_bound"]["inodes"] == 587_398
+    assert amended["full_experiment_upper_bound"]["inodes"] == 4_587_398
+    assert amended["hard_budgets"]["stage_inodes"] == 600_000
+    assert amended["hard_budgets"]["total_inodes"] == 4_600_000
+    assert amended["checks"]["stage_inodes"] is True
+    assert amended["checks"]["total_inodes"] is True
+
+
 def test_measured_resource_preflight_and_launcher_wave_gate(tmp_path: Path) -> None:
     config = _diagnostic_config()
     diagnostic = config.k_diagnostic

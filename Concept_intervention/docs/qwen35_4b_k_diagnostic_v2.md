@@ -245,6 +245,23 @@ raw activation and logistic probe to their preregistered common layers 11, 19, a
 27; logistic-only layers remain visible in aggregate and other applicable cells but
 cannot enter that comparison.
 
+## Resource-budget amendment after the first FSM benchmark
+
+The first scheduler-managed FSM worst-bundle microbenchmark, run from commit
+`3b39210`, completed before any ordinary pilot bundle was authorized. Its unchanged
+1.25x projection measured 587,398 pilot inodes and a 4,587,398-inode full-experiment
+upper bound. The original 500,000/4,500,000 caps therefore triggered the registered
+fail-closed resource gate, while every GPU-hour, disk, runtime, hardware, and shared-
+direction-memory check passed.
+
+Before any ordinary bundle was run, the pilot inode cap was amended to 600,000 and
+the shared full-experiment inode cap in all three v2 stage configurations was amended
+to 4,600,000. This amendment changes only execution resource ceilings. The 1.25x
+projection formula, artifact file schema, targets, null families and seeds, pursuit
+solver, estimands, inference rules, and all logical/physical grid identities remain
+unchanged. The rejected benchmark is not reusable under the amended configuration
+hash and must remain recoverably quarantined.
+
 ## Commands
 
 FSM local execution is scheduler-only. Inspect the immutable DAG, then run only the

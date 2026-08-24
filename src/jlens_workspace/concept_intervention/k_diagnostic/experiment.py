@@ -947,7 +947,7 @@ def write_scientific_grid(
 
 
 REGISTERED_STAGE_RESOURCE_BUDGETS = {
-    "pilot": {"gpu_hours": 500.0, "disk_gib": 25.0, "inodes": 500_000},
+    "pilot": {"gpu_hours": 500.0, "disk_gib": 25.0, "inodes": 600_000},
     "raw_metric_full": {
         "gpu_hours": 2500.0,
         "disk_gib": 75.0,

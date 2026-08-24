@@ -118,10 +118,10 @@ k_diagnostic:
   max_logical_replicates: 70000
   max_estimated_gpu_hours: 500
   max_estimated_disk_gib: 25
-  max_estimated_inodes: 500000
+  max_estimated_inodes: 600000
   max_total_estimated_gpu_hours: 6000
   max_total_estimated_disk_gib: 175
-  max_total_estimated_inodes: 4500000
+  max_total_estimated_inodes: 4600000
   max_seconds_per_bundle: 7200
   max_rotation_cache_build_seconds: 86400
   max_rotation_cache_gib: 25
