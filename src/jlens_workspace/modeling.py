@@ -146,7 +146,7 @@ def hidden_from_block_output(output: Any) -> Any:
 
     if hasattr(output, "shape"):
         return output
-    if isinstance(output, (tuple, list)) and output and hasattr(output[0], "shape"):
+    if isinstance(output, tuple | list) and output and hasattr(output[0], "shape"):
         return output[0]
     raise TypeError(f"unsupported transformer block output type: {type(output)!r}")
 

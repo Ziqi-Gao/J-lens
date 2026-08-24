@@ -321,7 +321,7 @@ def _checked_rows(
             if source_id in seen_ids:
                 raise GoEmotionsPreparationError(f"source id {source_id!r} occurs more than once")
             seen_ids.add(source_id)
-            if not isinstance(labels, Sequence) or isinstance(labels, (str, bytes)):
+            if not isinstance(labels, Sequence) or isinstance(labels, str | bytes):
                 raise GoEmotionsPreparationError(f"{split} row {row_number} has invalid labels")
             parsed_labels = tuple(int(label) for label in labels)
             if not parsed_labels or any(

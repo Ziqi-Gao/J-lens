@@ -741,6 +741,313 @@ class OccupancyConfig(StrictModel):
         return self
 
 
+class KDiagnosticConfig(StrictModel):
+    """Registered target/null/metric diagnostic for concept occupancy.
+
+    This is intentionally separate from :class:`OccupancyConfig`: the existing
+    occupancy experiments and their artifact schemas are immutable inputs, not
+    a configuration surface for this diagnostic.
+    """
+
+    identity: Literal[
+        "qwen35_4b_k_diagnostic_v1", "qwen35_4b_k_diagnostic_v2"
+    ] = "qwen35_4b_k_diagnostic_v2"
+    stage: Literal["pilot", "raw_metric_full", "transformed_metric"]
+    artifact_root: str = "artifacts/concept_intervention/qwen35_4b_k_diagnostic_v2"
+    shared_artifact_root: str
+    shared_hashes: dict[str, str] = Field(min_length=1)
+    source_test_jsonl: str
+    source_test_sha256: str
+    candidate_layers: list[int] = Field(
+        default_factory=lambda: [3, 7, 11, 15, 19, 23, 27]
+    )
+    analysis_layers: list[int] = Field(min_length=1)
+    raw_activation_layers: list[int] = Field(
+        default_factory=lambda: [11, 19, 27]
+    )
+    concept_ids: list[str] = Field(min_length=1)
+    target_families: list[
+        Literal[
+            "logistic_probe",
+            "class_mean_difference",
+            "anthropic_style_concept_mean",
+            "seven_emotion_label_contrast",
+            "raw_activation",
+        ]
+    ] = Field(min_length=1)
+    concept_mean_subtypes: list[
+        Literal["assistant_boundary", "concept_token_end"]
+    ] = Field(
+        default_factory=lambda: ["assistant_boundary", "concept_token_end"]
+    )
+    metrics: list[str] = Field(min_length=1)
+    null_families: list[
+        Literal[
+            "iid_full_cardinality",
+            "iid_cardinality_sweep",
+            "random_prefix_same_k",
+            "orthogonal_rotation",
+            "label_permutation_probe",
+        ]
+    ] = Field(min_length=1)
+    solver_method: Literal["nonnegative_gradient_pursuit_standard"] = (
+        "nonnegative_gradient_pursuit_standard"
+    )
+    selection_mode: Literal["positive_cosine"] = "positive_cosine"
+    convention: Literal["rmsnorm_weighted"] = "rmsnorm_weighted"
+    k_max: int = Field(ge=1, le=64)
+    report_grid: list[int] = Field(min_length=1)
+    raw_activation_targets_per_layer: int = Field(ge=1)
+    iid_seeds: list[int] = Field(min_length=1)
+    rotation_seeds: list[int] = Field(min_length=1)
+    cardinality_fractions: list[float] = Field(min_length=1)
+    permutation_seed_start: int = Field(default=7001, ge=0)
+    permutation_count_layer_27: int = Field(default=20, ge=1)
+    permutation_count_other_layers: int = Field(default=10, ge=1)
+    pca_ranks: list[int] = Field(default_factory=list)
+    whitening_floors: list[float] = Field(default_factory=list)
+    template_bootstrap_samples: int = Field(default=1000, ge=1000)
+    contrast_arms: list[
+        Literal[
+            "label_explicit",
+            "label_free_definition",
+            "four_unrelated_topics_control",
+        ]
+    ] = Field(
+        default_factory=lambda: [
+            "label_explicit",
+            "label_free_definition",
+            "four_unrelated_topics_control",
+        ]
+    )
+    primary_estimand: Literal["fixed_k4_real_minus_median_null"] = (
+        "fixed_k4_real_minus_median_null"
+    )
+    secondary_estimand: Literal["max_cumulative_excess_exploratory"] = (
+        "max_cumulative_excess_exploratory"
+    )
+    primary_fixed_k: Literal[4] = 4
+    minimum_effect: float = Field(default=0.01, gt=0.0)
+    equivalence_margin: float = Field(default=0.0025, gt=0.0)
+    confidence_level: Literal[0.95] = 0.95
+    hierarchical_bootstrap_samples: int = Field(default=4000, ge=1000)
+    hierarchical_bootstrap_seed: int = Field(default=8844, ge=0)
+    multiple_comparison_policy: Literal["holm_bonferroni"] = "holm_bonferroni"
+    primary_pca_metric: Literal["j_pca_r256"] = "j_pca_r256"
+    primary_whitening_floor: Literal[0.1] = 0.1
+    minimum_null_replicates: int = Field(default=31, ge=15)
+    max_physical_bundles: int = Field(default=5000, ge=1)
+    max_logical_replicates: int = Field(default=500000, ge=1)
+    max_estimated_gpu_hours: float = Field(default=5000.0, gt=0.0)
+    max_estimated_disk_gib: float = Field(default=500.0, gt=0.0)
+    max_estimated_inodes: int = Field(default=2_000_000, ge=1)
+    max_total_estimated_gpu_hours: float = Field(default=6000.0, gt=0.0)
+    max_total_estimated_disk_gib: float = Field(default=175.0, gt=0.0)
+    max_total_estimated_inodes: int = Field(default=4_500_000, ge=1)
+    max_seconds_per_bundle: float = Field(default=7200.0, gt=0.0)
+    max_rotation_cache_build_seconds: float = Field(default=86400.0, gt=0.0, le=86400.0)
+    max_rotation_cache_gib: float = Field(default=125.0, gt=0.0)
+    slurm_array_chunk_size: int = Field(default=900, ge=1, le=1000)
+    require_pilot_microbenchmark: bool = True
+    require_stage_microbenchmark: bool = True
+    vocabulary_chunk_size: int = Field(default=4096, ge=1)
+    device: str = "cuda"
+
+    @model_validator(mode="after")
+    def validate_registered_diagnostic(self) -> KDiagnosticConfig:
+        for name in (
+            "candidate_layers",
+            "analysis_layers",
+            "raw_activation_layers",
+            "concept_ids",
+            "target_families",
+            "concept_mean_subtypes",
+            "contrast_arms",
+            "metrics",
+            "null_families",
+            "iid_seeds",
+            "rotation_seeds",
+            "pca_ranks",
+            "whitening_floors",
+        ):
+            values = getattr(self, name)
+            if len(set(values)) != len(values):
+                raise ValueError(f"k_diagnostic.{name} must be unique")
+        if self.candidate_layers != [3, 7, 11, 15, 19, 23, 27]:
+            raise ValueError("k_diagnostic candidate_layers are preregistered")
+        if sorted(self.analysis_layers) != self.analysis_layers or not set(
+            self.analysis_layers
+        ).issubset(self.candidate_layers):
+            raise ValueError(
+                "k_diagnostic analysis_layers must be sorted and drawn from candidate_layers"
+            )
+        if self.raw_activation_layers != [11, 19, 27]:
+            raise ValueError("k_diagnostic raw_activation_layers are preregistered")
+        expected_root = f"artifacts/concept_intervention/{self.identity}"
+        if self.artifact_root != expected_root:
+            raise ValueError("k_diagnostic artifact_root must match its versioned identity")
+        if len(self.concept_ids) != 7 or any(
+            not value.startswith("goemotions:") for value in self.concept_ids
+        ):
+            raise ValueError("k_diagnostic requires the seven registered GoEmotions IDs")
+        if self.report_grid != sorted(self.report_grid) or len(
+            set(self.report_grid)
+        ) != len(self.report_grid):
+            raise ValueError("k_diagnostic report_grid must be sorted and unique")
+        if self.report_grid[0] < 1 or self.report_grid[-1] > self.k_max:
+            raise ValueError("k_diagnostic report_grid must lie in [1, k_max]")
+        for name in ("iid_seeds", "rotation_seeds"):
+            values = getattr(self, name)
+            if any(value < 0 for value in values):
+                raise ValueError(f"k_diagnostic {name} must be non-negative")
+        expected_fractions = [1 / 256, 1 / 64, 1 / 16, 1 / 4, 1.0]
+        if len(self.cardinality_fractions) != len(expected_fractions) or not np.allclose(
+            self.cardinality_fractions, expected_fractions, rtol=0.0, atol=1e-15
+        ):
+            raise ValueError("k_diagnostic cardinality_fractions are preregistered")
+        for path, digest in self.shared_hashes.items():
+            if not path or Path(path).is_absolute() or ".." in Path(path).parts:
+                raise ValueError("k_diagnostic shared hash paths must be safe and relative")
+            if len(digest) != 64:
+                raise ValueError("k_diagnostic shared hashes must be SHA-256 digests")
+            int(digest, 16)
+        if len(self.source_test_sha256) != 64:
+            raise ValueError("k_diagnostic source_test_sha256 must be a SHA-256 digest")
+        int(self.source_test_sha256, 16)
+
+        if self.equivalence_margin >= self.minimum_effect:
+            raise ValueError("equivalence_margin must be smaller than minimum_effect")
+        raw_metrics = self.metrics == ["raw_euclidean"]
+        if self.identity == "qwen35_4b_k_diagnostic_v1":
+            return self._validate_v1_stage(raw_metrics)
+        if (
+            self.minimum_null_replicates != 31
+            or self.iid_seeds != list(range(101, 132))
+            or self.rotation_seeds != list(range(1101, 1132))
+        ):
+            raise ValueError("v2 requires the exact registered 31-repeat null grids")
+        if self.stage != "transformed_metric" and (
+            self.permutation_count_layer_27 != 31
+            or self.permutation_count_other_layers != 31
+        ):
+            raise ValueError("v2 raw stages require 31 label permutations per cell")
+        all_targets = {
+            "logistic_probe",
+            "class_mean_difference",
+            "seven_emotion_label_contrast",
+            "raw_activation",
+        }
+        all_nulls = {
+            "iid_full_cardinality",
+            "iid_cardinality_sweep",
+            "random_prefix_same_k",
+            "orthogonal_rotation",
+            "label_permutation_probe",
+        }
+        if self.stage == "pilot":
+            if self.analysis_layers != [11, 19, 27] or self.k_max != 32:
+                raise ValueError("pilot requires layers [11,19,27] and k_max=32")
+            if self.raw_activation_targets_per_layer != 32:
+                raise ValueError("pilot requires 32 raw activation targets per layer")
+            if len(self.iid_seeds) < self.minimum_null_replicates or len(
+                self.rotation_seeds
+            ) < self.minimum_null_replicates:
+                raise ValueError("pilot null grids do not meet registered resolution")
+            if not raw_metrics or set(self.target_families) != all_targets:
+                raise ValueError("pilot requires raw metric and all target families")
+            if set(self.null_families) != all_nulls:
+                raise ValueError("pilot requires all five null families")
+        elif self.stage == "raw_metric_full":
+            if self.analysis_layers != self.candidate_layers or self.k_max != 64:
+                raise ValueError("full raw metric requires all candidate layers and k_max=64")
+            if self.raw_activation_targets_per_layer != 128:
+                raise ValueError("full raw metric requires 128 raw targets per layer")
+            if len(self.iid_seeds) < self.minimum_null_replicates or len(
+                self.rotation_seeds
+            ) < self.minimum_null_replicates:
+                raise ValueError("full null grids do not meet registered resolution")
+            if not raw_metrics or set(self.target_families) != all_targets:
+                raise ValueError("full raw metric requires all target families")
+            if set(self.null_families) != all_nulls:
+                raise ValueError("full raw metric requires all five null families")
+        else:
+            expected_targets = all_targets - {"raw_activation"}
+            expected_nulls = {
+                "iid_full_cardinality",
+                "random_prefix_same_k",
+                "orthogonal_rotation",
+            }
+            if self.analysis_layers != [11, 19, 27] or self.k_max != 64:
+                raise ValueError(
+                    "transformed metric requires layers [11,19,27] and k_max=64"
+                )
+            if set(self.target_families) != expected_targets:
+                raise ValueError("transformed metric excludes raw activation targets")
+            if set(self.null_families) != expected_nulls:
+                raise ValueError("transformed metric null grid is preregistered")
+            if "raw_euclidean" in self.metrics:
+                raise ValueError("transformed metric config must not repeat raw_euclidean")
+            if self.pca_ranks != [64, 128, 256, 512, 1024]:
+                raise ValueError("full PCA rank grid is preregistered; k90 is added at runtime")
+            if self.whitening_floors != [0.01, 0.1]:
+                raise ValueError("whitening floors must equal [0.01, 0.10]")
+        return self
+
+    def _validate_v1_stage(self, raw_metrics: bool) -> KDiagnosticConfig:
+        """Keep the unexecuted v1 YAML parseable without reusing it for v2."""
+
+        all_targets = {
+            "logistic_probe",
+            "class_mean_difference",
+            "anthropic_style_concept_mean",
+            "raw_activation",
+        }
+        all_nulls = {
+            "iid_full_cardinality",
+            "iid_cardinality_sweep",
+            "random_prefix_same_k",
+            "orthogonal_rotation",
+            "label_permutation_probe",
+        }
+        if self.stage == "pilot":
+            valid = (
+                self.analysis_layers == [11, 19, 27]
+                and self.k_max == 32
+                and self.raw_activation_targets_per_layer == 32
+                and self.iid_seeds == [101, 202, 303]
+                and self.rotation_seeds == [1101, 2202, 3303]
+                and raw_metrics
+                and set(self.target_families) == all_targets
+                and set(self.null_families) == all_nulls
+            )
+        elif self.stage == "raw_metric_full":
+            valid = (
+                self.analysis_layers == self.candidate_layers
+                and self.k_max == 64
+                and self.raw_activation_targets_per_layer == 128
+                and self.iid_seeds == [101, 202, 303, 404, 505]
+                and self.rotation_seeds == [1101, 2202, 3303, 4404, 5505]
+                and raw_metrics
+                and set(self.target_families) == all_targets
+                and set(self.null_families) == all_nulls
+            )
+        else:
+            valid = (
+                self.analysis_layers == [11, 19, 27]
+                and self.k_max == 64
+                and set(self.target_families) == all_targets - {"raw_activation"}
+                and set(self.null_families)
+                == {
+                    "iid_full_cardinality",
+                    "random_prefix_same_k",
+                    "orthogonal_rotation",
+                }
+            )
+        if not valid:
+            raise ValueError("legacy v1 stage no longer matches its frozen registration")
+        return self
+
+
 class ExperimentConfig(StrictModel):
     schema_version: Literal[1] = 1
     direction: Literal["concept_intervention", "j_space"]
@@ -759,6 +1066,7 @@ class ExperimentConfig(StrictModel):
     raptor: RaptorInterventionConfig | None = None
     iti: ITIConfig | None = None
     occupancy: OccupancyConfig | None = None
+    k_diagnostic: KDiagnosticConfig | None = None
     matrix: MatrixConfig | None = None
 
     @model_validator(mode="after")
@@ -779,6 +1087,27 @@ class ExperimentConfig(StrictModel):
                 )
             if self.matrix is not None:
                 raise ValueError("concept_intervention must not define matrix")
+            if self.k_diagnostic is not None:
+                diagnostic = self.k_diagnostic
+                if self.experiment_name != diagnostic.identity:
+                    raise ValueError(
+                        "k_diagnostic experiment_name must equal its registered identity"
+                    )
+                if self.output_dir != diagnostic.artifact_root:
+                    raise ValueError(
+                        "k_diagnostic output_dir must equal its independent artifact root"
+                    )
+                if self.model.model_id != "Qwen/Qwen3.5-4B" or self.model.revision != (
+                    "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+                ):
+                    raise ValueError("k_diagnostic model identity is preregistered")
+                if (
+                    self.lens.target_layer != 31
+                    or self.lens.layers != diagnostic.candidate_layers
+                    or self.alignment is None
+                    or self.alignment.convention != "rmsnorm_weighted"
+                ):
+                    raise ValueError("k_diagnostic lens layers/target/convention are fixed")
             if (
                 self.occupancy is not None
                 and self.lens.source in {"local", "huggingface"}
@@ -807,6 +1136,8 @@ class ExperimentConfig(StrictModel):
                 forbidden.append("iti")
             if self.occupancy is not None:
                 forbidden.append("occupancy")
+            if self.k_diagnostic is not None:
+                forbidden.append("k_diagnostic")
             if forbidden:
                 raise ValueError(
                     "j_space must not define concept fields: " + ", ".join(forbidden)

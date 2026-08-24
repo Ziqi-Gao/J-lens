@@ -95,7 +95,7 @@ def _shared_source_examples(
                 "shared-source capture requires concept_id, concept_name, group_id, "
                 "split, and source"
             )
-        if isinstance(label, bool) or not isinstance(label, (int, np.integer)):
+        if isinstance(label, bool) or not isinstance(label, int | np.integer):
             raise ValueError("shared-source labels must be integer 0 or 1")
         if int(label) not in (0, 1):
             raise ValueError("shared-source labels must be integer 0 or 1")

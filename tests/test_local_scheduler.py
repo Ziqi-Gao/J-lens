@@ -69,10 +69,72 @@ def test_profiles_separate_cpu_heavy_occupancy_from_standard_gpu_work() -> None:
     assert standard.gpu_utilization_tokens == 40
     assert scheduler.profile_for_task("candidate-rescore", {}) == standard
 
+    targets = scheduler.profile_for_task("kdiag-targets", {})
+    assert targets == standard
+
+    bundle = scheduler.profile_for_task("kdiag-bundle", {})
+    assert bundle.task_class == "kdiag-bundle"
+    assert bundle.lock_mode == "shared"
+    assert bundle.slots_per_device == 5
+    assert bundle.cpu_tokens == 4
+    assert bundle.host_ram_mib == 12288
+    assert bundle.gpu_vram_mib == 4096
+    assert bundle.gpu_memory_reserve_mib == 8192
+    assert bundle.gpu_utilization_tokens == 20
+
+    overridden = scheduler.profile_for_task(
+        "kdiag-bundle",
+        {
+            "JLENS_LOCAL_KDIAG_CPU_TOKENS": "6",
+            "JLENS_LOCAL_KDIAG_HOST_RAM_MIB": "14000",
+            "JLENS_LOCAL_KDIAG_GPU_VRAM_MIB": "5000",
+            "JLENS_LOCAL_KDIAG_GPU_MEMORY_RESERVE_MIB": "9000",
+            "JLENS_LOCAL_KDIAG_GPU_UTILIZATION_TOKENS": "25",
+            "JLENS_LOCAL_KDIAG_GPU_SLOTS_PER_DEVICE": "3",
+        },
+    )
+    assert overridden.cpu_tokens == 6
+    assert overridden.host_ram_mib == 14000
+    assert overridden.gpu_vram_mib == 5000
+    assert overridden.gpu_memory_reserve_mib == 9000
+    assert overridden.gpu_utilization_tokens == 25
+    assert overridden.slots_per_device == 3
+
     fit = scheduler.profile_for_task("iti-fit", {})
     assert fit.task_class == "cpu"
     assert fit.cpu_tokens == 16
     assert fit.host_ram_mib == 32768
+    rotations = scheduler.profile_for_task("kdiag-rotations", {})
+    assert rotations.task_class == "cpu"
+    assert rotations.cpu_tokens == 16
+    assert rotations.host_ram_mib == 32768
+
+
+def test_kdiag_bundle_uses_the_shared_occupancy_gate_and_slots(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    environment = {
+        "CODE_ROOT": str(tmp_path / "code"),
+        "JLENS_LOCAL_DATA_ROOT": str(tmp_path / "data"),
+        "JLENS_LOCAL_SCRATCH_ROOT": str(tmp_path / "scratch"),
+        "JLENS_LOCAL_RUNTIME_ROOT": str(tmp_path / "runtime"),
+    }
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    calls: list[tuple[Path, bool]] = []
+
+    def fake_lock(path: Path, *, shared: bool):
+        calls.append((path, shared))
+        return object()
+
+    monkeypatch.setattr(scheduler, "_try_lock", fake_lock)
+    local = scheduler.LocalScheduler("kdiag-bundle", "gpu", ["true"])
+    assert local._try_gpu_locks(7) is True
+    assert calls == [
+        (tmp_path / "runtime/gpu-locks/gpu_7.lock", True),
+        (tmp_path / "runtime/gpu-locks/gpu_7_occupancy_slot_0.lock", False),
+    ]
 
 
 def test_dynamic_discovery_has_no_hard_coded_device_ids(monkeypatch) -> None:
@@ -195,28 +257,29 @@ fi
         "JLENS_LOCAL_HOST_RAM_RESERVE_MIB": "1",
     }
     environment.pop("JLENS_LOCAL_GPU_IDS", None)
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(Path(scheduler.__file__)),
-            "run",
-            "--kind",
-            "gpu",
-            "--task",
-            "occupancy",
-            "--",
-            sys.executable,
-            "-c",
-            "import os; assert os.environ['CUDA_VISIBLE_DEVICES'] == '2'",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
-    assert "jlens_gpu_selected=2" in result.stdout
-    lease_dir = runtime_root / "scheduler" / "leases"
-    assert list(lease_dir.glob("*.json")) == []
+    for task in ("occupancy", "kdiag-bundle"):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(scheduler.__file__)),
+                "run",
+                "--kind",
+                "gpu",
+                "--task",
+                task,
+                "--",
+                sys.executable,
+                "-c",
+                "import os; assert os.environ['CUDA_VISIBLE_DEVICES'] == '2'; assert os.environ['JLENS_LOCAL_LEASE_ID']",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        assert "jlens_gpu_selected=2" in result.stdout
+        lease_dir = runtime_root / "scheduler" / "leases"
+        assert list(lease_dir.glob("*.json")) == []
 
 
 def test_standard_task_uses_larger_memory_reserve_on_foreign_gpu() -> None:

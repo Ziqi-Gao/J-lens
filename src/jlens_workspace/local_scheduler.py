@@ -34,6 +34,8 @@ GPU_TASKS = frozenset(
         "raptor-grid",
         "iti-grid",
         "candidate-rescore",
+        "kdiag-targets",
+        "kdiag-bundle",
     }
 )
 
@@ -80,6 +82,23 @@ def profile_for_task(task: str, env: Mapping[str, str] | None = None) -> TaskPro
 
     values = os.environ if env is None else env
     base_gpu_memory_reserve = _nonnegative_int(values, "JLENS_LOCAL_GPU_MEMORY_RESERVE_MIB", 8192)
+    if task == "kdiag-bundle":
+        return TaskProfile(
+            task_class="kdiag-bundle",
+            lock_mode="shared",
+            slots_per_device=_positive_int(values, "JLENS_LOCAL_KDIAG_GPU_SLOTS_PER_DEVICE", 5),
+            cpu_tokens=_positive_int(values, "JLENS_LOCAL_KDIAG_CPU_TOKENS", 4),
+            host_ram_mib=_positive_int(values, "JLENS_LOCAL_KDIAG_HOST_RAM_MIB", 12288),
+            gpu_vram_mib=_positive_int(values, "JLENS_LOCAL_KDIAG_GPU_VRAM_MIB", 4096),
+            gpu_memory_reserve_mib=_nonnegative_int(
+                values,
+                "JLENS_LOCAL_KDIAG_GPU_MEMORY_RESERVE_MIB",
+                base_gpu_memory_reserve,
+            ),
+            gpu_utilization_tokens=_positive_int(
+                values, "JLENS_LOCAL_KDIAG_GPU_UTILIZATION_TOKENS", 20
+            ),
+        )
     if task == "occupancy":
         return TaskProfile(
             task_class="occupancy",
@@ -117,7 +136,7 @@ def profile_for_task(task: str, env: Mapping[str, str] | None = None) -> TaskPro
 
     cpu_tokens = 4
     host_ram_mib = 8192
-    if task in {"layer-selection", "iti-fit"}:
+    if task in {"layer-selection", "iti-fit", "kdiag-rotations"}:
         cpu_tokens = 16
         host_ram_mib = 32768
     elif task == "bootstrap-probes":
@@ -627,7 +646,7 @@ class LocalScheduler:
         if gate is None:
             return False
         self.gate_handle = gate
-        if self.profile.task_class != "occupancy":
+        if self.profile.lock_mode != "shared":
             return True
         for slot in range(self.profile.slots_per_device):
             handle = _try_lock(

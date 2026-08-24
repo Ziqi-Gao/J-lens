@@ -34,7 +34,7 @@ def _required_text(name: str, value: object) -> str:
 
 
 def _canonical_layers(value: object) -> tuple[int, ...]:
-    if isinstance(value, (str, bytes)):
+    if isinstance(value, str | bytes):
         raise JLensMetadataError("source_layers must be an iterable of integers")
     try:
         layers = tuple(int(layer) for layer in value)  # type: ignore[arg-type]

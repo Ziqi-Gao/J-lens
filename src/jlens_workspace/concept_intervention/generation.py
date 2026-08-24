@@ -677,7 +677,7 @@ def validate_generation_artifacts(
             or not isinstance(token_logprobs, list)
             or len(token_ids) != len(token_logprobs)
             or any(
-                not isinstance(value, (int, float))
+                not isinstance(value, int | float)
                 or not math.isfinite(float(value))
                 for value in token_logprobs
             )
@@ -693,12 +693,12 @@ def validate_generation_artifacts(
             not isinstance(telemetry, list)
             or not isinstance(injected_by_layer, dict)
             or any(
-                not isinstance(value, (int, float))
+                not isinstance(value, int | float)
                 or not math.isfinite(float(value))
                 or float(value) < 0.0
                 for value in injected_by_layer.values()
             )
-            or not isinstance(total_injected_norm, (int, float))
+            or not isinstance(total_injected_norm, int | float)
             or not math.isfinite(float(total_injected_norm))
             or float(total_injected_norm) < 0.0
             or not math.isclose(
@@ -1005,7 +1005,7 @@ def validate_candidate_score_artifact(
             or set(log_probabilities) != set(candidate_labels)
             or target not in log_probabilities
             or any(
-                not isinstance(value, (int, float))
+                not isinstance(value, int | float)
                 or not math.isfinite(float(value))
                 for value in [*log_probabilities.values(), *probabilities.values()]
             )
@@ -1019,7 +1019,7 @@ def validate_candidate_score_artifact(
             "target_margin",
         )
         if any(
-            not isinstance(row.get(field), (int, float))
+            not isinstance(row.get(field), int | float)
             or not math.isfinite(float(row[field]))
             for field in scalar_fields
         ) or not isinstance(row.get("target_rank"), int):

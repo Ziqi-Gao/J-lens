@@ -223,12 +223,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config_argument(align)
     align.add_argument("--probes", type=Path, help="probe artifact directory")
     align.add_argument("--output", type=Path, help="alignment output directory")
-    align.add_argument(
-        "--layer", type=int, action="append", help="layer to align; may be repeated"
-    )
-    align.add_argument(
-        "--lens-output", type=Path, help="where a source=fit lens should be saved"
-    )
+    align.add_argument("--layer", type=int, action="append", help="layer to align; may be repeated")
+    align.add_argument("--lens-output", type=Path, help="where a source=fit lens should be saved")
     _add_overwrite_flag(align)
     _add_json_flag(align)
     align.set_defaults(handler=_cmd_concept_align)
@@ -274,9 +270,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="compare full, sparse-J, non-J, and matched-random concept directions",
     )
     _add_config_argument(intervention_concepts)
-    intervention_concepts.add_argument(
-        "--output", type=Path, help="intervention output directory"
-    )
+    intervention_concepts.add_argument("--output", type=Path, help="intervention output directory")
     intervention_concepts.add_argument(
         "--concept-id", action="append", help="target concept; may be repeated"
     )
@@ -288,9 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
         "index", help="validate intervention shards and rebuild the shared index"
     )
     _add_config_argument(intervention_index)
-    intervention_index.add_argument(
-        "--output", type=Path, help="intervention output directory"
-    )
+    intervention_index.add_argument("--output", type=Path, help="intervention output directory")
     _add_json_flag(intervention_index)
     intervention_index.set_defaults(handler=_cmd_intervention_index)
 
@@ -368,15 +360,9 @@ def build_parser() -> argparse.ArgumentParser:
     compare_index.add_argument("--j-output", type=Path, required=True)
     compare_index.add_argument("--iti-output", type=Path, required=True)
     compare_index.add_argument("--raptor-output", type=Path, required=True)
-    compare_index.add_argument(
-        "--j-candidate-rescore", type=Path
-    )
-    compare_index.add_argument(
-        "--iti-candidate-rescore", type=Path
-    )
-    compare_index.add_argument(
-        "--raptor-candidate-rescore", type=Path
-    )
+    compare_index.add_argument("--j-candidate-rescore", type=Path)
+    compare_index.add_argument("--iti-candidate-rescore", type=Path)
+    compare_index.add_argument("--raptor-candidate-rescore", type=Path)
     compare_index.add_argument("--output", type=Path, required=True)
     compare_index.add_argument("--concept-id", action="append", required=True)
     _add_json_flag(compare_index)
@@ -390,9 +376,7 @@ def build_parser() -> argparse.ArgumentParser:
     smoke_check.add_argument("--iti-output", type=Path, required=True)
     smoke_check.add_argument("--raptor-output", type=Path, required=True)
     smoke_check.add_argument("--output", type=Path, required=True)
-    smoke_check.add_argument(
-        "--concept-id", default="goemotions:admiration"
-    )
+    smoke_check.add_argument("--concept-id", default="goemotions:admiration")
     _add_json_flag(smoke_check)
     smoke_check.set_defaults(handler=_cmd_intervention_smoke_check)
 
@@ -415,9 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_config_argument(iti_fit)
     iti_fit.add_argument("--output", type=Path, help="ITI direction directory")
-    iti_fit.add_argument(
-        "--concept-id", action="append", help="target concept; may be repeated"
-    )
+    iti_fit.add_argument("--concept-id", action="append", help="target concept; may be repeated")
     _add_overwrite_flag(iti_fit)
     _add_json_flag(iti_fit)
     iti_fit.set_defaults(handler=_cmd_iti_fit)
@@ -427,9 +409,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_config_argument(iti_run)
     iti_run.add_argument("--output", type=Path, help="ITI experiment output directory")
-    iti_run.add_argument(
-        "--concept-id", action="append", help="target concept; may be repeated"
-    )
+    iti_run.add_argument("--concept-id", action="append", help="target concept; may be repeated")
     iti_run.add_argument(
         "--grid-index",
         type=int,
@@ -464,12 +444,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json_flag(matrix_run)
     matrix_run.set_defaults(handler=_cmd_matrix_run)
 
-    occupancy = subparsers.add_parser(
-        "occupancy", help="sparse J-space occupancy workflows"
-    )
-    occupancy_subparsers = occupancy.add_subparsers(
-        dest="occupancy_command", required=True
-    )
+    occupancy = subparsers.add_parser("occupancy", help="sparse J-space occupancy workflows")
+    occupancy_subparsers = occupancy.add_subparsers(dest="occupancy_command", required=True)
     occupancy_concepts = occupancy_subparsers.add_parser(
         "concepts",
         help="decompose probe concept vectors over token J-directions "
@@ -518,6 +494,82 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_json_flag(occupancy_index)
     occupancy_index.set_defaults(handler=_cmd_occupancy_index)
+
+    k_diagnostic = subparsers.add_parser(
+        "k-diagnostic", help="registered concept-occupancy K root-cause diagnostic"
+    )
+    k_subparsers = k_diagnostic.add_subparsers(dest="k_diagnostic_command", required=True)
+    k_validate = k_subparsers.add_parser(
+        "validate", help="verify config and every pinned shared artifact hash"
+    )
+    _add_config_argument(k_validate)
+    _add_json_flag(k_validate)
+    k_validate.set_defaults(handler=_cmd_k_diagnostic_validate)
+
+    k_targets = k_subparsers.add_parser(
+        "prepare-targets", help="prepare all registered diagnostic targets"
+    )
+    _add_config_argument(k_targets)
+    _add_json_flag(k_targets)
+    k_targets.set_defaults(handler=_cmd_k_diagnostic_prepare_targets)
+
+    k_bases = k_subparsers.add_parser(
+        "build-bases", help="build centered-J PCA and regularized whitening metrics"
+    )
+    _add_config_argument(k_bases)
+    _add_json_flag(k_bases)
+    k_bases.set_defaults(handler=_cmd_k_diagnostic_build_bases)
+
+    k_rotations = k_subparsers.add_parser(
+        "prepare-rotations",
+        help="precompute and hash-index every exact Haar matrix required by the stage",
+    )
+    _add_config_argument(k_rotations)
+    _add_json_flag(k_rotations)
+    k_rotations.set_defaults(handler=_cmd_k_diagnostic_prepare_rotations)
+
+    k_rotation_preflight = k_subparsers.add_parser(
+        "rotation-cache-preflight",
+        help="time a worst-dimension exact QR and gate the complete cache build",
+    )
+    _add_config_argument(k_rotation_preflight)
+    _add_json_flag(k_rotation_preflight)
+    k_rotation_preflight.set_defaults(handler=_cmd_k_diagnostic_rotation_cache_preflight)
+
+    k_run = k_subparsers.add_parser(
+        "run", help="run one physical target/metric bundle of logical replicates"
+    )
+    _add_config_argument(k_run)
+    k_run.add_argument("--bundle-index", type=int, required=True)
+    k_run.add_argument(
+        "--microbenchmark",
+        action="store_true",
+        help="run the current-stage worst-cost bundle and measure resource usage",
+    )
+    _add_json_flag(k_run)
+    k_run.set_defaults(handler=_cmd_k_diagnostic_run)
+
+    k_preflight = k_subparsers.add_parser(
+        "resource-preflight",
+        help="project stage/full resource upper bounds and fail before sbatch",
+    )
+    _add_config_argument(k_preflight)
+    _add_json_flag(k_preflight)
+    k_preflight.set_defaults(handler=_cmd_k_diagnostic_resource_preflight)
+
+    k_index = k_subparsers.add_parser(
+        "index", help="audit all registered shards and build the stage index"
+    )
+    _add_config_argument(k_index)
+    _add_json_flag(k_index)
+    k_index.set_defaults(handler=_cmd_k_diagnostic_index)
+
+    k_report = k_subparsers.add_parser(
+        "report", help="generate the registered report and ten figure pairs"
+    )
+    _add_config_argument(k_report)
+    _add_json_flag(k_report)
+    k_report.set_defaults(handler=_cmd_k_diagnostic_report)
     return parser
 
 
@@ -528,9 +580,7 @@ def _emit(payload: dict[str, Any], *, as_json: bool, message: str) -> None:
         print(message)
 
 
-def _finish_command(
-    args: argparse.Namespace, payload: dict[str, Any], *, message: str
-) -> None:
+def _finish_command(args: argparse.Namespace, payload: dict[str, Any], *, message: str) -> None:
     args._payload = payload
     if not getattr(args, "_quiet", False):
         _emit(payload, as_json=args.json, message=message)
@@ -551,9 +601,7 @@ def _installed_vcs_commit(distribution: str) -> str | None:
     """Read a PEP 610 VCS commit from an installed distribution."""
 
     try:
-        payload = importlib.metadata.distribution(distribution).read_text(
-            "direct_url.json"
-        )
+        payload = importlib.metadata.distribution(distribution).read_text("direct_url.json")
     except importlib.metadata.PackageNotFoundError:
         return None
     if not payload:
@@ -566,20 +614,14 @@ def _installed_vcs_commit(distribution: str) -> str | None:
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
-    core = {
-        name: _package_status(name, module) for name, module in _CORE_PACKAGES
-    }
-    optional = {
-        name: _package_status(name, module) for name, module in _OPTIONAL_PACKAGES
-    }
+    core = {name: _package_status(name, module) for name, module in _CORE_PACKAGES}
+    optional = {name: _package_status(name, module) for name, module in _OPTIONAL_PACKAGES}
     python_ok = sys.version_info >= (3, 11)
     core_ok = python_ok and all(status["available"] for status in core.values())
     llm_ok = all(status["available"] for status in optional.values())
     observed_jlens_revision = _installed_vcs_commit("jlens")
     jlens_revision_ok = observed_jlens_revision == _EXPECTED_JLENS_REVISION
-    ok = core_ok and (
-        (llm_ok and jlens_revision_ok) or not args.require_llm
-    )
+    ok = core_ok and ((llm_ok and jlens_revision_ok) or not args.require_llm)
     payload = {
         "ok": ok,
         "python": {
@@ -650,18 +692,12 @@ def _experiment_manifest(
         model_id=config.model.model_id,
         model_revision=config.model.revision,
         tokenizer_id=config.model.tokenizer_id or config.model.model_id,
-        tokenizer_revision=(
-            config.model.tokenizer_revision or config.model.revision
-        ),
+        tokenizer_revision=(config.model.tokenizer_revision or config.model.revision),
         lens_source=(
-            None
-            if lens is None
-            else f"{lens.source}:{lens.path_or_repo or 'runtime-fit'}"
+            None if lens is None else f"{lens.source}:{lens.path_or_repo or 'runtime-fit'}"
         ),
         lens_revision=None if lens is None else lens.revision,
-        dataset_source=(
-            None if dataset is None else dataset.dataset_id or dataset.source
-        ),
+        dataset_source=(None if dataset is None else dataset.dataset_id or dataset.source),
         dataset_revision=None if dataset is None else dataset.revision,
         dataset_hash=dataset_hash,
         notes=manifest_notes,
@@ -686,9 +722,7 @@ def _activation_dataset_hash(path: str | Path) -> str:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     value = metadata.get("manifest", {}).get("dataset_hash")
     if not isinstance(value, str) or not value:
-        raise ValueError(
-            f"activation artifact lacks a source dataset hash: {metadata_path}"
-        )
+        raise ValueError(f"activation artifact lacks a source dataset hash: {metadata_path}")
     return value
 
 
@@ -708,9 +742,7 @@ def _generation_identity(
     open_path = resolve_repository_resource(value.open_prompts_path)
     candidate_payload = json.loads(candidate_path.read_text(encoding="utf-8"))
     open_payload = json.loads(open_path.read_text(encoding="utf-8"))
-    candidate_ids = [
-        str(row["prompt_id"]) for row in candidate_payload.get("prompts", [])
-    ]
+    candidate_ids = [str(row["prompt_id"]) for row in candidate_payload.get("prompts", [])]
     open_ids = [str(row["prompt_id"]) for row in open_payload.get("prompts", [])]
     prompt_ids = [*candidate_ids, *open_ids]
     if (
@@ -722,16 +754,13 @@ def _generation_identity(
         or len(candidate_labels) != 7
         or len(set(candidate_labels)) != 7
     ):
-        raise ValueError(
-            "generation prompt banks require unique IDs and seven candidate labels"
-        )
+        raise ValueError("generation prompt banks require unique IDs and seven candidate labels")
     sample_seeds = list(value.sample_seeds)
 
     return {
         **value.model_dump(),
         "candidate_labels": {
-            str(concept_id): str(label)
-            for concept_id, label in candidate_labels.items()
+            str(concept_id): str(label) for concept_id, label in candidate_labels.items()
         },
         "candidate_prompt_splits": candidate_prompt_splits(candidate_ids),
         "candidate_prompts_sha256": sha256_file(candidate_path),
@@ -740,8 +769,7 @@ def _generation_identity(
         "open_prompt_count": len(open_ids),
         "prompt_count": len(prompt_ids),
         "prompt_ids_sha256": prompt_ids_sha256(prompt_ids),
-        "expected_rows_per_grid_point": len(prompt_ids)
-        * (1 + len(sample_seeds)),
+        "expected_rows_per_grid_point": len(prompt_ids) * (1 + len(sample_seeds)),
     }
 
 
@@ -755,9 +783,7 @@ def _shared_protocol_identity(path: str | Path) -> dict[str, Any]:
     row_manifest_path = selection_path.parent / str(selection["row_manifest"])
     row_hash = sha256_file(row_manifest_path)
     if selection.get("row_manifest_sha256") != row_hash:
-        raise ValueError(
-            f"shared row manifest identity mismatch: {row_manifest_path}"
-        )
+        raise ValueError(f"shared row manifest identity mismatch: {row_manifest_path}")
     return {
         "selected_layers_sha256": sha256_file(selection_path),
         "row_manifest_path": str(row_manifest_path),
@@ -782,15 +808,11 @@ def _write_immutable_shard_manifest(
     summary = Path(scientific_summary)
     payload = asdict(manifest) if is_dataclass(manifest) else dict(manifest)
     if summary.is_file() and not destination.is_file():
-        raise ValueError(
-            f"scientific shard predates its immutable manifest: {summary}"
-        )
+        raise ValueError(f"scientific shard predates its immutable manifest: {summary}")
     if destination.is_file():
         existing = json.loads(destination.read_text(encoding="utf-8"))
         if existing != payload:
-            raise ValueError(
-                f"scientific shard manifest identity changed: {destination}"
-            )
+            raise ValueError(f"scientific shard manifest identity changed: {destination}")
         return
     atomic_write_json(destination, payload)
 
@@ -826,6 +848,7 @@ def _cmd_config_validate(args: argparse.Namespace) -> int:
             "raptor",
             "iti",
             "occupancy",
+            "k_diagnostic",
             "matrix",
         )
         if getattr(config, name) is not None
@@ -839,9 +862,7 @@ def _cmd_config_validate(args: argparse.Namespace) -> int:
             "id": config.model.model_id,
             "revision": config.model.revision,
             "tokenizer_id": config.model.tokenizer_id or config.model.model_id,
-            "tokenizer_revision": (
-                config.model.tokenizer_revision or config.model.revision
-            ),
+            "tokenizer_revision": (config.model.tokenizer_revision or config.model.revision),
         },
         "sections": sections,
     }
@@ -874,9 +895,7 @@ def _cmd_data_validate(args: argparse.Namespace) -> int:
             else dataset.min_per_label_per_split
         )
         minimum_concept = (
-            args.min_per_concept
-            if args.min_per_concept is not None
-            else dataset.min_per_concept
+            args.min_per_concept if args.min_per_concept is not None else dataset.min_per_concept
         )
         examples = _load_examples(config, override)
         if override is not None:
@@ -1061,9 +1080,7 @@ def _cmd_concept_fit_probes(args: argparse.Namespace) -> int:
         raise ValueError("the current probe workflow requires scoring='roc_auc'")
     activation_path = args.activations or Path(config.output_dir) / "activations"
     destination = args.output or Path(config.output_dir) / "probes"
-    configured_layers = (
-        config.activations.layers if config.activations is not None else None
-    )
+    configured_layers = config.activations.layers if config.activations is not None else None
     result = run_concept_probe_workflow(
         activation_path,
         destination,
@@ -1110,11 +1127,7 @@ def _cmd_concept_bootstrap_probes(args: argparse.Namespace) -> int:
     occupancy = _require_section(config, "occupancy")
     probe = _require_section(config, "probe")
     layers = tuple(args.layer) if args.layer else tuple(occupancy.layers)
-    concepts = (
-        tuple(args.concept_id)
-        if args.concept_id
-        else tuple(occupancy.concept_ids or ())
-    )
+    concepts = tuple(args.concept_id) if args.concept_id else tuple(occupancy.concept_ids or ())
     if not concepts:
         raise ValueError("bootstrap probes require explicit concept_ids")
     summary = build_probe_bootstrap_replicates(
@@ -1151,9 +1164,7 @@ def _cmd_concept_bootstrap_probes_index(args: argparse.Namespace) -> int:
     concepts = tuple(occupancy.concept_ids or ())
     if not concepts:
         raise ValueError("bootstrap probe indexing requires explicit concept_ids")
-    expected = (
-        len(occupancy.layers) * len(concepts) * len(occupancy.bootstrap_seeds)
-    )
+    expected = len(occupancy.layers) * len(concepts) * len(occupancy.bootstrap_seeds)
     manifest = rebuild_probe_replicate_manifest(
         args.output,
         activation_artifact=args.activations,
@@ -1218,9 +1229,7 @@ def _lens_expected(config: Any, d_model: int) -> dict[str, Any]:
         "model_id": config.model.model_id,
         "model_revision": config.model.revision,
         "tokenizer_id": config.model.tokenizer_id or config.model.model_id,
-        "tokenizer_revision": (
-            config.model.tokenizer_revision or config.model.revision
-        ),
+        "tokenizer_revision": (config.model.tokenizer_revision or config.model.revision),
         "d_model": d_model,
         "source_layers": _canonical_lens_layers(lens),
         "norm_convention": _lens_convention(config),
@@ -1248,9 +1257,7 @@ def _fitted_lens_path(config: Any, lens_output: Path | None) -> Path:
     )
 
 
-def _lens_artifact_provenance(
-    config: Any, lens_output: Path | None
-) -> dict[str, Any]:
+def _lens_artifact_provenance(config: Any, lens_output: Path | None) -> dict[str, Any]:
     """Return a content hash for local lenses or an exact Hub identity."""
 
     from jlens_workspace.artifacts import sha256_file
@@ -1285,9 +1292,7 @@ def _fit_checkpoint_path(config: Any, destination: Path) -> Path:
     return destination.with_suffix(destination.suffix + ".checkpoint")
 
 
-def _load_fit_prompts(
-    path: str | Path, limit: int, *, offset: int = 0
-) -> list[str]:
+def _load_fit_prompts(path: str | Path, limit: int, *, offset: int = 0) -> list[str]:
     source = Path(path)
     if offset < 0:
         raise ValueError("fit prompt offset must be non-negative")
@@ -1312,9 +1317,7 @@ def _load_fit_prompts(
             else:
                 prompt = None
             if not isinstance(prompt, str) or not prompt.strip():
-                raise ValueError(
-                    f"{source}:{line_number}: expected a string or text/prompt object"
-                )
+                raise ValueError(f"{source}:{line_number}: expected a string or text/prompt object")
         else:
             prompt = line
         if usable < offset:
@@ -1326,8 +1329,7 @@ def _load_fit_prompts(
             break
     if len(prompts) < limit:
         raise ValueError(
-            f"fit prompt file has fewer than offset={offset} + limit={limit} "
-            "usable prompts"
+            f"fit prompt file has fewer than offset={offset} + limit={limit} usable prompts"
         )
     return prompts
 
@@ -1357,9 +1359,7 @@ def _fit_prompt_token_lengths(
     return min(lengths), max(lengths)
 
 
-def _load_or_fit_lens(
-    config: Any, bundle: Any, *, lens_output: Path | None = None
-) -> Any:
+def _load_or_fit_lens(config: Any, bundle: Any, *, lens_output: Path | None = None) -> Any:
     """Resolve hub/local/fit sources with explicit immutable identity metadata."""
 
     from jlens_workspace.artifacts import (
@@ -1422,9 +1422,7 @@ def _load_or_fit_lens(
                         f"{managed.metadata.extra.get(key)!r}, expected {value!r}"
                     )
             expected_dtype = f"torch.{lens.storage_dtype}"
-            observed_dtypes = {
-                str(matrix.dtype) for matrix in managed.lens.jacobians.values()
-            }
+            observed_dtypes = {str(matrix.dtype) for matrix in managed.lens.jacobians.values()}
             if observed_dtypes != {expected_dtype}:
                 raise ValueError(
                     f"existing fitted lens dtype is {sorted(observed_dtypes)}, "
@@ -1437,9 +1435,7 @@ def _load_or_fit_lens(
         wrapper_kwargs = {"compile": lens.compile_blocks}
         if config.model.force_bos is not None:
             wrapper_kwargs["force_bos"] = config.model.force_bos
-        wrapped = OfficialJLensAdapter.from_hf(
-            bundle.model, bundle.tokenizer, **wrapper_kwargs
-        )
+        wrapped = OfficialJLensAdapter.from_hf(bundle.model, bundle.tokenizer, **wrapper_kwargs)
         if int(wrapped.d_model) != d_model:
             raise ValueError(
                 f"wrapped model d_model={wrapped.d_model} differs from model d_model={d_model}"
@@ -1513,9 +1509,7 @@ def _load_or_fit_lens(
         source_layers=layers,
         target_layer=lens.target_layer,
         norm_convention=_lens_convention(config),
-        n_prompts=(
-            lens.n_fit_prompts if "n_fit_prompts" in lens.model_fields_set else None
-        ),
+        n_prompts=(lens.n_fit_prompts if "n_fit_prompts" in lens.model_fields_set else None),
         extra={
             "lens_source": "huggingface",
             "repository": lens.path_or_repo,
@@ -1571,9 +1565,7 @@ def _probe_layers(path: Path) -> tuple[int, ...]:
     return tuple(layers)
 
 
-def _probe_activation_identity(
-    activation: Mapping[str, Any], *, source: Path
-) -> dict[str, Any]:
+def _probe_activation_identity(activation: Mapping[str, Any], *, source: Path) -> dict[str, Any]:
     manifest = activation.get("manifest")
     if not isinstance(manifest, dict):
         raise ValueError(f"{source}: activation provenance is missing its manifest")
@@ -1595,9 +1587,7 @@ def _probe_activation_identity(
     }
 
 
-def _expected_probe_identity(
-    config: Any, config_path: Path | None = None
-) -> dict[str, Any]:
+def _expected_probe_identity(config: Any, config_path: Path | None = None) -> dict[str, Any]:
     from jlens_workspace.artifacts import sha256_file
 
     activation = _require_section(config, "activations")
@@ -1606,9 +1596,7 @@ def _expected_probe_identity(
         "model_id": config.model.model_id,
         "model_revision": config.model.revision,
         "tokenizer_id": config.model.tokenizer_id or config.model.model_id,
-        "tokenizer_revision": (
-            config.model.tokenizer_revision or config.model.revision
-        ),
+        "tokenizer_revision": (config.model.tokenizer_revision or config.model.revision),
         "dataset_source": dataset.dataset_id or dataset.source,
         "dataset_revision": dataset.revision,
         "force_bos": config.model.force_bos,
@@ -1634,17 +1622,13 @@ def _load_probe_vectors(
     if expected_identity is not None:
         root_manifest_path = path / "manifest.json"
         if not root_manifest_path.is_file():
-            raise ValueError(
-                f"probe directory is missing provenance manifest.json: {path}"
-            )
+            raise ValueError(f"probe directory is missing provenance manifest.json: {path}")
         root_manifest = json.loads(root_manifest_path.read_text(encoding="utf-8"))
         root_activation = root_manifest.get("activation")
         root_hash = root_manifest.get("activation_artifact_hash")
         if not isinstance(root_activation, dict) or not isinstance(root_hash, str):
             raise ValueError(f"{root_manifest_path}: invalid activation provenance")
-        observed_identity = _probe_activation_identity(
-            root_activation, source=root_manifest_path
-        )
+        observed_identity = _probe_activation_identity(root_activation, source=root_manifest_path)
         for field, expected in expected_identity.items():
             if observed_identity.get(field) != expected:
                 raise ValueError(
@@ -2162,8 +2146,7 @@ def _cmd_intervention_concepts_v2(args: argparse.Namespace) -> int:
     intervention = _require_section(config, "intervention")
     if intervention.method != "concept_j_component_intervention_v2":
         raise ValueError(
-            "intervention concepts-v2 requires "
-            "method=concept_j_component_intervention_v2"
+            "intervention concepts-v2 requires method=concept_j_component_intervention_v2"
         )
     configured = tuple(intervention.concept_ids or ())
     concepts = tuple(args.concept_id) if args.concept_id else configured
@@ -2193,22 +2176,14 @@ def _cmd_intervention_concepts_v2(args: argparse.Namespace) -> int:
             "layer": intervention.layer,
             "concept_ids": list(concepts),
             "source_occupancy_dir": intervention.source_occupancy_dir,
-            "source_occupancy_index_sha256": (
-                intervention.expected_occupancy_index_sha256
-            ),
-            "source_occupancy_git_commit": (
-                intervention.source_occupancy_git_commit
-            ),
+            "source_occupancy_index_sha256": (intervention.expected_occupancy_index_sha256),
+            "source_occupancy_git_commit": (intervention.source_occupancy_git_commit),
             "prompts_path": intervention.prompts_path,
-            "prompts_sha256": sha256_file(
-                resolve_repository_resource(intervention.prompts_path)
-            ),
+            "prompts_sha256": sha256_file(resolve_repository_resource(intervention.prompts_path)),
         },
     )
     destination.mkdir(parents=True, exist_ok=True)
-    shard_name = "concepts_" + "-".join(
-        quote(concept_id, safe="") for concept_id in concepts
-    )
+    shard_name = "concepts_" + "-".join(quote(concept_id, safe="") for concept_id in concepts)
     shard_manifest = destination / "manifests" / f"{shard_name}.json"
     atomic_write_json(shard_manifest, manifest)
 
@@ -2224,12 +2199,8 @@ def _cmd_intervention_concepts_v2(args: argparse.Namespace) -> int:
             occupancy_dir=intervention.source_occupancy_dir,
             probes_dir=intervention.source_probes_dir,
             activations_dir=intervention.source_activations_dir,
-            expected_occupancy_index_sha256=(
-                intervention.expected_occupancy_index_sha256
-            ),
-            expected_occupancy_git_commit=(
-                intervention.source_occupancy_git_commit
-            ),
+            expected_occupancy_index_sha256=(intervention.expected_occupancy_index_sha256),
+            expected_occupancy_git_commit=(intervention.source_occupancy_git_commit),
             layer=intervention.layer,
             convention=intervention.convention,
             strengths=intervention.strengths,
@@ -2274,9 +2245,7 @@ def _cmd_intervention_index(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     intervention = _require_section(config, "intervention")
     if intervention.method != "concept_j_component_intervention_v2":
-        raise ValueError(
-            "intervention index requires method=concept_j_component_intervention_v2"
-        )
+        raise ValueError("intervention index requires method=concept_j_component_intervention_v2")
     concepts = tuple(intervention.concept_ids or ())
     destination = args.output or Path(config.output_dir)
     manifest = _experiment_manifest(
@@ -2287,12 +2256,8 @@ def _cmd_intervention_index(args: argparse.Namespace) -> int:
             "method": intervention.method,
             "coordinate": "resid_post",
             "expected_concepts": list(concepts),
-            "source_occupancy_git_commit": (
-                intervention.source_occupancy_git_commit
-            ),
-            "source_occupancy_index_sha256": (
-                intervention.expected_occupancy_index_sha256
-            ),
+            "source_occupancy_git_commit": (intervention.source_occupancy_git_commit),
+            "source_occupancy_index_sha256": (intervention.expected_occupancy_index_sha256),
         },
     )
     atomic_write_json(destination / "manifest.json", manifest)
@@ -2347,9 +2312,7 @@ def _cmd_j_component_intervention(args: argparse.Namespace) -> int:
 
     config = _load_config(args.config)
     section = _require_section(config, "j_component")
-    concepts = _configured_concepts(
-        section.concept_ids, args.concept_id, method="J-component"
-    )
+    concepts = _configured_concepts(section.concept_ids, args.concept_id, method="J-component")
     if args.grid_index is not None and len(concepts) != 1:
         raise ValueError("a J-component grid shard requires exactly one concept")
     destination = args.output or Path(config.output_dir)
@@ -2448,9 +2411,7 @@ def _cmd_j_component_index(args: argparse.Namespace) -> int:
         index_builder=_index_builder_provenance(manifest),
     )
     if not index["complete"]:
-        raise ValueError(
-            f"J-component intervention incomplete: {index['missing_concepts']}"
-        )
+        raise ValueError(f"J-component intervention incomplete: {index['missing_concepts']}")
     _finish_command(
         args,
         index,
@@ -2467,9 +2428,7 @@ def _cmd_raptor_intervention(args: argparse.Namespace) -> int:
 
     config = _load_config(args.config)
     section = _require_section(config, "raptor")
-    concepts = _configured_concepts(
-        section.concept_ids, args.concept_id, method="RAPTOR"
-    )
+    concepts = _configured_concepts(section.concept_ids, args.concept_id, method="RAPTOR")
     if args.grid_index is not None and len(concepts) != 1:
         raise ValueError("a RAPTOR grid shard requires exactly one concept")
     destination = args.output or Path(config.output_dir)
@@ -2567,9 +2526,7 @@ def _cmd_raptor_index(args: argparse.Namespace) -> int:
         index_builder=_index_builder_provenance(manifest),
     )
     if not index["complete"]:
-        raise ValueError(
-            f"RAPTOR intervention incomplete: {index['missing_concepts']}"
-        )
+        raise ValueError(f"RAPTOR intervention incomplete: {index['missing_concepts']}")
     _finish_command(
         args,
         index,
@@ -2691,10 +2648,7 @@ def _cmd_iti_capture(args: argparse.Namespace) -> int:
         overwrite=args.overwrite,
     )
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
-    if (
-        int(metadata["num_heads"]) != iti.num_heads
-        or int(metadata["head_dim"]) != iti.head_dim
-    ):
+    if int(metadata["num_heads"]) != iti.num_heads or int(metadata["head_dim"]) != iti.head_dim:
         raise ValueError(
             "runtime ITI head layout differs from config: "
             f"observed H={metadata['num_heads']}, D_head={metadata['head_dim']}"
@@ -2751,12 +2705,8 @@ def _cmd_iti_fit(args: argparse.Namespace) -> int:
                 output_dir=destination,
                 concept_id=concept_id,
                 selected_layers_path=iti.selected_layers_path,
-                row_manifest_path=(
-                    Path(iti.selected_layers_path).parent / "row_manifest.json"
-                ),
-                max_top_k=max(
-                    max(iti.top_k_grid), max(iti.layer_matched_top_k_grid)
-                ),
+                row_manifest_path=(Path(iti.selected_layers_path).parent / "row_manifest.json"),
+                max_top_k=max(max(iti.top_k_grid), max(iti.layer_matched_top_k_grid)),
                 random_seeds=iti.random_control_seeds,
                 seed=config.seed,
                 variants=iti.variants,
@@ -2815,9 +2765,7 @@ def _cmd_iti_run(args: argparse.Namespace) -> int:
     manifest = _experiment_manifest(
         config,
         args.config,
-        dataset_hash=_activation_dataset_hash(
-            iti.source_residual_activations_dir
-        ),
+        dataset_hash=_activation_dataset_hash(iti.source_residual_activations_dir),
         notes={
             "workflow": "iti_intervention",
             "method": iti.method,
@@ -2825,9 +2773,7 @@ def _cmd_iti_run(args: argparse.Namespace) -> int:
             "upstream_repository": iti.upstream_repository,
             "upstream_commit": iti.upstream_commit,
             "prompts_path": iti.prompts_path,
-            "prompts_sha256": sha256_file(
-                resolve_repository_resource(iti.prompts_path)
-            ),
+            "prompts_sha256": sha256_file(resolve_repository_resource(iti.prompts_path)),
             "validation_prompt_prefixes": list(iti.validation_prompt_prefixes),
             "test_prompt_prefixes": list(iti.test_prompt_prefixes),
             "generation": (
@@ -2845,10 +2791,7 @@ def _cmd_iti_run(args: argparse.Namespace) -> int:
         shard_manifest = (
             destination / "manifests" / f"{encoded}.json"
             if args.grid_index is None
-            else destination
-            / "manifests"
-            / encoded
-            / f"grid_{args.grid_index:04d}.json"
+            else destination / "manifests" / encoded / f"grid_{args.grid_index:04d}.json"
         )
         if args.grid_index is None:
             atomic_write_json(shard_manifest, manifest)
@@ -2939,9 +2882,7 @@ def _cmd_iti_index(args: argparse.Namespace) -> int:
     source_residual_root = Path(iti.source_residual_activations_dir)
     source_residual_metadata_path = source_residual_root / "metadata.json"
     source_residual_labels_path = source_residual_root / "labels.npy"
-    source_residual_metadata = json.loads(
-        source_residual_metadata_path.read_text(encoding="utf-8")
-    )
+    source_residual_metadata = json.loads(source_residual_metadata_path.read_text(encoding="utf-8"))
     shared_identity = (
         _shared_protocol_identity(iti.selected_layers_path)
         if iti.selected_layers_path is not None
@@ -2950,9 +2891,7 @@ def _cmd_iti_index(args: argparse.Namespace) -> int:
     manifest = _experiment_manifest(
         config,
         args.config,
-        dataset_hash=_activation_dataset_hash(
-            iti.source_residual_activations_dir
-        ),
+        dataset_hash=_activation_dataset_hash(iti.source_residual_activations_dir),
         notes={
             "workflow": "iti_intervention",
             "method": iti.method,
@@ -2960,20 +2899,14 @@ def _cmd_iti_index(args: argparse.Namespace) -> int:
             "upstream_repository": iti.upstream_repository,
             "upstream_commit": iti.upstream_commit,
             "prompts_path": iti.prompts_path,
-            "prompts_sha256": sha256_file(
-                resolve_repository_resource(iti.prompts_path)
-            ),
+            "prompts_sha256": sha256_file(resolve_repository_resource(iti.prompts_path)),
             "validation_prompt_prefixes": list(iti.validation_prompt_prefixes),
             "test_prompt_prefixes": list(iti.test_prompt_prefixes),
             "reference_j_intervention_dir": iti.reference_j_intervention_dir,
             "source_residual_activations_dir": iti.source_residual_activations_dir,
-            "source_residual_metadata_sha256": sha256_file(
-                source_residual_metadata_path
-            ),
+            "source_residual_metadata_sha256": sha256_file(source_residual_metadata_path),
             "source_residual_labels_sha256": sha256_file(source_residual_labels_path),
-            "source_residual_example_hash": source_residual_metadata.get(
-                "example_hash"
-            ),
+            "source_residual_example_hash": source_residual_metadata.get("example_hash"),
             "selected_layers_path": iti.selected_layers_path,
             "lens_sha256": sha256_file(config.lens.path_or_repo),
             "generation": (
@@ -3051,63 +2984,42 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
     occupancy = _require_section(config, "occupancy")
     lens = _require_section(config, "lens")
     if lens.source not in {"local", "fit"}:
-        raise ValueError(
-            "occupancy requires a local lens or a lens fitted by the same config"
-        )
+        raise ValueError("occupancy requires a local lens or a lens fitted by the same config")
     if lens.source == "local" and not lens.path_or_repo:
         raise ValueError("local occupancy lens requires path_or_repo")
     layers = tuple(args.layer) if args.layer else tuple(occupancy.layers)
     unknown_layers = sorted(set(layers) - set(occupancy.layers))
     if unknown_layers:
         raise ValueError(f"layers not declared in occupancy config: {unknown_layers}")
-    conventions = (
-        tuple(args.convention) if args.convention else tuple(occupancy.conventions)
-    )
+    conventions = tuple(args.convention) if args.convention else tuple(occupancy.conventions)
     unknown_conventions = sorted(set(conventions) - set(occupancy.conventions))
     if unknown_conventions:
-        raise ValueError(
-            f"conventions not declared in occupancy config: {unknown_conventions}"
-        )
+        raise ValueError(f"conventions not declared in occupancy config: {unknown_conventions}")
     configured_replicates = tuple(occupancy.probe_replicates or ["primary"])
-    replicate_ids = (
-        tuple(args.replicate_id) if args.replicate_id else configured_replicates
-    )
+    replicate_ids = tuple(args.replicate_id) if args.replicate_id else configured_replicates
     unknown_replicates = sorted(set(replicate_ids) - set(configured_replicates))
     if unknown_replicates:
-        raise ValueError(
-            f"replicates not declared in occupancy config: {unknown_replicates}"
-        )
+        raise ValueError(f"replicates not declared in occupancy config: {unknown_replicates}")
     if any(replicate != "primary" for replicate in replicate_ids):
         if args.probe_replicates is None:
-            raise ValueError(
-                "--probe-replicates is required for non-primary replicate IDs"
-            )
+            raise ValueError("--probe-replicates is required for non-primary replicate IDs")
         replicate_manifest_path = args.probe_replicates / "manifest.json"
-        replicate_manifest = json.loads(
-            replicate_manifest_path.read_text(encoding="utf-8")
-        )
+        replicate_manifest = json.loads(replicate_manifest_path.read_text(encoding="utf-8"))
         if not replicate_manifest.get("complete"):
-            raise ValueError(
-                f"bootstrap probe manifest is not complete: {replicate_manifest_path}"
-            )
+            raise ValueError(f"bootstrap probe manifest is not complete: {replicate_manifest_path}")
     requested_k_max = int(args.k_max or occupancy.k_max)
     if requested_k_max < 1 or requested_k_max > occupancy.k_max:
         raise ValueError(
-            f"k_max override must lie in [1, {occupancy.k_max}], "
-            f"got {requested_k_max}"
+            f"k_max override must lie in [1, {occupancy.k_max}], got {requested_k_max}"
         )
 
     lens_path = (
-        Path(lens.path_or_repo)
-        if lens.source == "local"
-        else _fitted_lens_path(config, None)
+        Path(lens.path_or_repo) if lens.source == "local" else _fitted_lens_path(config, None)
     )
     if lens_path.is_dir():
         lens_path = lens_path / (lens.filename or "lens.pt")
     lens_sha = (
-        verify_lens_artifact_sha256(
-            lens_path, str(occupancy.expected_lens_sha256)
-        )
+        verify_lens_artifact_sha256(lens_path, str(occupancy.expected_lens_sha256))
         if occupancy.expected_lens_sha256 is not None
         else sha256_file(lens_path)
     )
@@ -3142,14 +3054,10 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
             model_id=config.model.model_id,
             model_revision=config.model.revision,
         )
-        effectives[convention] = restrict_effective_unembedding(
-            effective, len(tokenizer)
-        )
+        effectives[convention] = restrict_effective_unembedding(effective, len(tokenizer))
 
     expected_identity = _expected_probe_identity(config)
-    probes_manifest = json.loads(
-        (args.probes / "manifest.json").read_text(encoding="utf-8")
-    )
+    probes_manifest = json.loads((args.probes / "manifest.json").read_text(encoding="utf-8"))
     vector_hashes = {
         (int(entry["layer"]), str(entry["concept_id"])): str(entry["vector_sha256"])
         for entry in probes_manifest.get("probes", [])
@@ -3160,9 +3068,7 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
             args.probes, layer, expected_identity=expected_identity
         )
         selected = (
-            occupancy.concept_ids
-            if occupancy.concept_ids is not None
-            else sorted(primary_vectors)
+            occupancy.concept_ids if occupancy.concept_ids is not None else sorted(primary_vectors)
         )
         unknown = sorted(set(selected) - set(primary_vectors))
         if unknown:
@@ -3192,8 +3098,7 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
                 missing = sorted(set(selected) - set(bootstrap_vectors))
                 if missing:
                     raise ValueError(
-                        f"concepts absent from {replicate_id} at layer "
-                        f"{layer}: {missing}"
+                        f"concepts absent from {replicate_id} at layer {layer}: {missing}"
                     )
                 vectors_for_replicate = {
                     concept_id: (
@@ -3246,9 +3151,7 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
             },
             "probes_dir": str(args.probes),
             "probes_manifest_sha256": sha256_file(args.probes / "manifest.json"),
-            "probe_replicates_dir": (
-                str(args.probe_replicates) if args.probe_replicates else None
-            ),
+            "probe_replicates_dir": (str(args.probe_replicates) if args.probe_replicates else None),
             "layers": list(layers),
             "conventions": list(conventions),
             "replicate_ids": list(replicate_ids),
@@ -3280,9 +3183,7 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
         selection_modes=occupancy.selection_modes,
         signs=occupancy.signs,
         k_max=requested_k_max,
-        report_grid=[
-            value for value in occupancy.report_grid if value <= requested_k_max
-        ],
+        report_grid=[value for value in occupancy.report_grid if value <= requested_k_max],
         random_seeds=occupancy.random_seeds,
         control_atom_fractions=occupancy.control_atom_fractions,
         absolute_thresholds=occupancy.absolute_thresholds,
@@ -3417,10 +3318,7 @@ def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
     if not source_index_path.is_file() or not source_manifest_path.is_file():
         raise ValueError("candidate rescore source method index/manifest is missing")
     source_index = json.loads(source_index_path.read_text(encoding="utf-8"))
-    if (
-        source_index.get("complete") is not True
-        or source_index.get("method") != args.method
-    ):
+    if source_index.get("complete") is not True or source_index.get("method") != args.method:
         raise ValueError("candidate rescore source method index is incomplete")
 
     if args.method == "j_component_intervention":
@@ -3431,9 +3329,7 @@ def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
         section = _require_section(config, "j_component")
         activation_root = section.source_activations_dir
         selected_layers_path = section.selected_layers_path
-        generation_identity = _generation_identity(
-            section.generation, section.candidate_labels
-        )
+        generation_identity = _generation_identity(section.generation, section.candidate_labels)
 
         def run_one(concept_id: str) -> dict[str, Any]:
             return run_multilayer_j_intervention(
@@ -3459,9 +3355,7 @@ def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
             raise ValueError("registered ITI rescore lacks shared generation/layers")
         activation_root = section.source_residual_activations_dir
         selected_layers_path = section.selected_layers_path
-        generation_identity = _generation_identity(
-            section.generation, section.candidate_labels
-        )
+        generation_identity = _generation_identity(section.generation, section.candidate_labels)
 
         def run_one(concept_id: str) -> dict[str, Any]:
             return run_iti_intervention_experiment(
@@ -3483,9 +3377,7 @@ def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
         section = _require_section(config, "raptor")
         activation_root = section.source_activations_dir
         selected_layers_path = section.selected_layers_path
-        generation_identity = _generation_identity(
-            section.generation, section.candidate_labels
-        )
+        generation_identity = _generation_identity(section.generation, section.candidate_labels)
 
         def run_one(concept_id: str) -> dict[str, Any]:
             return run_raptor_intervention(
@@ -3504,9 +3396,7 @@ def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
         args.concept_id,
         method=f"{args.method} candidate rescore",
     )
-    source_concepts = {
-        str(entry.get("concept_id")) for entry in source_index.get("entries", [])
-    }
+    source_concepts = {str(entry.get("concept_id")) for entry in source_index.get("entries", [])}
     if set(concepts) - source_concepts:
         raise ValueError("candidate rescore concepts are absent from source index")
     manifest = _experiment_manifest(
@@ -3522,9 +3412,7 @@ def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
                 "method": args.method,
                 "source_method_root": str(source_root),
                 "source_method_index_sha256": sha256_file(source_index_path),
-                "source_method_manifest_sha256": sha256_file(
-                    source_manifest_path
-                ),
+                "source_method_manifest_sha256": sha256_file(source_manifest_path),
                 "scoring_contract": CANONICAL_SCORE_CONTRACT,
             },
         },
@@ -3551,6 +3439,782 @@ def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
         args,
         payload,
         message=f"candidate rescore complete -> {destination / 'index.json'}",
+    )
+    return 0
+
+
+def _k_diagnostic_lightweight_components(
+    config: Any, *, layers: Sequence[int]
+) -> tuple[Any, Any, Any]:
+    """Load tokenizer, exact local lens, and weighted unembedding without the LM."""
+
+    from transformers import AutoTokenizer
+
+    from jlens_workspace.jacobian import (
+        OfficialJLensAdapter,
+        build_effective_unembedding,
+        restrict_effective_unembedding,
+    )
+
+    diagnostic = _require_section(config, "k_diagnostic")
+    lens = _require_section(config, "lens")
+    if lens.source != "local" or not lens.path_or_repo:
+        raise ValueError("k-diagnostic requires the registered exact local lens")
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.model.tokenizer_id or config.model.model_id,
+        revision=config.model.tokenizer_revision or config.model.revision,
+        trust_remote_code=config.model.trust_remote_code,
+        local_files_only=True,
+    )
+    unembedding, norm = _load_unembedding_tensors_lightweight(config)
+    managed = OfficialJLensAdapter.load(
+        Path(lens.path_or_repo),
+        filename=lens.filename or "lens.pt",
+        expected=_lens_expected(config, int(unembedding.shape[1])),
+    )
+    missing = sorted(set(int(layer) for layer in layers) - set(managed.source_layers))
+    if missing:
+        raise ValueError(f"registered lens lacks diagnostic layers: {missing}")
+    effective = build_effective_unembedding(
+        unembedding,
+        convention=diagnostic.convention,
+        norm=norm,
+        model_id=config.model.model_id,
+        model_revision=config.model.revision,
+    )
+    effective = restrict_effective_unembedding(effective, len(tokenizer))
+    return tokenizer, managed, effective
+
+
+def _cmd_k_diagnostic_validate(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        validate_shared_artifacts,
+    )
+
+    config = _load_config(args.config)
+    diagnostic = _require_section(config, "k_diagnostic")
+    verified = validate_shared_artifacts(config, run_root=Path.cwd())
+    payload = {
+        "valid": True,
+        "identity": diagnostic.identity,
+        "stage": diagnostic.stage,
+        "verified_hashes": verified,
+        "generation": False,
+        "llm_judge": False,
+    }
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"valid {diagnostic.identity}/{diagnostic.stage}: "
+            f"{len(verified)} pinned inputs verified"
+        ),
+    )
+    return 0
+
+
+def _cmd_k_diagnostic_prepare_targets(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        artifact_root,
+        initialize_artifacts,
+        load_target_index,
+        write_scientific_grid,
+    )
+    from jlens_workspace.concept_intervention.k_diagnostic.targets import (
+        prepare_raw_activation_targets,
+        prepare_seven_emotion_label_contrast_targets,
+        prepare_shared_statistical_targets,
+        save_target_records,
+    )
+
+    config = _load_config(args.config)
+    diagnostic = _require_section(config, "k_diagnostic")
+    initialize_artifacts(config, run_root=Path.cwd())
+    root = artifact_root(config, run_root=Path.cwd())
+    existing_targets = (
+        load_target_index(config, run_root=Path.cwd())
+        if (root / "targets" / "index.json").is_file()
+        else []
+    )
+    existing_ids = {str(entry["target_id"]) for entry in existing_targets}
+    shared = Path(diagnostic.shared_artifact_root)
+    records, _probe_metadata = prepare_shared_statistical_targets(
+        shared_root=shared,
+        layers=list(diagnostic.analysis_layers),
+        concept_ids=list(diagnostic.concept_ids),
+        probe_settings={
+            "standardize": config.probe.standardize,
+            "class_weight": config.probe.class_weight,
+            "solver": "lbfgs",
+            "penalty": config.probe.penalty,
+            "max_iter": config.probe.max_iter,
+        },
+    )
+    records = [record for record in records if record.target_id not in existing_ids]
+    contrast_layers = [
+        layer
+        for layer in diagnostic.analysis_layers
+        if not any(
+            entry["target_family"] == "seven_emotion_label_contrast"
+            and int(entry["layer"]) == layer
+            for entry in existing_targets
+        )
+    ]
+    raw_ranks_by_layer = {
+        int(layer): {
+            int(entry["metadata"]["selection_rank"])
+            for entry in existing_targets
+            if entry["target_family"] == "raw_activation" and int(entry["layer"]) == int(layer)
+        }
+        for layer in diagnostic.raw_activation_layers
+    }
+    rank_sets = list(raw_ranks_by_layer.values())
+    if rank_sets and any(ranks != rank_sets[0] for ranks in rank_sets[1:]):
+        raise ValueError("raw target selection ranks diverged across registered layers")
+    existing_raw_ranks = rank_sets[0] if rank_sets else set()
+    if existing_raw_ranks != set(range(len(existing_raw_ranks))):
+        raise ValueError("raw target selection ranks are not a contiguous zero-based prefix")
+    raw_start = len(existing_raw_ranks)
+    needs_raw = (
+        "raw_activation" in diagnostic.target_families
+        and raw_start < diagnostic.raw_activation_targets_per_layer
+    )
+    bundle = _load_model_bundle(config) if contrast_layers or needs_raw else None
+    if contrast_layers:
+        assert bundle is not None
+        records.extend(
+            prepare_seven_emotion_label_contrast_targets(
+                model=bundle.model,
+                tokenizer=bundle.tokenizer,
+                layers=list(contrast_layers),
+                concept_ids=list(diagnostic.concept_ids),
+                batch_size=config.activations.batch_size,
+                max_length=config.activations.max_length,
+                bootstrap_samples=diagnostic.template_bootstrap_samples,
+            )
+        )
+    if needs_raw:
+        assert bundle is not None
+        records.extend(
+            prepare_raw_activation_targets(
+                model=bundle.model,
+                tokenizer=bundle.tokenizer,
+                source_test_jsonl=diagnostic.source_test_jsonl,
+                expected_source_sha256=diagnostic.source_test_sha256,
+                layers=list(diagnostic.raw_activation_layers),
+                targets_per_layer=diagnostic.raw_activation_targets_per_layer,
+                selection_rank_start=raw_start,
+                batch_size=config.activations.batch_size,
+                max_length=config.activations.max_length,
+            )
+        )
+    index = (
+        save_target_records(records, artifact_root=root)
+        if records
+        else json.loads((root / "targets" / "index.json").read_text(encoding="utf-8"))
+    )
+    targets = load_target_index(config, run_root=Path.cwd())
+    grid = write_scientific_grid(config, targets, run_root=Path.cwd())
+    payload = {
+        "output": str(artifact_root(config, run_root=Path.cwd()) / "targets" / "index.json"),
+        "prepared_this_call": len(records),
+        "target_count_total": index["target_count"],
+        "target_families_total": index["target_families"],
+        "grid_count": len(grid),
+    }
+    _finish_command(
+        args,
+        payload,
+        message=f"prepared {len(records)} registered targets -> {payload['output']}",
+    )
+    return 0
+
+
+def _cmd_k_diagnostic_build_bases(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        build_metric_bases,
+        load_target_index,
+        write_scientific_grid,
+    )
+    from jlens_workspace.matrix import TokenFrameOperator
+
+    config = _load_config(args.config)
+    diagnostic = _require_section(config, "k_diagnostic")
+    _tokenizer, managed, effective = _k_diagnostic_lightweight_components(
+        config, layers=diagnostic.analysis_layers
+    )
+    operators = {
+        int(layer): TokenFrameOperator.from_lens(
+            managed,
+            int(layer),
+            effective,
+            block_size=diagnostic.vocabulary_chunk_size,
+            compute_device=diagnostic.device,
+            cpu_fallback=True,
+        )
+        for layer in diagnostic.analysis_layers
+    }
+    payload = build_metric_bases(config, operators=operators, run_root=Path.cwd())
+    targets = load_target_index(config, run_root=Path.cwd())
+    grid = write_scientific_grid(config, targets, run_root=Path.cwd())
+    payload["grid_count"] = len(grid)
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"built {len(payload['active_metrics'])} transformed metrics across "
+            f"{len(payload['layers'])} layers"
+        ),
+    )
+    return 0
+
+
+def _k_diagnostic_rotation_spaces(
+    config: Any,
+) -> tuple[Any, list[Any], list[dict[str, object]]]:
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        artifact_root,
+        load_target_index,
+        rotation_metric_spaces_for_grid,
+        write_scientific_grid,
+    )
+
+    root = artifact_root(config, run_root=Path.cwd())
+    targets = load_target_index(config, run_root=Path.cwd())
+    grid = write_scientific_grid(config, targets, run_root=Path.cwd())
+    spaces = rotation_metric_spaces_for_grid(config, grid, run_root=Path.cwd())
+    return root, grid, spaces
+
+
+def _cmd_k_diagnostic_rotation_cache_preflight(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        rotation_cache_build_preflight,
+    )
+
+    config = _load_config(args.config)
+    _root, _grid, spaces = _k_diagnostic_rotation_spaces(config)
+    payload = rotation_cache_build_preflight(config, metric_spaces=spaces, run_root=Path.cwd())
+    _finish_command(
+        args,
+        payload,
+        message=(
+            "approved rotation cache build: "
+            f"{payload['unique_matrix_count']} unique matrices, "
+            f"{payload['projected_cache_build_wall_seconds']:.3f}s projected"
+        ),
+    )
+    return 0
+
+
+def _cmd_k_diagnostic_prepare_rotations(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        audit_rotation_cache_for_grid,
+        prepare_rotation_cache,
+    )
+
+    config = _load_config(args.config)
+    _root, grid, spaces = _k_diagnostic_rotation_spaces(config)
+    cache = prepare_rotation_cache(config, metric_spaces=spaces, run_root=Path.cwd())
+    audit_rotation_cache_for_grid(config, grid, run_root=Path.cwd())
+    _finish_command(
+        args,
+        cache,
+        message=(
+            f"prepared {cache['unique_matrix_count']} shared exact Haar matrices for "
+            f"{cache['binding_count']} metric bindings"
+        ),
+    )
+    return 0
+
+
+def _k_diagnostic_permutation_target(
+    *, config: Any, layer: int, target_entry: Mapping[str, Any], seed: int
+) -> Any:
+    """Fit the fixed-C conditional null from train/validation rows only."""
+
+    import numpy as np
+
+    from jlens_workspace.concept_intervention.k_diagnostic.nulls import (
+        fit_fixed_c_permutation_probe,
+        permuted_class_mean_difference,
+    )
+
+    diagnostic = _require_section(config, "k_diagnostic")
+    shared = Path(diagnostic.shared_artifact_root)
+    concept_id = str(target_entry["source_id"])
+    row_manifest = json.loads(
+        (shared / "selection" / "row_manifest.json").read_text(encoding="utf-8")
+    )
+    concept_payload = json.loads(
+        (shared / "activations" / "concepts.json").read_text(encoding="utf-8")
+    )
+    column = {
+        str(entry["concept_id"]): int(entry["column"]) for entry in concept_payload["concepts"]
+    }[concept_id]
+    labels = np.load(shared / "activations" / "labels.npy", mmap_mode="r")[:, column]
+    activations = np.load(shared / "activations" / f"layer_{layer:02d}.npy", mmap_mode="r")
+    rows = {
+        int(row["row"]): row
+        for row in (
+            json.loads(line)
+            for line in (shared / "activations" / "rows.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+    }
+    concept_rows = row_manifest["concepts"][concept_id]
+
+    def split_values(split: str) -> tuple[Any, Any, Any]:
+        indices = np.asarray(
+            [int(entry["activation_index"]) for entry in concept_rows[split]["rows"]],
+            dtype=np.int64,
+        )
+        return (
+            np.asarray(activations[indices], dtype=np.float64),
+            np.asarray(labels[indices], dtype=np.int64),
+            np.asarray([rows[int(index)]["group_id"] for index in indices]),
+        )
+
+    train_x, train_y, train_groups = split_values("train")
+    validation_x, validation_y, validation_groups = split_values("validation")
+    if target_entry["target_family"] == "logistic_probe":
+        target_metadata = target_entry.get("metadata")
+        if not isinstance(target_metadata, Mapping):
+            raise ValueError("logistic target lacks shared probe metadata")
+        pipeline = target_metadata.get("probe_pipeline")
+        expected_pipeline = {
+            "standardize": bool(config.probe.standardize),
+            "class_weight": config.probe.class_weight,
+            "solver": "lbfgs",
+            "penalty": config.probe.penalty,
+            "max_iter": int(config.probe.max_iter),
+        }
+        if pipeline != expected_pipeline:
+            raise ValueError("logistic permutation pipeline does not match real target metadata")
+        for field in (
+            "validation_accuracy",
+            "test_accuracy",
+            "chosen_C",
+            "source_vector_sha256",
+            "row_manifest_sha256",
+        ):
+            if field not in target_metadata:
+                raise ValueError(f"logistic target lacks required real-probe field {field}")
+        vector, metadata = fit_fixed_c_permutation_probe(
+            train_x,
+            train_y,
+            train_groups,
+            validation_x,
+            validation_y,
+            validation_groups,
+            C=float(target_metadata["chosen_C"]),
+            seed=seed,
+            standardize=bool(pipeline["standardize"]),
+            class_weight=pipeline["class_weight"],
+            solver=str(pipeline["solver"]),
+            penalty=str(pipeline["penalty"]),
+            max_iter=int(pipeline["max_iter"]),
+        )
+        metadata["real_probe_identity"] = {
+            "chosen_C": float(target_metadata["chosen_C"]),
+            "validation_accuracy": float(target_metadata["validation_accuracy"]),
+            "test_accuracy": float(target_metadata["test_accuracy"]),
+            "probe_sha256": str(target_metadata["source_vector_sha256"]),
+            "row_manifest_sha256": str(target_metadata["row_manifest_sha256"]),
+            "pipeline": dict(pipeline),
+        }
+    elif target_entry["target_family"] == "class_mean_difference":
+        vector, metadata = permuted_class_mean_difference(
+            train_x,
+            train_y,
+            train_groups,
+            validation_x,
+            validation_y,
+            validation_groups,
+            seed=seed,
+        )
+    else:
+        raise ValueError("label permutation is registered only for statistical targets")
+    if metadata["test_labels_accessed"] is not False:
+        raise ValueError("label-permutation null accessed test labels")
+    return vector, metadata
+
+
+def _require_k_diagnostic_run_preflight(
+    preflight: dict[str, Any],
+    *,
+    identity: str,
+    stage: str,
+    configuration_sha256: str,
+) -> dict[str, object] | None:
+    """Reject stale execution approval before loading model or dictionary state."""
+
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        NULL_EXECUTION_VERSION,
+        KDiagnosticExperimentError,
+        execution_hardware_sha256,
+        validate_k_diagnostic_execution_hardware,
+    )
+
+    if (
+        preflight.get("approved") is not True
+        or preflight.get("identity") != identity
+        or preflight.get("stage") != stage
+        or preflight.get("configuration_sha256") != configuration_sha256
+        or (
+            identity == "qwen35_4b_k_diagnostic_v2"
+            and preflight.get("null_execution_version") != NULL_EXECUTION_VERSION
+        )
+    ):
+        raise ValueError("current-stage resource preflight is rejected or stale")
+    if identity == "qwen35_4b_k_diagnostic_v2":
+        try:
+            hardware = validate_k_diagnostic_execution_hardware(preflight.get("execution_hardware"))
+        except KDiagnosticExperimentError as exc:
+            raise ValueError("current-stage resource preflight hardware is rejected") from exc
+        if preflight.get("execution_hardware_sha256") != execution_hardware_sha256(hardware):
+            raise ValueError("current-stage resource preflight hardware hash is stale")
+        if preflight.get("execution_backend") != hardware["execution_backend"]:
+            raise ValueError("current-stage resource preflight backend is stale")
+        return hardware
+    return None
+
+
+def _k_diagnostic_v2_benchmark_memory_plan(
+    executed_bundle_manifest: dict[str, Any],
+    *,
+    expected_chunk_size: int,
+) -> dict[str, object]:
+    """Extract and audit the memory gate actually sealed by a v2 bundle."""
+
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        NULL_EXECUTION_VERSION,
+        _approved_shared_direction_plan,
+    )
+
+    plan = executed_bundle_manifest.get("shared_direction_memory_plan")
+    if executed_bundle_manifest.get(
+        "null_execution_version"
+    ) != NULL_EXECUTION_VERSION or not _approved_shared_direction_plan(
+        plan,
+        n_atoms=executed_bundle_manifest.get("dictionary_cardinality"),
+        d_model=executed_bundle_manifest.get("dictionary_metric_dimension"),
+        chunk_size=expected_chunk_size,
+    ):
+        raise ValueError("executed v2 bundle lacks an approved shared-direction memory plan")
+    return dict(plan)
+
+
+def _require_k_diagnostic_live_hardware(
+    live_hardware: object,
+    *,
+    approved_hardware: object,
+    approved_sha256: object,
+) -> dict[str, object]:
+    """Require an ordinary bundle to match its approved benchmark exactly."""
+
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        execution_hardware_sha256,
+        validate_k_diagnostic_execution_hardware,
+    )
+
+    live = validate_k_diagnostic_execution_hardware(live_hardware)
+    approved = validate_k_diagnostic_execution_hardware(approved_hardware)
+    if (
+        live != approved
+        or execution_hardware_sha256(live) != approved_sha256
+        or execution_hardware_sha256(approved) != approved_sha256
+    ):
+        raise ValueError("live bundle hardware/backend differs from the approved microbenchmark")
+    return live
+
+
+def _cmd_k_diagnostic_run(args: argparse.Namespace) -> int:
+    import time
+
+    import numpy as np
+
+    from jlens_workspace.artifacts import atomic_write_json
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        NULL_EXECUTION_VERSION,
+        artifact_root,
+        build_physical_bundles,
+        detect_k_diagnostic_execution_hardware,
+        execution_hardware_sha256,
+        load_metric_transform,
+        load_target_index,
+        measure_bundle_artifacts,
+        record_bundle_runtime,
+        run_scientific_bundle,
+        stage_root,
+        write_scientific_grid,
+    )
+    from jlens_workspace.concept_intervention.k_diagnostic.transformed_dictionary import (
+        LinearTransformedDictionary,
+    )
+    from jlens_workspace.pursuit import build_token_frame_dictionary
+
+    config = _load_config(args.config)
+    diagnostic = _require_section(config, "k_diagnostic")
+    targets = load_target_index(config, run_root=Path.cwd())
+    grid = write_scientific_grid(config, targets, run_root=Path.cwd())
+    bundles = build_physical_bundles(grid)
+    if not 0 <= args.bundle_index < len(bundles):
+        raise ValueError(f"bundle-index must lie in [0, {len(bundles) - 1}]")
+    bundle = bundles[args.bundle_index]
+    shards = [shard for shard in grid if shard.shard_id in set(bundle.shard_ids)]
+    target_entry = next(entry for entry in targets if entry["target_id"] == bundle.target_id)
+    root = artifact_root(config, run_root=Path.cwd())
+    current_stage_root = stage_root(config, run_root=Path.cwd())
+    stage_manifest = json.loads((current_stage_root / "manifest.json").read_text(encoding="utf-8"))
+    bundles_payload = json.loads((current_stage_root / "bundles.json").read_text(encoding="utf-8"))
+    bundle_entries = bundles_payload["bundles"]
+    benchmark_path = current_stage_root / "microbenchmark.json"
+    bundle_complete_path = current_stage_root / "bundles" / bundle.bundle_id / "complete.json"
+    runtime_path = current_stage_root / "runtimes" / f"{bundle.bundle_id}.json"
+    if bundle_complete_path.is_file() and not runtime_path.is_file():
+        raise ValueError("completed bundle lacks its original runtime record and cannot be resumed")
+    approved_execution_hardware = None
+    if args.microbenchmark:
+        worst_index = max(
+            range(len(bundle_entries)),
+            key=lambda index: int(bundle_entries[index]["conservative_cost_units"]),
+        )
+        if args.bundle_index != worst_index:
+            raise ValueError(
+                f"microbenchmark must use current-stage worst-cost bundle index {worst_index}"
+            )
+        if benchmark_path.exists():
+            raise ValueError("current-stage microbenchmark is immutable and already exists")
+    elif diagnostic.require_stage_microbenchmark:
+        preflight_path = current_stage_root / "resource_preflight.json"
+        if not benchmark_path.is_file() or not preflight_path.is_file():
+            raise ValueError("current-stage benchmark and approved resource preflight are required")
+        preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+        approved_execution_hardware = _require_k_diagnostic_run_preflight(
+            preflight,
+            identity=diagnostic.identity,
+            stage=diagnostic.stage,
+            configuration_sha256=stage_manifest["configuration_sha256"],
+        )
+    execution_hardware = None
+    if diagnostic.identity == "qwen35_4b_k_diagnostic_v2":
+        execution_hardware = detect_k_diagnostic_execution_hardware()
+        if approved_execution_hardware is not None:
+            execution_hardware = _require_k_diagnostic_live_hardware(
+                execution_hardware,
+                approved_hardware=approved_execution_hardware,
+                approved_sha256=preflight.get("execution_hardware_sha256"),
+            )
+    started = time.perf_counter()
+    raw_target = np.asarray(
+        np.load(root / target_entry["vector_path"], allow_pickle=False),
+        dtype=np.float64,
+    )
+    tokenizer, managed, effective = _k_diagnostic_lightweight_components(
+        config, layers=[bundle.layer]
+    )
+    raw_dictionary = build_token_frame_dictionary(
+        effective,
+        managed.jacobians[bundle.layer],
+        convention=diagnostic.convention,
+        chunk_size=diagnostic.vocabulary_chunk_size,
+        compute_device=diagnostic.device,
+    )
+    transform = load_metric_transform(
+        artifact_directory=root, layer=bundle.layer, metric=bundle.metric
+    )
+    if transform is None:
+        dictionary = raw_dictionary
+        metric_target = raw_target
+        original_target = None
+    else:
+        dictionary = LinearTransformedDictionary(
+            raw_dictionary,
+            transform,
+            norm_chunk_size=diagnostic.vocabulary_chunk_size,
+        )
+        metric_target = dictionary.transform_target(raw_target)
+        original_target = raw_target
+    permutation_targets: dict[str, object] = {}
+    for shard in shards:
+        if shard.null_family != "label_permutation_probe":
+            continue
+        permuted_raw, metadata = _k_diagnostic_permutation_target(
+            config=config,
+            layer=shard.layer,
+            target_entry=target_entry,
+            seed=shard.null_seed,
+        )
+        permuted_metric = (
+            permuted_raw if transform is None else dictionary.transform_target(permuted_raw)
+        )
+        permutation_targets[shard.shard_id] = (permuted_metric, metadata)
+    summaries = run_scientific_bundle(
+        config=config,
+        bundle=bundle,
+        shards=shards,
+        dictionary=dictionary,
+        target=metric_target,
+        raw_target=original_target,
+        permutation_targets=permutation_targets,
+        token_decoder=tokenizer.convert_ids_to_tokens,
+        run_root=Path.cwd(),
+    )
+    elapsed = time.perf_counter() - started
+    runtime = record_bundle_runtime(
+        config,
+        bundle_id=bundle.bundle_id,
+        wall_seconds=elapsed,
+        execution_hardware=execution_hardware,
+        run_root=Path.cwd(),
+    )
+    if args.microbenchmark:
+        shared_direction_plan = None
+        if diagnostic.identity == "qwen35_4b_k_diagnostic_v2":
+            executed_bundle_manifest = json.loads(
+                (current_stage_root / "bundles" / bundle.bundle_id / "manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            shared_direction_plan = _k_diagnostic_v2_benchmark_memory_plan(
+                executed_bundle_manifest,
+                expected_chunk_size=diagnostic.vocabulary_chunk_size,
+            )
+        projected_gpu_hours = elapsed * len(bundles) / 3600.0
+        approved = (
+            elapsed <= diagnostic.max_seconds_per_bundle
+            and projected_gpu_hours <= diagnostic.max_estimated_gpu_hours
+        )
+        payload = {
+            "schema_version": 3,
+            "identity": diagnostic.identity,
+            "stage": diagnostic.stage,
+            "configuration_sha256": stage_manifest["configuration_sha256"],
+            "bundle_index": args.bundle_index,
+            "bundle_id": bundle.bundle_id,
+            "logical_shards_in_bundle": len(bundle.shard_ids),
+            "physical_bundle_count": len(bundles),
+            "logical_replicate_count": len(grid),
+            "k_max": diagnostic.k_max,
+            "conservative_cost_units": int(
+                bundle_entries[args.bundle_index]["conservative_cost_units"]
+            ),
+            "wall_seconds": elapsed,
+            "artifact_usage": measure_bundle_artifacts(
+                config, bundle_id=bundle.bundle_id, run_root=Path.cwd()
+            ),
+            "projected_stage_gpu_hours_worst_case": projected_gpu_hours,
+            "max_seconds_per_bundle": diagnostic.max_seconds_per_bundle,
+            "max_gpu_hours": diagnostic.max_estimated_gpu_hours,
+            "approved": approved,
+            "stop_condition": (
+                None if approved else "wall-time or projected GPU-hour hard budget exceeded"
+            ),
+        }
+        if diagnostic.identity == "qwen35_4b_k_diagnostic_v2":
+            payload["schema_version"] = 5
+            payload["null_execution_version"] = NULL_EXECUTION_VERSION
+            payload["shared_direction_memory_plan"] = shared_direction_plan
+            payload["execution_hardware"] = execution_hardware
+            payload["execution_hardware_sha256"] = execution_hardware_sha256(execution_hardware)
+            payload["execution_backend"] = execution_hardware["execution_backend"]
+        atomic_write_json(benchmark_path, payload)
+        if not approved:
+            raise ValueError("stage microbenchmark exceeded a registered hard budget")
+    else:
+        payload = {
+            "bundle_id": bundle.bundle_id,
+            "bundle_index": args.bundle_index,
+            "physical_bundle_count": len(bundles),
+            "logical_shards_completed": len(summaries),
+            "wall_seconds": elapsed,
+            "runtime_within_hard_limit": runtime["within_hard_limit"],
+        }
+        if runtime["within_hard_limit"] is not True:
+            raise ValueError("bundle elapsed time exceeded the registered hard limit")
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"completed k-diagnostic bundle {args.bundle_index}/{len(bundles) - 1} "
+            f"({len(summaries)} logical replicates)"
+        ),
+    )
+    return 0
+
+
+def _cmd_k_diagnostic_resource_preflight(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        resource_preflight,
+    )
+
+    config = _load_config(args.config)
+    payload = resource_preflight(config, run_root=Path.cwd())
+    _finish_command(
+        args,
+        payload,
+        message=(
+            f"approved resource preflight for {payload['stage']}: "
+            f"{payload['stage_upper_bound']['gpu_hours']:.3f} GPU-hours upper bound"
+        ),
+    )
+    return 0
+
+
+def _cmd_k_diagnostic_index(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        index_stage,
+        load_target_index,
+        resource_preflight,
+        stage_root,
+        write_scientific_grid,
+    )
+
+    config = _load_config(args.config)
+    targets = load_target_index(config, run_root=Path.cwd())
+    grid = write_scientific_grid(config, targets, run_root=Path.cwd())
+    resource_preflight(config, run_root=Path.cwd())
+    current_stage = stage_root(config, run_root=Path.cwd())
+    bundle_payload = json.loads((current_stage / "bundles.json").read_text(encoding="utf-8"))
+    expected_runtime_ids = {str(entry["bundle_id"]) for entry in bundle_payload["bundles"]}
+    observed_runtime_ids = {path.stem for path in (current_stage / "runtimes").glob("*.json")}
+    if observed_runtime_ids != expected_runtime_ids:
+        raise ValueError("stage runtime audit does not exactly cover physical bundles")
+    payload = index_stage(config, grid, run_root=Path.cwd())
+    if payload["complete"] is not True:
+        raise ValueError(
+            f"k-diagnostic stage incomplete: {payload['completed_shards']}/"
+            f"{payload['expected_shards']}"
+        )
+    _finish_command(
+        args,
+        payload,
+        message=f"complete k-diagnostic index: {payload['completed_shards']} shards",
+    )
+    return 0
+
+
+def _cmd_k_diagnostic_report(args: argparse.Namespace) -> int:
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        artifact_root,
+        validate_shared_artifacts,
+    )
+    from jlens_workspace.concept_intervention.k_diagnostic.reporting import (
+        generate_report,
+    )
+
+    config = _load_config(args.config)
+    diagnostic = _require_section(config, "k_diagnostic")
+    validate_shared_artifacts(config, run_root=Path.cwd())
+    payload = generate_report(
+        artifact_root=artifact_root(config, run_root=Path.cwd()),
+        diagnostic=diagnostic,
+    )
+    _finish_command(
+        args,
+        payload,
+        message=json.dumps(payload["terminal_summary"], indent=2, sort_keys=True),
     )
     return 0
 

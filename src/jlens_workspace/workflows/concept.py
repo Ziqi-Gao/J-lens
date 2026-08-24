@@ -491,7 +491,7 @@ def _choose_layers(
         return available
     selected: list[int] = []
     for layer in requested:
-        if isinstance(layer, bool) or not isinstance(layer, (int, np.integer)):
+        if isinstance(layer, bool) or not isinstance(layer, int | np.integer):
             raise TypeError("layers must contain integers")
         selected.append(int(layer))
     if not selected:

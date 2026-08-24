@@ -120,7 +120,7 @@ def _validate_metrics(
             )
         )
         if any(
-            not isinstance(value, (int, float)) or not math.isfinite(float(value))
+            not isinstance(value, int | float) or not math.isfinite(float(value))
             for value in numeric
         ) or not isinstance(row.get("target_rank"), int):
             raise CandidateRescoreError(f"candidate metrics are incomplete: {concept_id}")

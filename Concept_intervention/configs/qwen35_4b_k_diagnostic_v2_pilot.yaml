@@ -1,0 +1,131 @@
+schema_version: 1
+direction: concept_intervention
+experiment_name: qwen35_4b_k_diagnostic_v2
+output_dir: artifacts/concept_intervention/qwen35_4b_k_diagnostic_v2
+seed: 42
+model:
+  model_id: Qwen/Qwen3.5-4B
+  revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  tokenizer_id: Qwen/Qwen3.5-4B
+  tokenizer_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  dtype: bfloat16
+  device: auto
+  trust_remote_code: false
+  force_bos: false
+dataset:
+  source: jsonl
+  path: ../qwen35_4b_three_method_intervention_v1/artifacts/data/go_emotions_7concept_full_ovr_v2
+  dataset_id: google-research-datasets/go_emotions
+  revision: add492243ff905527e67aeb8b80c082af02207c3
+  allowlist_path: Concept_intervention/data/go_emotions_7concept_full_allowlist.json
+  streaming: false
+  min_per_label_per_split: 150
+  min_per_concept: 50000
+lens:
+  source: local
+  path_or_repo: ../qwen35_4b_three_method_intervention_v1/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol/lens/qwen35_4b_fp32.pt
+  layers: [3, 7, 11, 15, 19, 23, 27]
+  n_fit_prompts: 1000
+  target_layer: 31
+  storage_dtype: float32
+activations:
+  layers: [3, 7, 11, 15, 19, 23, 27]
+  batch_size: 16
+  max_length: 256
+  share_examples_by_group: true
+  require_complete_concept_matrix: true
+probe:
+  penalty: l2
+  c_grid: [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+  cv_folds: 5
+  scoring: roc_auc
+  standardize: true
+  class_weight: balanced
+  max_iter: 5000
+  seed: 42
+alignment:
+  metric: cosine
+  convention: rmsnorm_weighted
+  top_k: 50
+  vocabulary_chunk_size: 4096
+  decompose: false
+  require_nonnegative: true
+k_diagnostic:
+  identity: qwen35_4b_k_diagnostic_v2
+  stage: pilot
+  artifact_root: artifacts/concept_intervention/qwen35_4b_k_diagnostic_v2
+  shared_artifact_root: ../qwen35_4b_three_method_intervention_v1/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/shared_intervention_protocol
+  source_test_jsonl: ../qwen35_4b_three_method_intervention_v1/artifacts/data/go_emotions_7concept_full_ovr_v2/test.jsonl
+  source_test_sha256: da3ee432e0452c5f93f678ddb47e53a95056ebaee3d3ad125f3ee9d618e789ae
+  shared_hashes: &shared_hashes
+    lens/qwen35_4b_fp32.pt: 998c29612d5ebbcebc85b634c4f5c5e6f541120573d2ac1d3ae3843686e4c95d
+    selection/index.json: 519f3378304fd88ae0dca92b797f1b27ed225a7d2abef0cc26c084225ad52574
+    selection/row_manifest.json: 72eed186a822d9c1438a15ba1e807d101612326d750170b485b007ffe826db0b
+    selection/raptor_probes/manifest.json: aafa700a7961845ba3376089597e9850490cc4d997832a1a6fcc44ca60655b88
+    activations/metadata.json: e8240862539f8f197b860887113cd8fca8f7dec3a4844f34027c14eea8317a15
+    activations/labels.npy: 63f1604ae7dd4b8761bcc551f8e72a8d72b60f8da5b1e2aae948af532f7cc470
+    activations/layer_03.npy: 5f11d266bc2003ede79b6cf4f4ae9b8a61dd1038a0ecb661046dc0f92baa6df0
+    activations/layer_07.npy: 264b5e1fb73f6d6ea13c5689b21b7d6c4382425e36840f440bc3020a2021684e
+    activations/layer_11.npy: 42514ee2886639a8c2bfabe0db36a1c19edd824988d29f08aa0dd6ead25c999b
+    activations/layer_15.npy: e9468a0bd223adc4d7cd85e10d9a2dedcca128a0057df17c9c8a270605182a76
+    activations/layer_19.npy: d7840ad4c6368c473ad96945cc6b681a0833404598990c5299bfcd6c25ca04ba
+    activations/layer_23.npy: 29f7e494af0520521f2d55d3468d57fb05c4ea982014c8ec4c84eae7c0acdc2d
+    activations/layer_27.npy: f81527c2058ca1a34f08d1c7893caa92b45aa9e3f23d7d53ccb9286b31d84453
+  analysis_layers: [11, 19, 27]
+  concept_ids: &concept_ids
+    - "goemotions:admiration"
+    - "goemotions:approval"
+    - "goemotions:curiosity"
+    - "goemotions:disapproval"
+    - "goemotions:gratitude"
+    - "goemotions:love"
+    - "goemotions:optimism"
+  target_families: &all_targets
+    - logistic_probe
+    - class_mean_difference
+    - seven_emotion_label_contrast
+    - raw_activation
+  contrast_arms: [label_explicit, label_free_definition, four_unrelated_topics_control]
+  metrics: [raw_euclidean]
+  null_families: &all_nulls
+    - iid_full_cardinality
+    - iid_cardinality_sweep
+    - random_prefix_same_k
+    - orthogonal_rotation
+    - label_permutation_probe
+  k_max: 32
+  report_grid: [1, 2, 4, 8, 16, 25, 32]
+  raw_activation_targets_per_layer: 32
+  iid_seeds: [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131]
+  rotation_seeds: [1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109, 1110, 1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1120, 1121, 1122, 1123, 1124, 1125, 1126, 1127, 1128, 1129, 1130, 1131]
+  cardinality_fractions: [0.00390625, 0.015625, 0.0625, 0.25, 1.0]
+  permutation_seed_start: 7001
+  permutation_count_layer_27: 31
+  permutation_count_other_layers: 31
+  primary_estimand: fixed_k4_real_minus_median_null
+  secondary_estimand: max_cumulative_excess_exploratory
+  primary_fixed_k: 4
+  minimum_effect: 0.01
+  equivalence_margin: 0.0025
+  confidence_level: 0.95
+  hierarchical_bootstrap_samples: 4000
+  hierarchical_bootstrap_seed: 8844
+  multiple_comparison_policy: holm_bonferroni
+  primary_pca_metric: j_pca_r256
+  primary_whitening_floor: 0.10
+  minimum_null_replicates: 31
+  max_physical_bundles: 300
+  max_logical_replicates: 70000
+  max_estimated_gpu_hours: 500
+  max_estimated_disk_gib: 25
+  max_estimated_inodes: 500000
+  max_total_estimated_gpu_hours: 6000
+  max_total_estimated_disk_gib: 175
+  max_total_estimated_inodes: 4500000
+  max_seconds_per_bundle: 7200
+  max_rotation_cache_build_seconds: 86400
+  max_rotation_cache_gib: 25
+  slurm_array_chunk_size: 900
+  require_pilot_microbenchmark: true
+  require_stage_microbenchmark: true
+  device: cuda

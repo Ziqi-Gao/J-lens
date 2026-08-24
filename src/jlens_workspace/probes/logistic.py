@@ -377,6 +377,7 @@ def fit_fixed_logistic_direction(
     random_state: int = 0,
     max_iter: int = 5_000,
     solver: str = "liblinear",
+    penalty: str = "l2",
 ) -> FixedProbeDirection:
     """Fit one fixed-C probe without hyperparameter selection or test access.
 
@@ -422,6 +423,7 @@ def fit_fixed_logistic_direction(
 
     classifier = LogisticRegression(
         solver=solver,
+        penalty=penalty,
         C=float(C),
         class_weight=class_weight,
         random_state=random_state,

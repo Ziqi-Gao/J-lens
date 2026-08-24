@@ -140,6 +140,68 @@ def test_local_gpu_policy_rejects_invalid_occupancy_slot_count() -> None:
     assert "must be positive" in result.stderr
 
 
+def test_k_diagnostic_profiles_and_local_dag_are_scheduler_only() -> None:
+    assert _gpu_policy("kdiag-bundle") == {
+        "task_class": "kdiag-bundle",
+        "lock_mode": "shared",
+        "slots_per_device": "5",
+        "cpu_tokens": "4",
+        "host_ram_mib": "12288",
+        "gpu_vram_mib": "4096",
+        "gpu_memory_reserve_mib": "8192",
+        "gpu_utilization_tokens": "20",
+    }
+    assert _gpu_policy("kdiag-targets")["lock_mode"] == "exclusive"
+    assert _gpu_policy("kdiag-rotations")["cpu_tokens"] == "16"
+    assert _gpu_policy("kdiag-rotations")["host_ram_mib"] == "32768"
+
+    controller_path = SCRIPTS / "run_qwen35_4b_k_diagnostic_v2.sh"
+    result = subprocess.run(
+        ["bash", str(controller_path), "plan"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "worst pilot bundle only" in result.stdout
+    assert "xargs launches scheduler workers, never Python directly" in result.stdout
+    controller = controller_path.read_text(encoding="utf-8")
+    worker = (SCRIPTS / "run_qwen35_4b_k_diagnostic_v2_local_worker.sh").read_text(encoding="utf-8")
+    task = (SCRIPTS / "run_qwen35_4b_k_diagnostic_v2_local_task.sh").read_text(encoding="utf-8")
+    assert 'RUN_ROOT="/data/del6500/J-lens/runs/qwen35_4b_k_diagnostic_v2"' in controller
+    assert 'JLENS_LOCAL_RUNTIME_ROOT="/scr/del6500/J-lens/runtime/three-method"' in controller
+    assert "three_method_local_paths.sh" in controller
+    assert "flock -n 8" in controller
+    assert 'git -C "${CODE_ROOT}" status --short' in controller
+    assert '"${WORKER}" gpu kdiag-bundle bundle' in controller
+    assert 'xargs -r -n 1 -P "${WORKERS}"' in controller
+    assert "\nsbatch" not in controller
+    assert "submit_qwen35_4b_k_diagnostic_v2.sh" not in controller
+    assert "three_method_local_gpu.sh" in worker
+    assert "three_method_local_resources.sh" in worker
+    assert "k-diagnostic-v2/${COMMIT}" in worker
+    assert "JLENS_LOCAL_KDIAG_DAG_ACTIVE" in task
+    assert "CUDA_VISIBLE_DEVICES" not in controller
+    assert "CUDA_VISIBLE_DEVICES" not in worker
+
+
+def test_k_diagnostic_local_components_reject_direct_execution() -> None:
+    for script, arguments in (
+        (
+            "run_qwen35_4b_k_diagnostic_v2_local_worker.sh",
+            ["gpu", "kdiag-bundle", "bundle", "pilot", "0"],
+        ),
+        ("run_qwen35_4b_k_diagnostic_v2_local_task.sh", ["kdiag-bundle", "bundle", "pilot", "0"]),
+    ):
+        result = subprocess.run(
+            ["bash", str(SCRIPTS / script), *arguments],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 2
+        assert "top-level local DAG" in result.stderr
+
+
 def test_local_finalize_is_cpu_only_and_independent_of_grid_markers() -> None:
     controller = (SCRIPTS / "run_three_method_local.sh").read_text()
     finalize_body = controller.split("run_finalize() {", 1)[1].split("\n}", 1)[0]
@@ -154,9 +216,7 @@ def test_local_finalize_is_cpu_only_and_independent_of_grid_markers() -> None:
 
 def test_local_rescore_runs_three_gpu_methods_then_cpu_comparison() -> None:
     controller = (SCRIPTS / "run_three_method_local.sh").read_text()
-    rescore_body = controller.split("run_rescore() {", 1)[1].split(
-        "run_full() {", 1
-    )[0]
+    rescore_body = controller.split("run_rescore() {", 1)[1].split("run_full() {", 1)[0]
 
     assert 'run_range gpu candidate-rescore 2 "${GPU_WORKERS}"' in rescore_body
     assert "run_one cpu comparison-rescore-index" in rescore_body

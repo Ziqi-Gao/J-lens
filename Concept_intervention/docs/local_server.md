@@ -137,6 +137,13 @@ export JLENS_LOCAL_STANDARD_HOST_RAM_MIB=24576
 export JLENS_LOCAL_STANDARD_GPU_VRAM_MIB=24576
 export JLENS_LOCAL_STANDARD_GPU_MEMORY_RESERVE_MIB=16384
 export JLENS_LOCAL_STANDARD_GPU_UTILIZATION_TOKENS=40
+
+export JLENS_LOCAL_KDIAG_CPU_TOKENS=4
+export JLENS_LOCAL_KDIAG_HOST_RAM_MIB=12288
+export JLENS_LOCAL_KDIAG_GPU_VRAM_MIB=4096
+export JLENS_LOCAL_KDIAG_GPU_MEMORY_RESERVE_MIB=8192
+export JLENS_LOCAL_KDIAG_GPU_UTILIZATION_TOKENS=20
+export JLENS_LOCAL_KDIAG_GPU_SLOTS_PER_DEVICE=5
 ```
 
 A timeout of zero means wait without disturbing existing work. A foreign PID is
@@ -169,6 +176,37 @@ Each array shard performs fresh admission. Thus idle cards are filled first,
 bounded overlay follows only when resources remain, and a card becomes eligible
 automatically after its external task exits. No mid-shard migration is
 attempted; long shards define the scheduler's reaction granularity.
+
+## K-diagnostic v2 local DAG
+
+The K-diagnostic uses the same scheduler broker, GPU gate files, and lease directory
+as the three-method DAG, so the two J-lens programs cannot oversell each other. It
+adds three profiles without changing existing defaults:
+
+- `kdiag-targets`: standard exclusive GPU admission for target preparation or metric
+  basis construction;
+- `kdiag-bundle`: shared occupancy gate/slots with 4 CPU tokens, 12,288 MiB host RAM,
+  4,096 MiB GPU VRAM, an 8,192 MiB GPU reserve, 20 utilization tokens, and five slots
+  per device; and
+- `kdiag-rotations`: CPU-only, 16 tokens and 32,768 MiB host RAM.
+
+The 12 GiB host lease covers the exact shared-direction provider peak of 4.888 GiB,
+approximately 1.27 GiB of CPU unembedding state, and Python/output/temporary
+headroom while remaining conservative on the approximately 755 GiB FSM host. GPU
+indices and models remain dynamically discovered.
+
+```bash
+Concept_intervention/scripts/run_qwen35_4b_k_diagnostic_v2.sh plan
+Concept_intervention/scripts/run_qwen35_4b_k_diagnostic_v2.sh microbenchmark
+```
+
+`microbenchmark` performs pilot validation, target preparation, rotation preflight
+and build, the single worst physical bundle, and resource preflight. Do not run
+`pilot` until those measured gates have been reviewed. The launcher requires a clean
+commit, holds its own DAG flock, logs under a commit namespace, and permits component
+tasks only through scheduler workers. It fixes durable output at
+`/data/del6500/J-lens/runs/qwen35_4b_k_diagnostic_v2`; scheduler/runtime state remains
+under `/scr/del6500/J-lens/runtime/three-method`.
 
 ## 5. Run the smoke DAG
 

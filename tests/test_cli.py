@@ -72,13 +72,110 @@ def _concept_record(*, row: int, split: str, label: int) -> dict[str, Any]:
     }
 
 
-def test_parser_exposes_required_commands_without_importing_optional_stack() -> None:
-    before = {
-        name: name in sys.modules for name in ("torch", "transformers", "jlens")
+def test_k_diagnostic_v2_normal_run_requires_current_execution_preflight() -> None:
+    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+        EXECUTION_HARDWARE_GATE_VERSION,
+        NULL_EXECUTION_VERSION,
+        execution_hardware_sha256,
+    )
+
+    execution_hardware = {
+        "schema_version": 1,
+        "gate_version": EXECUTION_HARDWARE_GATE_VERSION,
+        "execution_backend": "fsm_local_scheduler",
+        "cuda_available": True,
+        "gpu_count": 1,
+        "gpu_names": ["NVIDIA RTX PRO 6000 Blackwell"],
+        "visible_device_indices": [0],
+        "torch_version": "2.8.0",
+        "cuda_version": "12.8",
     }
+    payload = {
+        "approved": True,
+        "identity": "qwen35_4b_k_diagnostic_v2",
+        "stage": "pilot",
+        "configuration_sha256": "a" * 64,
+        "null_execution_version": NULL_EXECUTION_VERSION,
+        "execution_hardware": execution_hardware,
+        "execution_hardware_sha256": execution_hardware_sha256(execution_hardware),
+        "execution_backend": execution_hardware["execution_backend"],
+    }
+    cli._require_k_diagnostic_run_preflight(
+        payload,
+        identity=payload["identity"],
+        stage=payload["stage"],
+        configuration_sha256=payload["configuration_sha256"],
+    )
+    for field, value in (
+        ("identity", "qwen35_4b_k_diagnostic_v1"),
+        ("stage", "raw_metric_full"),
+        ("configuration_sha256", "b" * 64),
+        ("null_execution_version", "legacy_scalar_execution"),
+    ):
+        stale = dict(payload)
+        stale[field] = value
+        with pytest.raises(ValueError, match="rejected or stale"):
+            cli._require_k_diagnostic_run_preflight(
+                stale,
+                identity=payload["identity"],
+                stage=payload["stage"],
+                configuration_sha256=payload["configuration_sha256"],
+            )
+
+    for mutation in ("missing", "name", "hash", "backend"):
+        stale = json.loads(json.dumps(payload))
+        if mutation == "missing":
+            stale.pop("execution_hardware")
+        elif mutation == "name":
+            stale["execution_hardware"]["gpu_names"] = ["Different scheduled GPU"]
+        elif mutation == "hash":
+            stale["execution_hardware_sha256"] = "0" * 64
+        else:
+            stale["execution_backend"] = "slurm"
+        with pytest.raises(ValueError, match="hardware|backend"):
+            cli._require_k_diagnostic_run_preflight(
+                stale,
+                identity=payload["identity"],
+                stage=payload["stage"],
+                configuration_sha256=payload["configuration_sha256"],
+            )
+
+    approved_sha256 = payload["execution_hardware_sha256"]
+    assert (
+        cli._require_k_diagnostic_live_hardware(
+            execution_hardware,
+            approved_hardware=execution_hardware,
+            approved_sha256=approved_sha256,
+        )
+        == execution_hardware
+    )
+    for field, value in (
+        ("gpu_names", ["Different scheduled GPU"]),
+        ("execution_backend", "slurm"),
+    ):
+        live = json.loads(json.dumps(execution_hardware))
+        live[field] = value
+        with pytest.raises(ValueError, match="differs from the approved"):
+            cli._require_k_diagnostic_live_hardware(
+                live,
+                approved_hardware=execution_hardware,
+                approved_sha256=approved_sha256,
+            )
+
+
+def test_parser_exposes_required_commands_without_importing_optional_stack() -> None:
+    before = {name: name in sys.modules for name in ("torch", "transformers", "jlens")}
     parser = cli.build_parser()
     help_text = parser.format_help()
-    for command in ("doctor", "config", "data", "concept", "iti", "matrix"):
+    for command in (
+        "doctor",
+        "config",
+        "data",
+        "concept",
+        "iti",
+        "matrix",
+        "k-diagnostic",
+    ):
         assert command in help_text
     for argv in (
         ["doctor"],
@@ -94,6 +191,22 @@ def test_parser_exposes_required_commands_without_importing_optional_stack() -> 
         ["iti", "run", "--config", "experiment.yaml"],
         ["iti", "index", "--config", "experiment.yaml"],
         ["matrix", "run", "--config", "experiment.yaml"],
+        ["k-diagnostic", "validate", "--config", "experiment.yaml"],
+        ["k-diagnostic", "prepare-targets", "--config", "experiment.yaml"],
+        ["k-diagnostic", "build-bases", "--config", "experiment.yaml"],
+        ["k-diagnostic", "rotation-cache-preflight", "--config", "experiment.yaml"],
+        ["k-diagnostic", "prepare-rotations", "--config", "experiment.yaml"],
+        ["k-diagnostic", "resource-preflight", "--config", "experiment.yaml"],
+        [
+            "k-diagnostic",
+            "run",
+            "--config",
+            "experiment.yaml",
+            "--bundle-index",
+            "0",
+        ],
+        ["k-diagnostic", "index", "--config", "experiment.yaml"],
+        ["k-diagnostic", "report", "--config", "experiment.yaml"],
         [
             "intervention",
             "candidate-rescore",
@@ -109,9 +222,7 @@ def test_parser_exposes_required_commands_without_importing_optional_stack() -> 
         ],
     ):
         assert callable(parser.parse_args(argv).handler)
-    assert {
-        name: name in sys.modules for name in ("torch", "transformers", "jlens")
-    } == before
+    assert {name: name in sys.modules for name in ("torch", "transformers", "jlens")} == before
 
     isolated = subprocess.run(
         [
@@ -141,13 +252,7 @@ def test_installed_vcs_commit_reads_pep610_direct_url(
 ) -> None:
     distribution = SimpleNamespace(
         read_text=lambda name: (
-            json.dumps(
-                {
-                    "vcs_info": {
-                        "commit_id": "581d398613e5602a5af361e1c34d3a92ea82ba8e"
-                    }
-                }
-            )
+            json.dumps({"vcs_info": {"commit_id": "581d398613e5602a5af361e1c34d3a92ea82ba8e"}})
             if name == "direct_url.json"
             else None
         )
@@ -158,10 +263,7 @@ def test_installed_vcs_commit_reads_pep610_direct_url(
         lambda _name: distribution,
     )
 
-    assert (
-        cli._installed_vcs_commit("jlens")
-        == "581d398613e5602a5af361e1c34d3a92ea82ba8e"
-    )
+    assert cli._installed_vcs_commit("jlens") == "581d398613e5602a5af361e1c34d3a92ea82ba8e"
 
 
 def test_shard_manifest_is_immutable_and_blocks_historical_reuse(
@@ -205,12 +307,7 @@ def test_config_validate_is_json_and_torch_free(
     config_path = _write_yaml(tmp_path / "experiment.yaml", _base_config(tmp_path))
 
     before = {name: name in sys.modules for name in ("torch", "transformers")}
-    assert (
-        cli.main(
-            ["config", "validate", "--config", str(config_path), "--json"]
-        )
-        == 0
-    )
+    assert cli.main(["config", "validate", "--config", str(config_path), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["valid"] is True
@@ -224,9 +321,7 @@ def test_config_validate_reports_concise_errors(
     invalid = _base_config(tmp_path) | {"misspelled": True}
     config_path = _write_yaml(tmp_path / "invalid.yaml", invalid)
 
-    assert (
-        cli.main(["config", "validate", "--config", str(config_path)]) == 2
-    )
+    assert cli.main(["config", "validate", "--config", str(config_path)]) == 2
     assert "misspelled" in capsys.readouterr().err
 
 
@@ -236,15 +331,11 @@ def test_data_validate_accepts_matched_label_groups(
     records = [
         _concept_record(row=row, split=split, label=label)
         for row, (split, label) in enumerate(
-            (split, label)
-            for split in ("train", "validation", "test")
-            for label in (0, 1)
+            (split, label) for split in ("train", "validation", "test") for label in (0, 1)
         )
     ]
     path = tmp_path / "concepts.jsonl"
-    path.write_text(
-        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
-    )
+    path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
 
     before = "torch" in sys.modules
     assert cli.main(["data", "validate", "--data", str(path), "--json"]) == 0
@@ -262,15 +353,11 @@ def test_data_validate_can_resolve_dataset_from_config(
     records = [
         _concept_record(row=row, split=split, label=label)
         for row, (split, label) in enumerate(
-            (split, label)
-            for split in ("train", "validation", "test")
-            for label in (0, 1)
+            (split, label) for split in ("train", "validation", "test") for label in (0, 1)
         )
     ]
     data_path = tmp_path / "concepts.jsonl"
-    data_path.write_text(
-        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
-    )
+    data_path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
     raw = _base_config(tmp_path)
     raw["dataset"] = {
         "source": "builtin",
@@ -279,12 +366,7 @@ def test_data_validate_can_resolve_dataset_from_config(
     }
     config_path = _write_yaml(tmp_path / "experiment.yaml", raw)
 
-    assert (
-        cli.main(
-            ["data", "validate", "--config", str(config_path), "--json"]
-        )
-        == 0
-    )
+    assert cli.main(["data", "validate", "--config", str(config_path), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["path"] == str(data_path)
@@ -313,9 +395,7 @@ def test_fit_probes_maps_probe_config_to_workflow(
     captured: dict[str, Any] = {}
 
     def fake_workflow(activation_path: Path, output: Path, **kwargs: Any) -> Any:
-        captured.update(
-            {"activation_path": activation_path, "output": output, "kwargs": kwargs}
-        )
+        captured.update({"activation_path": activation_path, "output": output, "kwargs": kwargs})
         probe = SimpleNamespace(
             layer=2,
             concept_id="abstract:test",
@@ -386,9 +466,7 @@ def test_capture_forwards_add_special_tokens(
         captured.update(kwargs)
         return Path(kwargs["output_dir"])
 
-    monkeypatch.setattr(
-        activation_module, "capture_residual_activations", fake_capture
-    )
+    monkeypatch.setattr(activation_module, "capture_residual_activations", fake_capture)
     output = tmp_path / "activations"
     assert (
         cli.main(
@@ -411,9 +489,7 @@ def test_capture_forwards_add_special_tokens(
     assert json.loads(capsys.readouterr().out)["output"] == str(output)
 
 
-def _write_probe_directory(
-    path: Path, *, model_revision: str = "model-commit"
-) -> dict[str, Any]:
+def _write_probe_directory(path: Path, *, model_revision: str = "model-commit") -> dict[str, Any]:
     activation = {
         "artifact_hash": "activation-sha256",
         "coordinate": "resid_post",
@@ -432,9 +508,7 @@ def _write_probe_directory(
     concept = path / "layer_00" / "concept_abstract%3Atest"
     concept.mkdir(parents=True)
     np.save(concept / "probe_vector.npy", np.ones(4), allow_pickle=False)
-    vector_sha256 = hashlib.sha256(
-        (concept / "probe_vector.npy").read_bytes()
-    ).hexdigest()
+    vector_sha256 = hashlib.sha256((concept / "probe_vector.npy").read_bytes()).hexdigest()
     (concept / "metrics.json").write_text(
         json.dumps(
             {
@@ -479,9 +553,7 @@ def test_staged_probe_loading_enforces_end_to_end_identity(tmp_path: Path) -> No
         "add_special_tokens": True,
     }
 
-    vectors = cli._load_probe_vectors(
-        probe_path, 0, expected_identity=expected
-    )
+    vectors = cli._load_probe_vectors(probe_path, 0, expected_identity=expected)
     assert set(vectors) == {"abstract:test"}
     with pytest.raises(ValueError, match="model_revision"):
         cli._load_probe_vectors(
@@ -497,9 +569,7 @@ def test_staged_probe_loading_rejects_missing_provenance(tmp_path: Path) -> None
     (probe_path / "manifest.json").unlink()
 
     with pytest.raises(ValueError, match=r"manifest\.json"):
-        cli._load_probe_vectors(
-            probe_path, 0, expected_identity={"coordinate": "resid_post"}
-        )
+        cli._load_probe_vectors(probe_path, 0, expected_identity={"coordinate": "resid_post"})
 
 
 def test_lens_artifact_provenance_hashes_local_content(tmp_path: Path) -> None:
@@ -744,9 +814,7 @@ def test_matrix_run_maps_all_numerical_options(
     captured: dict[str, Any] = {}
     monkeypatch.setattr(cli, "_load_model_bundle", lambda _config: object())
     monkeypatch.setattr(cli, "_load_or_fit_lens", lambda *_args, **_kwargs: managed)
-    monkeypatch.setattr(
-        cli, "_build_effective_unembedding", lambda *_args, **_kwargs: effective
-    )
+    monkeypatch.setattr(cli, "_build_effective_unembedding", lambda *_args, **_kwargs: effective)
 
     def fake_run(
         received_lens: object,
@@ -827,9 +895,7 @@ def test_concept_run_orders_stages_and_reuses_model_bundle(
     stages: list[str] = []
     monkeypatch.setattr(cli, "_load_examples", lambda *_args: examples)
     monkeypatch.setattr(cli, "_load_model_bundle", lambda _config: bundle)
-    monkeypatch.setattr(
-        data_module, "dataset_fingerprint", lambda _examples: "sha256:concepts"
-    )
+    monkeypatch.setattr(data_module, "dataset_fingerprint", lambda _examples: "sha256:concepts")
 
     def fake_capture(args: Any) -> int:
         stages.append("capture")
