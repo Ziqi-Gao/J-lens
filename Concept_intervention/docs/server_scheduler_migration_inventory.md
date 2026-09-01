@@ -510,21 +510,23 @@ No GPU, remote, scientific, or bounded central pilot was run.
   revision-r2 candidate rescoring, its revision-r2 comparison, and
   K-diagnostic revision-r1 reporting have no final durable index yet. This is
   why the read-only artifact audit is 25/28 rather than 28/28.
-- The main checkout still needs one clean immutable commit containing the v2
-  adapter, entrypoint, minimal proposal, examples, inventory, and tests. This
-  migration deliberately creates no worktree. The current sandbox keeps
-  `.git` read-only, so the commit requires a separately approved Git-maintenance
-  operation on the main checkout.
+- The v2 adapter, entrypoint, minimal proposal, examples, inventory, and tests
+  now exist in clean immutable commit
+  `6713a3eeeed117ffb94fa5903f293f32564d3752` on
+  `codex/three-method-interventions`. This satisfies the bounded pilot's code
+  identity gate; it does not authorize full-DAG activation.
 - The installed central registration at
   `/home/del6500/projects/ServerScheduler/config/projects/j-lens.toml` remains
   disabled with `tasks = []` and an empty entrypoint. The checked-in J-lens
   proposal is parseable and contains only the reviewed `kdiag-validate` pilot,
   but it has not been installed; this project session cannot edit
   ServerScheduler registration.
-- The formal outbox request cannot be written until the real clean commit
-  exists; using current HEAD or the example's all-zero sentinel would violate
-  the adapter identity check. Its reserved exact path is
-  `/scr/del6500/J-lens/scheduler/outbox/jlens-kdiag-validate-bounded-pilot.json`.
+- The formal bounded-pilot outbox request now exists at
+  `/scr/del6500/J-lens/scheduler/outbox/jlens-kdiag-validate-bounded-pilot.json`
+  and is regenerated against the final clean immutable project HEAD. It
+  contains only
+  `kdiag-validate`, stage `pilot`, shard `0/1`, priority zero, and no resource
+  or forced-profile override. Writing this file is not central submission.
 - The single pilot does not require a DAG publisher: a ServerScheduler operator
   can validate and submit the exact outbox file. A future full DAG still needs
   an approved publisher/consumer; the project must not call
