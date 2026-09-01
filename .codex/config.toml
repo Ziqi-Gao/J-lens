@@ -1,0 +1,47 @@
+# J-lens project-local Codex configuration.
+#
+# Durable repository policy, project isolation, scientific invariants, and
+# verification requirements live in ../AGENTS.md. This profile is deliberately
+# path-based rather than workspace-based: even if a launcher supplies an
+# unexpected runtime workspace, it does not gain filesystem access.
+
+# "Approve for me" may review approvals that stay inside the sandbox, but both
+# filesystem-escalation channels are rejected before any reviewer can approve.
+approval_policy = { granular = { sandbox_approval = false, rules = true, mcp_elicitations = true, request_permissions = false, skill_approval = true } }
+approvals_reviewer = "auto_review"
+default_permissions = "jlens-isolated"
+
+[shell_environment_policy.set]
+TMPDIR = "/scr/del6500/J-lens/tmp"
+TMP = "/scr/del6500/J-lens/tmp"
+TEMP = "/scr/del6500/J-lens/tmp"
+
+[permissions.jlens-isolated]
+description = "Host-wide read access with writes restricted to J-lens-owned trees."
+
+[permissions.jlens-isolated.filesystem]
+# Allow host-wide reads, then reopen write access only for the three J-lens
+# trees. More-specific rules override this broad read-only baseline.
+":root" = "read"
+":minimal" = "read"
+# Codex 0.145 materializes its Linux sandbox helpers below this path.
+"/home/del6500/.codex/tmp/arg0" = "read"
+"/home/del6500/.codex/packages/standalone/releases" = "read"
+":slash_tmp" = "deny"
+
+[permissions.jlens-isolated.filesystem."/data/del6500/J-lens"]
+"." = "write"
+
+[permissions.jlens-isolated.filesystem."/scr/del6500/J-lens"]
+"." = "write"
+
+[permissions.jlens-isolated.filesystem."/home/del6500/projects/J-lens"]
+"." = "write"
+# Prevent an in-project task from weakening its own isolation or mutating Git
+# metadata. Source files and normal experiment metadata remain writable.
+".codex" = "read"
+".git" = "read"
+
+[permissions.jlens-isolated.network]
+enabled = false
+

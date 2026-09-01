@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "job_id": "jlens-three-method-revision-r2-rescore-000-example",
+  "project": "J-lens",
+  "task": "candidate-rescore",
+  "priority": 0,
+  "parameters": {
+    "run_id": "qwen35_4b_three_method_intervention_v1",
+    "git_commit": "0000000000000000000000000000000000000000",
+    "shard_index": 0,
+    "shard_count": 3
+  }
+}

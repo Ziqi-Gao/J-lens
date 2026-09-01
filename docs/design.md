@@ -11,35 +11,40 @@ method pipelines. J-component owns sparse J fitting and `resid_post` additions;
 ITI owns head probes, head selection, and pre-`o_proj` shifts; RAPTOR owns the
 adapter that invokes the pinned author's sequential adaptive `resid_post`
 hooks. The method workflows must not import each other. They may depend on
-method-neutral shared-row, layer-selection, prompt, generation, score, and
-artifact interfaces, and they must identity-check the shared model, tokenizer,
+method-neutral frozen-row, selected-layer artifact, prompt, generation, score,
+and artifact interfaces, and they must identity-check the shared model, tokenizer,
 source examples, data splits, and selected-layer artifact. Sharing inputs is
 not permission to share method-specific fitting or hook code.
 
-The Python package mirrors that ownership:
+The Python package separates scientific stages while preserving that method
+ownership:
 
 ```text
 jlens_workspace/concept_intervention/
-|-- evaluation.py
-|-- generation.py
-|-- shared_protocol.py
-|-- comparison.py
-|-- j_component/
-|   |-- intervention.py
-|   |-- multilayer.py
-|   `-- workflow.py
-|-- iti/
-|   |-- intervention.py
-|   |-- experiment.py
-|   `-- workflow.py
-`-- raptor/
-    |-- intervention.py
-    `-- workflow.py
+|-- data/                concept-specific data/artifact interfaces
+|-- protocol/            frozen rows, controls, and artifact schemas
+|-- probing/             probes, training-only tuning, and layer selection
+|-- geometry/            alignment, sparse pursuit, and K diagnostics
+|-- steering/
+|   |-- j_component/     sparse J fitting and resid_post additions
+|   |-- iti/             method-internal head probe and pre-o_proj shift
+|   `-- raptor/          pinned adaptive resid_post adapter
+|-- evaluation/          method-neutral evaluation over frozen outputs
+`-- reporting/           artifact-only reports
 ```
 
 The top-level `Concept_intervention/` directory remains the experiment surface
 for YAML, data manifests, launchers, and reports; reusable implementations stay
 under `src/jlens_workspace/` so they are packaged and tested normally.
+The complete ownership and compatibility policy is in
+[`architecture.md`](architecture.md).
+
+Probing and steering are separate scientific processes. Steering may consume a
+frozen, identity-checked probe or geometry artifact through the protocol
+interface, but it must not silently refit the shared probe. ITI's auxiliary
+head probe remains method-internal and therefore belongs to `steering/iti/`.
+Evaluation consumes method-neutral output schemas rather than importing any
+steering implementation.
 
 ## Coordinate conventions
 

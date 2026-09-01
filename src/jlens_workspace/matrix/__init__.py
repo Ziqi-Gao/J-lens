@@ -1,47 +1,12 @@
-"""Memory-bounded analysis of Jacobian-lens token frames."""
+"""Compatibility import for :mod:`jlens_workspace.j_space`."""
 
-from .geometry import (
-    BasisCoverage,
-    basis_coverage,
-    gram_energy_coverage,
-    orthonormalize_basis,
-    principal_angles,
-)
-from .operator import (
-    ALOperator,
-    MatrixDeviceError,
-    TokenFrameOperator,
-    TokenFrameOperatorMetadata,
-    TokenRowBlock,
-)
-from .spectrum import (
-    EnergyBasis,
-    GramResult,
-    SpectralAnalysisError,
-    SpectrumResult,
-    analyze_token_frame,
-    decompose_gram,
-    minimum_energy_basis,
-    streaming_gram,
-)
+from jlens_workspace import j_space as _implementation
+from jlens_workspace.j_space import *  # noqa: F403
 
-__all__ = [
-    "ALOperator",
-    "BasisCoverage",
-    "EnergyBasis",
-    "GramResult",
-    "MatrixDeviceError",
-    "SpectralAnalysisError",
-    "SpectrumResult",
-    "TokenFrameOperator",
-    "TokenFrameOperatorMetadata",
-    "TokenRowBlock",
-    "analyze_token_frame",
-    "basis_coverage",
-    "decompose_gram",
-    "gram_energy_coverage",
-    "minimum_energy_basis",
-    "orthonormalize_basis",
-    "principal_angles",
-    "streaming_gram",
-]
+
+def __getattr__(name: str):
+    return getattr(_implementation, name)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()).union(dir(_implementation)))

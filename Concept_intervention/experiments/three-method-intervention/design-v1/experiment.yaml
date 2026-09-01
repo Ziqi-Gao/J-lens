@@ -1,0 +1,48 @@
+schema_version: 1
+id: three-method-intervention/design-v1
+family: three-method-intervention
+design_version: design-v1
+kind: scientific_experiment
+title: Shared-data J-component, ITI, and RAPTOR intervention comparison
+direction: concept_intervention
+execution_status: complete
+interpretation_status: valid
+canonical: true
+supersedes:
+  - concept-intervention/design-v2
+  - iti-comparison/design-v1
+depends_on:
+  - concept-occupancy/design-v2
+repository:
+  branch: codex/three-method-interventions
+  commit: 9ad72a03fdfd06c5fd15362f330789e34c02d890
+  paths_available: true
+  protocol_paths:
+    - Concept_intervention/docs/three_method_interventions.md
+    - Concept_intervention/docs/local_server.md
+  config_paths:
+    - Concept_intervention/configs/qwen35_4b_three_method_intervention_v1_shared.yaml
+    - Concept_intervention/configs/qwen35_4b_three_method_intervention_v1_j_component.yaml
+    - Concept_intervention/configs/qwen35_4b_three_method_intervention_v1_iti.yaml
+    - Concept_intervention/configs/qwen35_4b_three_method_intervention_v1_raptor.yaml
+  launcher_paths:
+    - Concept_intervention/scripts/submit_three_method_interventions.sh
+    - Concept_intervention/scripts/launch_three_method_local_screen.sh
+    - Concept_intervention/scripts/run_three_method_local.sh
+artifacts:
+  immutable: true
+  roots:
+    - /data/del6500/J-lens/runs/qwen35_4b_three_method_intervention_v1/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1
+  completion_markers:
+    - /data/del6500/J-lens/runs/qwen35_4b_three_method_intervention_v1/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/intervention_comparison/index.json
+  runtime_roots: []
+attempts:
+  directory_pattern: attempt-NNN
+  legacy_labels: []
+derivations:
+  - Concept_intervention/experiments/three-method-intervention/design-v1/derivations/revision-r2.yaml
+notes:
+  - Completion requires intervention_comparison/index.json with complete=true; a scheduler exit status is insufficient.
+  - candidate_score_rescore_v1 is a legacy derived revision and maps to revision-r1, not a second scientific design.
+  - ServerScheduler rescoring is registered separately as write-once revision-r2 and never mutates the sealed design-v1 artifact root.
+  - J-component, ITI, and RAPTOR implementation boundaries remain independent.

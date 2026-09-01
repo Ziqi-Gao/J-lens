@@ -1,0 +1,31 @@
+schema_version: 1
+id: k-diagnostic/design-v2/revision-r1
+kind: derived_report
+status: registered_not_executed
+source:
+  experiment_id: k-diagnostic/design-v2
+  artifact_root: /data/del6500/J-lens/runs/qwen35_4b_k_diagnostic_v2/artifacts/concept_intervention/qwen35_4b_k_diagnostic_v2
+  completion_markers:
+    - /data/del6500/J-lens/runs/qwen35_4b_k_diagnostic_v2/artifacts/concept_intervention/qwen35_4b_k_diagnostic_v2/targets/index.json
+    - /data/del6500/J-lens/runs/qwen35_4b_k_diagnostic_v2/artifacts/concept_intervention/qwen35_4b_k_diagnostic_v2/bases/index.json
+    - /data/del6500/J-lens/runs/qwen35_4b_k_diagnostic_v2/artifacts/concept_intervention/qwen35_4b_k_diagnostic_v2/pilot/index.json
+    - /data/del6500/J-lens/runs/qwen35_4b_k_diagnostic_v2/artifacts/concept_intervention/qwen35_4b_k_diagnostic_v2/raw_metric_full/index.json
+    - /data/del6500/J-lens/runs/qwen35_4b_k_diagnostic_v2/artifacts/concept_intervention/qwen35_4b_k_diagnostic_v2/transformed_metric/index.json
+  immutable: true
+revision:
+  scientific_samples_regenerated: false
+  estimand_changed: false
+  description: Package report prose, figures, and hash-pinned plot-source data from the frozen completed compute artifacts.
+outputs:
+  root: /data/del6500/J-lens/runs/qwen35_4b_k_diagnostic_v2/derivations/revision-r1/report
+  layout:
+    report: report.md
+    figures: figures
+    plot_data_manifest: data/figure_data_manifest.json
+  completion_markers:
+    - index.json
+  write_policy: write_once
+scheduler:
+  tasks:
+    - kdiag-report
+  activation: separate_explicit_approval_required

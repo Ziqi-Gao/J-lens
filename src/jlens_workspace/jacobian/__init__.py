@@ -1,49 +1,12 @@
-"""Official Jacobian-lens integration and artifact conventions."""
+"""Compatibility import for :mod:`jlens_workspace.foundation.jacobian`."""
 
-from .adapter import (
-    ManagedJacobianLens,
-    OfficialJLensAdapter,
-    OfficialJLensUnavailableError,
-    fit_lens,
-    import_official_jlens,
-    load_lens,
-    save_lens,
-)
-from .metadata import (
-    ARTIFACT_FORMAT,
-    FORMAT_KEY,
-    METADATA_KEY,
-    JLensMetadata,
-    JLensMetadataError,
-    JLensMetadataMismatchError,
-)
-from .unembedding import (
-    EffectiveUnembedding,
-    EffectiveUnembeddingMetadata,
-    UnembeddingConvention,
-    UnsupportedNormalizationError,
-    build_effective_unembedding,
-    restrict_effective_unembedding,
-)
+from jlens_workspace.foundation import jacobian as _implementation
+from jlens_workspace.foundation.jacobian import *  # noqa: F403
 
-__all__ = [
-    "ARTIFACT_FORMAT",
-    "FORMAT_KEY",
-    "METADATA_KEY",
-    "EffectiveUnembedding",
-    "EffectiveUnembeddingMetadata",
-    "JLensMetadata",
-    "JLensMetadataError",
-    "JLensMetadataMismatchError",
-    "ManagedJacobianLens",
-    "OfficialJLensAdapter",
-    "OfficialJLensUnavailableError",
-    "UnembeddingConvention",
-    "UnsupportedNormalizationError",
-    "build_effective_unembedding",
-    "fit_lens",
-    "import_official_jlens",
-    "load_lens",
-    "restrict_effective_unembedding",
-    "save_lens",
-]
+
+def __getattr__(name: str):
+    return getattr(_implementation, name)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()).union(dir(_implementation)))

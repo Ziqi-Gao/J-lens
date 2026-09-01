@@ -1,5 +1,6 @@
-"""Concept-intervention methods and their shared evaluation contract.
+"""Probing, geometry, steering, evaluation, and reporting for concept studies.
 
-J-component intervention and ITI are intentionally separate subpackages. They
-share only method-neutral evaluation utilities and experiment inputs.
+The three steering pipelines are independent implementations. They communicate
+through frozen protocol artifacts and method-neutral evaluation contracts, not
+through imports of one another's fitting or hook code.
 """

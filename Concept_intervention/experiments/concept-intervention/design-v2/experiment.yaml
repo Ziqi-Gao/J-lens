@@ -1,0 +1,33 @@
+schema_version: 1
+id: concept-intervention/design-v2
+family: concept-intervention
+design_version: design-v2
+kind: scientific_experiment
+title: Earlier single-pipeline Qwen3.5-4B concept intervention
+direction: concept_intervention
+execution_status: historical
+interpretation_status: not_evaluated
+canonical: false
+supersedes: []
+depends_on:
+  - concept-occupancy/design-v2
+repository:
+  branch: codex/three-method-interventions
+  commit: null
+  paths_available: true
+  protocol_paths: []
+  config_paths:
+    - Concept_intervention/configs/qwen35_4b_concept_intervention_v2.yaml
+  launcher_paths:
+    - Concept_intervention/scripts/submit_qwen35_4b_concept_intervention_v2.sh
+artifacts:
+  immutable: true
+  roots: []
+  completion_markers: []
+  runtime_roots: []
+attempts:
+  directory_pattern: attempt-NNN
+  legacy_labels: []
+notes:
+  - Retained for provenance; new cross-method claims use three-method-intervention/design-v1.
+

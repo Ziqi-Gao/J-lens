@@ -1,33 +1,7 @@
-"""Public interface for the pinned external RAPTOR intervention."""
+"""Compatibility interface for pinned RAPTOR steering."""
 
-from .intervention import (
-    RAPTOR_COMMIT,
-    RAPTOR_REPOSITORY,
-    RaptorError,
-    RaptorInterventionState,
-    load_upstream_raptor,
-    no_raptor_intervention,
-    raptor_intervention_session,
-    verify_raptor_adaptive_epsilon_parity,
-    verify_raptor_checkout,
-)
-from .workflow import (
-    load_raptor_directions,
-    rebuild_raptor_index,
-    run_raptor_intervention,
-)
+from importlib import import_module as _import_module
 
-__all__ = [
-    "RAPTOR_COMMIT",
-    "RAPTOR_REPOSITORY",
-    "RaptorError",
-    "RaptorInterventionState",
-    "load_raptor_directions",
-    "load_upstream_raptor",
-    "no_raptor_intervention",
-    "raptor_intervention_session",
-    "rebuild_raptor_index",
-    "run_raptor_intervention",
-    "verify_raptor_adaptive_epsilon_parity",
-    "verify_raptor_checkout",
-]
+_canonical = _import_module("jlens_workspace.concept_intervention.steering.raptor")
+__all__ = _canonical.__all__
+globals().update({name: getattr(_canonical, name) for name in __all__})

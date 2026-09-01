@@ -1,0 +1,45 @@
+# Minimal project-side protocol-v2 pilot proposal. Per the central handoff
+# contract it is installed disabled, then separately enabled for exactly one
+# approved read-only pilot after the clean checkout and request are verified.
+schema_version = 2
+name = "J-lens"
+enabled = false
+integration_status = "protocol-v2-bounded-read-only-pilot-ready"
+
+[paths]
+code_root = "/home/del6500/projects/J-lens"
+data_root = "/data/del6500/J-lens"
+scratch_root = "/scr/del6500/J-lens"
+proposed_handoff_root = "/scr/del6500/J-lens/scheduler"
+
+[policy]
+allow_cpu_jobs = true
+allow_gpu_jobs = false
+allow_process_signals = false
+allow_project_file_mutation = false
+
+[integration]
+entrypoint = "/home/del6500/projects/J-lens/Concept_intervention/scripts/server_scheduler_entrypoint.sh"
+allowed_tasks = ["kdiag-validate"]
+notes = "Minimal bounded pilot registration exposing only the read-only K-diagnostic validator. The 23 sealed-source, three derivation, and remaining catalog tasks are intentionally absent. The disabled value is the required project-to-central handoff default, not an integration blocker; a ServerScheduler operator may separately enable exactly this one-task registration for the approved pilot."
+
+[[tasks]]
+name = "kdiag-validate"
+selection_policy = "earliest_finish"
+
+[[tasks.execution_profiles]]
+name = "cpu-4-fixed"
+kind = "cpu"
+resource_mode = "fixed"
+scheduling_goal = "balanced"
+cpu_cores_min = 4
+cpu_cores_preferred = 4
+cpu_cores_max = 4
+memory_mib = 8192
+gpu_count = 0
+gpu_memory_mib = 0
+gpu_utilization_pct = 0
+gpu_exclusivity = "shareable"
+gpu_models = []
+estimated_runtime_seconds = 60
+cpu_scaling_efficiency = 0.0

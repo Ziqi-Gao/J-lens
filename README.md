@@ -99,22 +99,36 @@ fully local and does not commit generated tensor artifacts.
 ## Repository layout
 
 ```text
-Concept_intervention/   data, configs, launchers, and reports for steering
-J_space/                configs, launchers, and reports for matrix geometry
+Concept_intervention/   experiment surface for steering
+├── experiments/        canonical registry and design-version directories
+├── configs/            compatibility configs for registered legacy paths
+└── scripts/            compatibility transports and thin launchers
+J_space/                J-space study configs, launchers, and reports
 src/jlens_workspace/    packaged, tested implementation
-└── concept_intervention/
-    ├── shared_protocol.py  common rows, probes, and layer selection
-    ├── evaluation.py   method-neutral prompt and score contract
-    ├── generation.py   exhaustive generation and blind export
-    ├── j_component/    resid_post J/full/non-J/random method
-    ├── iti/            pre-o_proj head-probe and ITI method
-    └── raptor/         pinned external adaptive steering adapter
+├── foundation/         model, config, activations, artifacts, and Jacobian
+├── data/               direction-neutral dataset preparation and validation
+├── concept_intervention/
+│   ├── data/           concept-specific artifact/data interfaces
+│   ├── protocol/       frozen rows, controls, strengths, and schemas
+│   ├── probing/        correlational concept measurement
+│   ├── geometry/       alignment, sparse pursuit, and K diagnostics
+│   ├── steering/       independent J-component, ITI, and RAPTOR pipelines
+│   ├── evaluation/     method-neutral evaluation over frozen outputs
+│   └── reporting/      artifact-only report generation
+├── j_space/            A_l operators, spectra, bases, and workflows
+└── scheduler/          ServerScheduler v2 validation and execution
 tests/                  fast offline tests plus opt-in LLM/GPU tests
 scripts/                tiny public-model integration checks
 docs/                   shared design and experiment protocol
 reports/                shared static HTML report renderer
 artifacts/               generated immutable run outputs; gitignored
 ```
+
+The two root-level direction directories own experiment identity, scientific
+configuration, small input manifests, protocols, and reports; they are not
+duplicated Python packages. `src/jlens_workspace/` owns reusable computation.
+See the [repository architecture](docs/architecture.md) for the dependency and
+migration rules.
 
 ## Quick start
 
@@ -175,17 +189,22 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 
 These are dependency/API integration checks, not scientific experiments.
 
-## Local non-Slurm server
+## Legacy local non-Slurm server
 
-The managed local server uses a separate top-level DAG rather than invoking the
-Quest `.slurm` components. Code remains in `/home/del6500/projects/J-lens`,
-durable artifacts go to `/data/del6500/J-lens`, and environments/caches/runtime
-state go to `/scr/del6500/J-lens`. GPU work may overlay foreign jobs only when
-the capacity gate passes; the launcher never controls pre-existing processes.
+The checked-in local scheduler and DAG remain a rollback-compatible execution
+surface until the central ServerScheduler v2 cutover gates pass. They use a
+separate top-level DAG rather than invoking the Quest `.slurm` components. Code
+remains in `/home/del6500/projects/J-lens`, durable artifacts go to
+`/data/del6500/J-lens`, and environments/caches/runtime state go to
+`/scr/del6500/J-lens`. GPU work may overlay foreign jobs only when the capacity
+gate passes; the launcher never controls pre-existing processes.
 
 See the [local server runbook](Concept_intervention/docs/local_server.md) for
 environment setup, bootstrap, Screen launch, GPU thresholds, resume state, and
-the final completion check.
+the final completion check. The bounded read-only central pilot proposal,
+allocation contract, scientific DAG requirements, and later deletion
+candidates are in the
+[migration inventory](Concept_intervention/docs/server_scheduler_migration_inventory.md).
 
 ## Qwen3.5-4B on the cluster
 
@@ -243,6 +262,8 @@ The direction launchers call the CLI rather than duplicating workflow logic:
 
 ```bash
 jlens-workspace doctor
+jlens-workspace experiments list
+jlens-workspace experiments validate
 jlens-workspace config validate CONFIG.yaml
 jlens-workspace data validate DATA.jsonl
 jlens-workspace lens fit CONFIG.yaml

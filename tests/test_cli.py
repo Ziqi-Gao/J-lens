@@ -20,6 +20,24 @@ def _write_yaml(path: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
+def test_write_once_derivation_stages_then_atomically_publishes(tmp_path: Path) -> None:
+    final, staging = cli._new_write_once_derivation(
+        tmp_path / "revision-r2/output",
+        label="test derivation",
+    )
+    assert staging.is_dir()
+    assert not final.exists()
+    (staging / "index.json").write_text(
+        json.dumps({"complete": True}), encoding="utf-8"
+    )
+    cli._publish_write_once_derivation(staging, final, label="test derivation")
+    assert (final / "index.json").is_file()
+    assert not staging.exists()
+
+    with pytest.raises(ValueError, match="same-revision"):
+        cli._new_write_once_derivation(final, label="test derivation")
+
+
 def _base_config(tmp_path: Path) -> dict[str, Any]:
     from jlens_workspace.config import ExperimentConfig
 
@@ -132,7 +150,7 @@ def test_k_diagnostic_v2_normal_run_requires_current_execution_preflight() -> No
             stale["execution_hardware_sha256"] = "0" * 64
         else:
             stale["execution_backend"] = "slurm"
-        with pytest.raises(ValueError, match="hardware|backend"):
+        with pytest.raises(ValueError, match=r"hardware|backend"):
             cli._require_k_diagnostic_run_preflight(
                 stale,
                 identity=payload["identity"],
@@ -170,6 +188,7 @@ def test_parser_exposes_required_commands_without_importing_optional_stack() -> 
     for command in (
         "doctor",
         "config",
+        "experiments",
         "data",
         "concept",
         "iti",
@@ -180,6 +199,7 @@ def test_parser_exposes_required_commands_without_importing_optional_stack() -> 
     for argv in (
         ["doctor"],
         ["config", "validate", "--config", "experiment.yaml"],
+        ["experiments", "validate"],
         ["data", "validate", "data.jsonl"],
         ["data", "validate", "--config", "experiment.yaml"],
         ["concept", "capture", "--config", "experiment.yaml"],
@@ -206,7 +226,14 @@ def test_parser_exposes_required_commands_without_importing_optional_stack() -> 
             "0",
         ],
         ["k-diagnostic", "index", "--config", "experiment.yaml"],
-        ["k-diagnostic", "report", "--config", "experiment.yaml"],
+        [
+            "k-diagnostic",
+            "report",
+            "--config",
+            "experiment.yaml",
+            "--output",
+            "derived-report",
+        ],
         [
             "intervention",
             "candidate-rescore",
@@ -379,7 +406,7 @@ def test_fit_probes_maps_probe_config_to_workflow(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from jlens_workspace import workflows
+    from jlens_workspace.concept_intervention.probing import workflow as probe_workflow
 
     raw = _base_config(tmp_path)
     raw["activations"] = {"layers": [2]}
@@ -409,7 +436,7 @@ def test_fit_probes_maps_probe_config_to_workflow(
             probes=(probe,),
         )
 
-    monkeypatch.setattr(workflows, "run_concept_probe_workflow", fake_workflow)
+    monkeypatch.setattr(probe_workflow, "run_concept_probe_workflow", fake_workflow)
     activation_path = tmp_path / "activation-artifact"
     output_path = tmp_path / "probe-output"
     exit_code = cli.main(
@@ -442,8 +469,8 @@ def test_capture_forwards_add_special_tokens(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    import jlens_workspace.activations as activation_module
     import jlens_workspace.data as data_module
+    import jlens_workspace.foundation.activations as activation_module
 
     raw = _base_config(tmp_path)
     raw["dataset"] = {
@@ -780,7 +807,7 @@ def test_matrix_run_maps_all_numerical_options(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from jlens_workspace import workflows
+    from jlens_workspace.j_space import workflow as matrix_workflow
 
     raw = _base_config(tmp_path)
     if "direction" in raw:
@@ -842,7 +869,7 @@ def test_matrix_run_maps_all_numerical_options(
             output_dir=output, metrics_path=output / "metrics.json", layers=(layer,)
         )
 
-    monkeypatch.setattr(workflows, "run_matrix_layers", fake_run)
+    monkeypatch.setattr(matrix_workflow, "run_matrix_layers", fake_run)
     output = tmp_path / "matrix-output"
     assert (
         cli.main(

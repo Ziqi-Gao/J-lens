@@ -18,6 +18,11 @@ third_party_external/
 slurm-*.out
 slurm-*.err
 
+# Server-local convenience links. Their targets are governed by AGENTS.md and
+# must never be replaced with repository-local data directories.
+/data
+/scratch
+
 # Large tensor artifacts
 *.npy
 *.npz

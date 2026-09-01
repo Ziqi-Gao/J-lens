@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 from pathlib import Path
@@ -7,6 +8,22 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _python_imports(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    imports: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.add(node.module)
+    return imports
+
+
+def _tree_imports(*roots: Path) -> set[str]:
+    files = [path for root in roots for path in root.rglob("*.py")]
+    return set().union(*(_python_imports(path) for path in files))
 
 
 def test_single_canonical_agent_guide() -> None:
@@ -21,6 +38,67 @@ def test_shared_data_preparation_is_not_nested_in_either_lane() -> None:
     assert not (ROOT / "Concept_intervention/J_space").exists()
     assert (ROOT / "scripts/prepare_go_emotions.py").is_file()
     assert not (ROOT / "Concept_intervention/scripts/prepare_go_emotions.py").exists()
+
+
+def test_direction_roots_remain_scientific_control_surfaces() -> None:
+    concept = ROOT / "Concept_intervention"
+    j_space = ROOT / "J_space"
+
+    for relative in ("README.md", "experiments", "configs", "data", "docs", "reports", "scripts"):
+        assert (concept / relative).exists()
+    for relative in ("README.md", "configs", "reports", "scripts"):
+        assert (j_space / relative).exists()
+
+    architecture = (ROOT / "docs/architecture.md").read_text(encoding="utf-8")
+    assert "authoritative experiment surfaces" in architecture
+    assert "what scientific experiment is being run" in architecture
+    assert "how that experiment is computed" in architecture
+
+
+def test_j_space_implementation_does_not_depend_on_concept_intervention() -> None:
+    imports = _tree_imports(ROOT / "src/jlens_workspace/j_space")
+    assert not any(
+        module.startswith("jlens_workspace.concept_intervention") for module in imports
+    )
+
+
+def test_canonical_implementation_does_not_import_compatibility_paths() -> None:
+    source = ROOT / "src/jlens_workspace"
+    canonical_roots = (
+        source / "foundation",
+        source / "data",
+        source / "j_space",
+        source / "scheduler",
+        source / "concept_intervention/protocol",
+        source / "concept_intervention/probing",
+        source / "concept_intervention/geometry",
+        source / "concept_intervention/steering",
+        source / "concept_intervention/evaluation",
+        source / "concept_intervention/reporting",
+        source / "concept_intervention/data",
+    )
+    imports = _tree_imports(*canonical_roots)
+    compatibility_prefixes = (
+        "jlens_workspace.activations",
+        "jlens_workspace.artifacts",
+        "jlens_workspace.config",
+        "jlens_workspace.jacobian",
+        "jlens_workspace.matrix",
+        "jlens_workspace.modeling",
+        "jlens_workspace.concepts",
+        "jlens_workspace.probes",
+        "jlens_workspace.pursuit",
+        "jlens_workspace.workflows",
+        "jlens_workspace.concept_intervention.shared_protocol",
+        "jlens_workspace.concept_intervention.generation",
+        "jlens_workspace.concept_intervention.j_component",
+        "jlens_workspace.concept_intervention.iti",
+        "jlens_workspace.concept_intervention.raptor",
+        "jlens_workspace.concept_intervention.k_diagnostic",
+        "jlens_workspace.concept_intervention.candidate_rescore",
+        "jlens_workspace.concept_intervention.comparison",
+    )
+    assert not any(module.startswith(compatibility_prefixes) for module in imports)
 
 
 def test_three_method_batch_environment_does_not_require_git_cli() -> None:

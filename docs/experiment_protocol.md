@@ -2,6 +2,11 @@
 
 ## Direction 1: abstract concept intervention
 
+The implementation names these responsibilities `probing`, `geometry`,
+`steering`, `evaluation`, and `reporting`. Those names are evidence boundaries,
+not merely code organization: probing and geometry are correlational stages,
+while steering supplies the intervention outputs needed for a causal test.
+
 Run every selected layer and concept through the same gates:
 
 1. Validate the dataset and freeze its SHA-256 fingerprint.
@@ -24,6 +29,11 @@ Only after the nearest-token semantics pass review should a later experiment:
 8. Report target concept rate, off-target concept rates, output length,
    perplexity/fluency, and dose-response. No single nearest token is treated as
    causal evidence.
+
+The probe and geometry artifacts are frozen and identity-checked before a
+steering method consumes them. J-component, ITI, and RAPTOR produce the same
+method-neutral evaluation schema but do not import one another. Evaluation and
+reporting operate on immutable outputs and never trigger generation implicitly.
 
 An external intervention baseline may retain its published internal coordinate
 when moving it to `resid_post` would change the algorithm. Such a baseline must

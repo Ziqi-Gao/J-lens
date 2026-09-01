@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from jlens_workspace.artifacts import atomic_write_json
+from jlens_workspace.foundation.artifacts import atomic_write_json
 
 from .prepare import PreparedDataset, prepare_examples
 from .schema import CANONICAL_SPLITS, ConceptExample

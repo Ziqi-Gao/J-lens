@@ -1,0 +1,29 @@
+schema_version: 1
+project: J-lens
+taxonomy:
+  design: Scientific hypothesis, method, data, selection, estimand, or evaluation design.
+  protocol: Compatible prompt, rubric, schema, or transport revision within one design.
+  attempt: Operational retry or resume of an unchanged frozen design.
+  revision: Derived rescore or reanalysis over immutable source artifacts.
+experiments:
+  - id: concept-occupancy/design-v1
+    manifest: Concept_intervention/experiments/concept-occupancy/design-v1/experiment.yaml
+  - id: concept-occupancy/design-v2
+    manifest: Concept_intervention/experiments/concept-occupancy/design-v2/experiment.yaml
+  - id: concept-intervention/design-v2
+    manifest: Concept_intervention/experiments/concept-intervention/design-v2/experiment.yaml
+  - id: iti-comparison/design-v1
+    manifest: Concept_intervention/experiments/iti-comparison/design-v1/experiment.yaml
+  - id: three-method-intervention/design-v1
+    manifest: Concept_intervention/experiments/three-method-intervention/design-v1/experiment.yaml
+  - id: k-diagnostic/design-v1
+    manifest: Concept_intervention/experiments/k-diagnostic/design-v1/experiment.yaml
+  - id: k-diagnostic/design-v2
+    manifest: Concept_intervention/experiments/k-diagnostic/design-v2/experiment.yaml
+  - id: llm-judge/j-raptor/design-v1
+    manifest: Concept_intervention/experiments/llm-judge/j-raptor/design-v1/experiment.yaml
+  - id: llm-judge/three-method/design-v1-pairwise
+    manifest: Concept_intervention/experiments/llm-judge/three-method/design-v1-pairwise/experiment.yaml
+  - id: llm-judge/three-method/design-v2-pointwise
+    manifest: Concept_intervention/experiments/llm-judge/three-method/design-v2-pointwise/experiment.yaml
+

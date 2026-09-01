@@ -1,0 +1,32 @@
+schema_version: 1
+id: concept-occupancy/design-v1
+family: concept-occupancy
+design_version: design-v1
+kind: diagnostic
+title: Initial Qwen3.5-4B concept-vector J-space occupancy
+direction: concept_intervention
+execution_status: superseded
+interpretation_status: not_evaluated
+canonical: false
+supersedes: []
+depends_on: []
+repository:
+  branch: codex/three-method-interventions
+  commit: null
+  paths_available: true
+  protocol_paths: []
+  config_paths:
+    - Concept_intervention/configs/qwen35_4b_concept_occupancy_pilot_v1.yaml
+    - Concept_intervention/configs/qwen35_4b_concept_occupancy_v1.yaml
+  launcher_paths: []
+artifacts:
+  immutable: true
+  roots: []
+  completion_markers: []
+  runtime_roots: []
+attempts:
+  directory_pattern: attempt-NNN
+  legacy_labels: []
+notes:
+  - Historical design superseded by concept-occupancy/design-v2.
+

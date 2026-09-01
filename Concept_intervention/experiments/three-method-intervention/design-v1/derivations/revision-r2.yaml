@@ -1,0 +1,27 @@
+schema_version: 1
+id: three-method-intervention/design-v1/revision-r2
+kind: derived_rescore
+status: registered_not_executed
+source:
+  experiment_id: three-method-intervention/design-v1
+  artifact_root: /data/del6500/J-lens/runs/qwen35_4b_three_method_intervention_v1/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1
+  completion_markers:
+    - /data/del6500/J-lens/runs/qwen35_4b_three_method_intervention_v1/artifacts/concept_intervention/qwen35_4b_three_method_intervention_v1/intervention_comparison/index.json
+  immutable: true
+revision:
+  scientific_samples_regenerated: false
+  estimand_changed: false
+  description: Recompute candidate scores for the three frozen steering-method generation sets without changing samples or the comparison estimand.
+outputs:
+  root: /data/del6500/J-lens/runs/qwen35_4b_three_method_intervention_v1/derivations/revision-r2
+  layout:
+    candidate_scores: candidate_score_rescore_v1
+    comparison: intervention_comparison
+  completion_markers:
+    - intervention_comparison/index.json
+  write_policy: write_once
+scheduler:
+  tasks:
+    - candidate-rescore
+    - comparison-rescore-index
+  activation: separate_explicit_approval_required

@@ -1,0 +1,37 @@
+schema_version: 1
+id: k-diagnostic/design-v1
+family: k-diagnostic
+design_version: design-v1
+kind: diagnostic
+title: Initial low-K occupancy diagnostic
+direction: concept_intervention
+execution_status: superseded
+interpretation_status: not_evaluated
+canonical: false
+supersedes: []
+depends_on:
+  - concept-occupancy/design-v2
+repository:
+  branch: codex/three-method-interventions
+  commit: null
+  paths_available: true
+  protocol_paths:
+    - Concept_intervention/docs/qwen35_4b_k_diagnostic_v1.md
+  config_paths:
+    - Concept_intervention/configs/qwen35_4b_k_diagnostic_v1_pilot.yaml
+    - Concept_intervention/configs/qwen35_4b_k_diagnostic_v1_full.yaml
+    - Concept_intervention/configs/qwen35_4b_k_diagnostic_v1_transformed.yaml
+  launcher_paths:
+    - Concept_intervention/scripts/run_qwen35_4b_k_diagnostic_v1.sh
+    - Concept_intervention/scripts/submit_qwen35_4b_k_diagnostic_v1.sh
+artifacts:
+  immutable: true
+  roots: []
+  completion_markers: []
+  runtime_roots: []
+attempts:
+  directory_pattern: attempt-NNN
+  legacy_labels: []
+notes:
+  - Historical preregistration superseded before the clean-server production run by k-diagnostic/design-v2.
+

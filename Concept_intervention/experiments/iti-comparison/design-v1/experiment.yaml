@@ -1,0 +1,34 @@
+schema_version: 1
+id: iti-comparison/design-v1
+family: iti-comparison
+design_version: design-v1
+kind: scientific_experiment
+title: Historical single-layer J-component and ITI comparison protocol
+direction: concept_intervention
+execution_status: registered
+interpretation_status: not_evaluated
+canonical: false
+supersedes: []
+depends_on:
+  - concept-intervention/design-v2
+repository:
+  branch: codex/three-method-interventions
+  commit: null
+  paths_available: true
+  protocol_paths:
+    - Concept_intervention/docs/iti_comparison_v1.md
+  config_paths:
+    - Concept_intervention/configs/qwen35_4b_iti_comparison_v1.yaml
+  launcher_paths:
+    - Concept_intervention/scripts/submit_qwen35_4b_iti_comparison_v1.sh
+artifacts:
+  immutable: true
+  roots: []
+  completion_markers: []
+  runtime_roots: []
+attempts:
+  directory_pattern: attempt-NNN
+  legacy_labels: []
+notes:
+  - Registered protocol only; it is not recorded as a completed experiment.
+

@@ -9,6 +9,13 @@ A_l = U_{\mathrm{eff}}J_l \in \mathbb{R}^{V\times D}
 at each selected transformer layer. It is a sibling of
 [`Concept_intervention/`](../Concept_intervention/README.md).
 
+This directory is the scientific control surface for J-space studies: it owns
+the concrete matrix conventions, study configs, launch transports, and
+reports. Reusable operator, spectrum, basis, and workflow implementations live
+under `src/jlens_workspace/j_space/`. J-space remains a root-level sibling of
+`Concept_intervention/`; neither direction may consume the other's scripts or
+artifacts.
+
 This is a reproduction and extension, not the first dimensionality analysis of
 the matrix. Figure 28d of the
 [Workspace study](https://transformer-circuits.pub/2026/workspace/index.html)

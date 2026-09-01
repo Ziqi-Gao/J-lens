@@ -29,11 +29,20 @@ download, remote data, or CUDA with the existing `integration`, `remote`, or
 - Keep `Concept_intervention/` and `J_space/` as root-level siblings.
 - Put reusable typed logic in `src/jlens_workspace/` and synthetic tests in
   `tests/`.
+- Treat the root direction directories as scientific control surfaces: they
+  retain experiment identity, configs, small manifests, protocols, launchers,
+  and reports even when their reusable computation lives under `src/`.
+- Put new Concept Intervention code in the appropriate `probing`, `geometry`,
+  `steering`, `evaluation`, or `reporting` namespace. Do not add a generic
+  `methods` package that conflates probing with steering.
 - Put only direction-specific data manifests, YAML, launchers, and reports in
   the corresponding direction directory.
 - Do not import one direction's scripts or generated outputs from the other.
 - Do not put reusable experimental logic in notebooks or Slurm files; launchers
   should validate configuration and call `jlens-workspace`.
+- Preserve historical import paths only as thin compatibility wrappers; new
+  implementation code must use the canonical paths documented in
+  [`docs/architecture.md`](docs/architecture.md).
 - On the managed local server, obey the three J-lens write roots and project
   isolation policy in `AGENTS.md`. An agent writing J-lens must not write
   FedFisher in the same task or session.
@@ -75,6 +84,24 @@ at the pinned revision, inspect positive examples, then record the exact remote
 `output_concept` and verification revision. Preserve upstream source and
 license metadata.
 
+## Experiment identity
+
+All versioned Concept Intervention work must be registered in
+[`Concept_intervention/experiments/registry.yaml`](Concept_intervention/experiments/registry.yaml).
+Use `design-vN` only for scientific design changes. Use `protocol-vN` for a
+compatible schema/rubric change, `attempt-NNN` for retries and resumes, and
+`revision-rN` for derived rescoring or reanalysis.
+
+New designs live under
+`Concept_intervention/experiments/<family>/<design-version>/` and add their
+manifest to the registry in the same commit. Do not extend the historical flat
+`configs/` and `scripts/` version pattern. Existing paths remain as immutable
+compatibility surfaces. Validate metadata with:
+
+```bash
+.venv/bin/jlens-workspace experiments validate
+```
+
 ## Artifact or config changes
 
 - Schema/config changes must reject unknown keys and include migration notes.
@@ -91,6 +118,7 @@ license metadata.
 Before requesting review:
 
 ```bash
+.venv/bin/jlens-workspace experiments validate
 .venv/bin/ruff check .
 .venv/bin/pytest
 bash -n Concept_intervention/scripts/*.sh

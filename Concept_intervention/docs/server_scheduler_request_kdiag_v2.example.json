@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "job_id": "jlens-kdiag-validate-bounded-pilot-example",
+  "project": "J-lens",
+  "task": "kdiag-validate",
+  "priority": 0,
+  "parameters": {
+    "run_id": "qwen35_4b_k_diagnostic_v2",
+    "git_commit": "0000000000000000000000000000000000000000",
+    "shard_index": 0,
+    "shard_count": 1,
+    "stage": "pilot",
+    "instance": "singleton"
+  }
+}

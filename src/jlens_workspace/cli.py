@@ -15,6 +15,7 @@ import json
 import re
 import shutil
 import sys
+import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,51 @@ _OPTIONAL_PACKAGES = (
     ("huggingface-hub", "huggingface_hub"),
     ("jlens", "jlens"),
 )
+
+
+def _new_write_once_derivation(output: Path, *, label: str) -> tuple[Path, Path]:
+    """Create a sibling staging directory while keeping the final root absent."""
+
+    final = output.resolve()
+    if final.exists() or final.is_symlink():
+        raise ValueError(
+            f"{label} output already exists; preserve it for audit and use a "
+            "registered same-revision attempt/recovery operation"
+        )
+    final.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(
+            prefix=f".{final.name}.attempt-staging-",
+            dir=final.parent,
+        )
+    )
+    return final, staging
+
+
+def _publish_write_once_derivation(
+    staging: Path,
+    final: Path,
+    *,
+    label: str,
+) -> None:
+    """Atomically expose one complete staged derivation without overwriting."""
+
+    if not (staging / "index.json").is_file():
+        raise ValueError(f"{label} staging output lacks its final completion index")
+    if final.exists() or final.is_symlink():
+        raise ValueError(
+            f"{label} output appeared during execution; staging is preserved for "
+            "same-revision recovery"
+        )
+    try:
+        staging.rename(final)
+    except OSError as error:
+        raise ValueError(
+            f"cannot atomically publish {label}; staging is preserved for "
+            "same-revision recovery"
+        ) from error
+
+
 _EXPECTED_JLENS_REVISION = "581d398613e5602a5af361e1c34d3a92ea82ba8e"
 
 
@@ -96,6 +142,54 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config_argument(config_validate)
     _add_json_flag(config_validate)
     config_validate.set_defaults(handler=_cmd_config_validate)
+
+    experiments = subparsers.add_parser(
+        "experiments", help="versioned experiment registry operations"
+    )
+    experiment_subparsers = experiments.add_subparsers(
+        dest="experiments_command", required=True
+    )
+    experiments_list = experiment_subparsers.add_parser(
+        "list", help="list registered scientific designs and evaluations"
+    )
+    experiments_list.add_argument(
+        "--registry",
+        type=Path,
+        default=Path("Concept_intervention/experiments/registry.yaml"),
+        help="registry YAML (default: Concept_intervention/experiments/registry.yaml)",
+    )
+    _add_json_flag(experiments_list)
+    experiments_list.set_defaults(handler=_cmd_experiments_list)
+
+    experiments_show = experiment_subparsers.add_parser(
+        "show", help="show one registered design by its stable experiment id"
+    )
+    experiments_show.add_argument("experiment_id", help="registry id, including design-vN")
+    experiments_show.add_argument(
+        "--registry",
+        type=Path,
+        default=Path("Concept_intervention/experiments/registry.yaml"),
+        help="registry YAML (default: Concept_intervention/experiments/registry.yaml)",
+    )
+    _add_json_flag(experiments_show)
+    experiments_show.set_defaults(handler=_cmd_experiments_show)
+
+    experiments_validate = experiment_subparsers.add_parser(
+        "validate", help="strictly validate registry identities and referenced manifests"
+    )
+    experiments_validate.add_argument(
+        "--registry",
+        type=Path,
+        default=Path("Concept_intervention/experiments/registry.yaml"),
+        help="registry YAML (default: Concept_intervention/experiments/registry.yaml)",
+    )
+    experiments_validate.add_argument(
+        "--check-artifacts",
+        action="store_true",
+        help="require server paths and complete=true in every completion marker",
+    )
+    _add_json_flag(experiments_validate)
+    experiments_validate.set_defaults(handler=_cmd_experiments_validate)
 
     data = subparsers.add_parser("data", help="concept dataset operations")
     data_subparsers = data.add_subparsers(dest="data_command", required=True)
@@ -568,6 +662,12 @@ def build_parser() -> argparse.ArgumentParser:
         "report", help="generate the registered report and ten figure pairs"
     )
     _add_config_argument(k_report)
+    k_report.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="versioned derived report directory (source artifacts remain read-only)",
+    )
     _add_json_flag(k_report)
     k_report.set_defaults(handler=_cmd_k_diagnostic_report)
     return parser
@@ -649,7 +749,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def _load_config(path: Path) -> Any:
-    from jlens_workspace.config import load_experiment_config
+    from jlens_workspace.foundation.config import load_experiment_config
 
     return load_experiment_config(path)
 
@@ -663,7 +763,7 @@ def _experiment_manifest(
 ) -> Any:
     """Build one provenance record shared by top-level CLI workflows."""
 
-    from jlens_workspace.artifacts import RunManifest, sha256_file
+    from jlens_workspace.foundation.artifacts import RunManifest, sha256_file
 
     lens = config.lens
     dataset = config.dataset
@@ -732,11 +832,11 @@ def _generation_identity(
 ) -> dict[str, Any]:
     """Content-address both prompt banks together with decoding parameters."""
 
-    from jlens_workspace.artifacts import resolve_repository_resource, sha256_file
-    from jlens_workspace.concept_intervention.generation import (
+    from jlens_workspace.concept_intervention.protocol.generation import (
         candidate_prompt_splits,
         prompt_ids_sha256,
     )
+    from jlens_workspace.foundation.artifacts import resolve_repository_resource, sha256_file
 
     candidate_path = resolve_repository_resource(value.candidate_prompts_path)
     open_path = resolve_repository_resource(value.open_prompts_path)
@@ -776,7 +876,7 @@ def _generation_identity(
 def _shared_protocol_identity(path: str | Path) -> dict[str, Any]:
     """Resolve and verify the selected-layer and balanced-row identities."""
 
-    from jlens_workspace.artifacts import sha256_file
+    from jlens_workspace.foundation.artifacts import sha256_file
 
     selection_path = Path(path)
     selection = json.loads(selection_path.read_text(encoding="utf-8"))
@@ -802,7 +902,7 @@ def _write_immutable_shard_manifest(
 
     from dataclasses import asdict, is_dataclass
 
-    from jlens_workspace.artifacts import atomic_write_json
+    from jlens_workspace.foundation.artifacts import atomic_write_json
 
     destination = Path(path)
     summary = Path(scientific_summary)
@@ -873,6 +973,66 @@ def _cmd_config_validate(args: argparse.Namespace) -> int:
     )
     return 0
 
+
+def _cmd_experiments_list(args: argparse.Namespace) -> int:
+    from jlens_workspace.experiment_registry import (
+        load_experiment_registry,
+        registry_summary,
+    )
+
+    registry = load_experiment_registry(args.registry)
+    payload = registry_summary(registry)
+    lines = [
+        (
+            f"{entry['id']}: execution={entry['execution_status']}, "
+            f"interpretation={entry['interpretation_status']}"
+        )
+        for entry in payload["experiments"]
+    ]
+    _emit(payload, as_json=args.json, message="\n".join(lines))
+    return 0
+
+
+def _cmd_experiments_show(args: argparse.Namespace) -> int:
+    from jlens_workspace.experiment_registry import load_experiment_registry
+
+    registry = load_experiment_registry(args.registry)
+    record = registry.by_id(args.experiment_id)
+    payload = dict(record.payload)
+    payload["manifest"] = str(record.manifest_path.relative_to(registry.repository_root))
+    _emit(
+        payload,
+        as_json=args.json,
+        message=(
+            f"{record.experiment_id}: execution={payload['execution_status']}, "
+            f"interpretation={payload['interpretation_status']}\n"
+            f"manifest={payload['manifest']}"
+        ),
+    )
+    return 0
+
+
+def _cmd_experiments_validate(args: argparse.Namespace) -> int:
+    from jlens_workspace.experiment_registry import (
+        load_experiment_registry,
+        registry_summary,
+    )
+
+    registry = load_experiment_registry(
+        args.registry,
+        check_artifacts=args.check_artifacts,
+    )
+    payload = registry_summary(registry)
+    payload["artifact_paths_checked"] = args.check_artifacts
+    _emit(
+        payload,
+        as_json=args.json,
+        message=(
+            f"valid experiment registry: {payload['experiment_count']} designs"
+            + ("; server artifact paths checked" if args.check_artifacts else "")
+        ),
+    )
+    return 0
 
 def _cmd_data_validate(args: argparse.Namespace) -> int:
     from jlens_workspace.data import (
@@ -998,14 +1158,14 @@ def _load_examples(config: Any, override: Path | None = None) -> list[Any]:
 
 
 def _load_model_bundle(config: Any) -> Any:
-    from jlens_workspace.modeling import load_hf_bundle
+    from jlens_workspace.foundation.modeling import load_hf_bundle
 
     return load_hf_bundle(config.model)
 
 
 def _cmd_concept_capture(args: argparse.Namespace) -> int:
-    from jlens_workspace.activations import capture_residual_activations
     from jlens_workspace.data import dataset_fingerprint
+    from jlens_workspace.foundation.activations import capture_residual_activations
 
     config = _load_config(args.config)
     activation = _require_section(config, "activations")
@@ -1072,7 +1232,9 @@ def _cmd_concept_capture(args: argparse.Namespace) -> int:
 
 
 def _cmd_concept_fit_probes(args: argparse.Namespace) -> int:
-    from jlens_workspace.workflows import run_concept_probe_workflow
+    from jlens_workspace.concept_intervention.probing.workflow import (
+        run_concept_probe_workflow,
+    )
 
     config = _load_config(args.config)
     probe = _require_section(config, "probe")
@@ -1119,7 +1281,7 @@ def _cmd_concept_fit_probes(args: argparse.Namespace) -> int:
 
 
 def _cmd_concept_bootstrap_probes(args: argparse.Namespace) -> int:
-    from jlens_workspace.workflows.probe_replicates import (
+    from jlens_workspace.concept_intervention.probing.replicates import (
         build_probe_bootstrap_replicates,
     )
 
@@ -1155,7 +1317,7 @@ def _cmd_concept_bootstrap_probes(args: argparse.Namespace) -> int:
 
 
 def _cmd_concept_bootstrap_probes_index(args: argparse.Namespace) -> int:
-    from jlens_workspace.workflows.probe_replicates import (
+    from jlens_workspace.concept_intervention.probing.replicates import (
         rebuild_probe_replicate_manifest,
     )
 
@@ -1260,7 +1422,7 @@ def _fitted_lens_path(config: Any, lens_output: Path | None) -> Path:
 def _lens_artifact_provenance(config: Any, lens_output: Path | None) -> dict[str, Any]:
     """Return a content hash for local lenses or an exact Hub identity."""
 
-    from jlens_workspace.artifacts import sha256_file
+    from jlens_workspace.foundation.artifacts import sha256_file
 
     lens = _require_section(config, "lens")
     if lens.source == "huggingface":
@@ -1362,12 +1524,12 @@ def _fit_prompt_token_lengths(
 def _load_or_fit_lens(config: Any, bundle: Any, *, lens_output: Path | None = None) -> Any:
     """Resolve hub/local/fit sources with explicit immutable identity metadata."""
 
-    from jlens_workspace.artifacts import (
+    from jlens_workspace.foundation.artifacts import (
         atomic_write_json,
         sha256_file,
         stable_hash,
     )
-    from jlens_workspace.jacobian import JLensMetadata, OfficialJLensAdapter
+    from jlens_workspace.foundation.jacobian import JLensMetadata, OfficialJLensAdapter
 
     lens = _require_section(config, "lens")
     layers = _canonical_lens_layers(lens)
@@ -1588,7 +1750,7 @@ def _probe_activation_identity(activation: Mapping[str, Any], *, source: Path) -
 
 
 def _expected_probe_identity(config: Any, config_path: Path | None = None) -> dict[str, Any]:
-    from jlens_workspace.artifacts import sha256_file
+    from jlens_workspace.foundation.artifacts import sha256_file
 
     activation = _require_section(config, "activations")
     dataset = _require_section(config, "dataset")
@@ -1663,7 +1825,7 @@ def _load_probe_vectors(
         expected_vector_hash = probe_metadata.get("vector_sha256")
         if not isinstance(expected_vector_hash, str):
             raise ValueError(f"{metrics_path}: missing probe vector SHA-256")
-        from jlens_workspace.artifacts import sha256_file
+        from jlens_workspace.foundation.artifacts import sha256_file
 
         if sha256_file(vector_path) != expected_vector_hash:
             raise ValueError(f"{vector_path}: probe vector SHA-256 mismatch")
@@ -1690,7 +1852,7 @@ def _prepare_fresh_output(path: Path, *, overwrite: bool, label: str) -> None:
 
 
 def _build_effective_unembedding(config: Any, bundle: Any, convention: str) -> Any:
-    from jlens_workspace.jacobian import (
+    from jlens_workspace.foundation.jacobian import (
         build_effective_unembedding,
         restrict_effective_unembedding,
     )
@@ -1705,9 +1867,11 @@ def _build_effective_unembedding(config: Any, bundle: Any, convention: str) -> A
 
 
 def _cmd_concept_align(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json, sha256_file
-    from jlens_workspace.matrix import TokenFrameOperator
-    from jlens_workspace.workflows import run_batched_probe_j_alignment
+    from jlens_workspace.concept_intervention.geometry.alignment.workflow import (
+        run_batched_probe_j_alignment,
+    )
+    from jlens_workspace.foundation.artifacts import atomic_write_json, sha256_file
+    from jlens_workspace.j_space import TokenFrameOperator
 
     config = _load_config(args.config)
     alignment = _require_section(config, "alignment")
@@ -1849,8 +2013,8 @@ def _prepare_concept_run_root(
 
 
 def _cmd_concept_run(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json
     from jlens_workspace.data import dataset_fingerprint
+    from jlens_workspace.foundation.artifacts import atomic_write_json
 
     config = _load_config(args.config)
     _require_section(config, "dataset")
@@ -1954,7 +2118,7 @@ def _cmd_concept_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_concept_layer_select(args: argparse.Namespace) -> int:
-    from jlens_workspace.concept_intervention.shared_protocol import (
+    from jlens_workspace.concept_intervention.probing.layer_selection import (
         run_shared_layer_selection,
     )
 
@@ -1992,8 +2156,8 @@ def _cmd_concept_layer_select(args: argparse.Namespace) -> int:
 
 
 def _cmd_matrix_run(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json
-    from jlens_workspace.workflows import MatrixWorkflowOptions, run_matrix_layers
+    from jlens_workspace.foundation.artifacts import atomic_write_json
+    from jlens_workspace.j_space.workflow import MatrixWorkflowOptions, run_matrix_layers
 
     config = _load_config(args.config)
     matrix = _require_section(config, "matrix")
@@ -2133,13 +2297,13 @@ def _load_unembedding_tensors_lightweight(config: Any) -> tuple[Any, Any]:
 
 
 def _cmd_intervention_concepts_v2(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import (
+    from jlens_workspace.concept_intervention.steering.j_component import (
+        run_concept_intervention,
+    )
+    from jlens_workspace.foundation.artifacts import (
         atomic_write_json,
         resolve_repository_resource,
         sha256_file,
-    )
-    from jlens_workspace.concept_intervention.j_component import (
-        run_concept_intervention,
     )
 
     config = _load_config(args.config)
@@ -2237,10 +2401,10 @@ def _cmd_intervention_concepts_v2(args: argparse.Namespace) -> int:
 
 
 def _cmd_intervention_index(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json
-    from jlens_workspace.concept_intervention.j_component import (
+    from jlens_workspace.concept_intervention.steering.j_component import (
         rebuild_intervention_index,
     )
+    from jlens_workspace.foundation.artifacts import atomic_write_json
 
     config = _load_config(args.config)
     intervention = _require_section(config, "intervention")
@@ -2305,10 +2469,10 @@ def _configured_concepts(
 
 
 def _cmd_j_component_intervention(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json
-    from jlens_workspace.concept_intervention.j_component import (
+    from jlens_workspace.concept_intervention.steering.j_component import (
         run_multilayer_j_intervention,
     )
+    from jlens_workspace.foundation.artifacts import atomic_write_json
 
     config = _load_config(args.config)
     section = _require_section(config, "j_component")
@@ -2379,10 +2543,10 @@ def _cmd_j_component_intervention(args: argparse.Namespace) -> int:
 
 
 def _cmd_j_component_index(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import sha256_file
-    from jlens_workspace.concept_intervention.j_component import (
+    from jlens_workspace.concept_intervention.steering.j_component import (
         rebuild_multilayer_j_index,
     )
+    from jlens_workspace.foundation.artifacts import sha256_file
 
     config = _load_config(args.config)
     section = _require_section(config, "j_component")
@@ -2421,10 +2585,10 @@ def _cmd_j_component_index(args: argparse.Namespace) -> int:
 
 
 def _cmd_raptor_intervention(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json
-    from jlens_workspace.concept_intervention.raptor import (
+    from jlens_workspace.concept_intervention.steering.raptor import (
         run_raptor_intervention,
     )
+    from jlens_workspace.foundation.artifacts import atomic_write_json
 
     config = _load_config(args.config)
     section = _require_section(config, "raptor")
@@ -2496,8 +2660,8 @@ def _cmd_raptor_intervention(args: argparse.Namespace) -> int:
 
 
 def _cmd_raptor_index(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import sha256_file
-    from jlens_workspace.concept_intervention.raptor import rebuild_raptor_index
+    from jlens_workspace.concept_intervention.steering.raptor import rebuild_raptor_index
+    from jlens_workspace.foundation.artifacts import sha256_file
 
     config = _load_config(args.config)
     section = _require_section(config, "raptor")
@@ -2536,10 +2700,10 @@ def _cmd_raptor_index(args: argparse.Namespace) -> int:
 
 
 def _cmd_intervention_compare_index(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import RunManifest
-    from jlens_workspace.concept_intervention.comparison import (
+    from jlens_workspace.concept_intervention.evaluation.comparison import (
         rebuild_intervention_comparison,
     )
+    from jlens_workspace.foundation.artifacts import RunManifest
 
     builder_manifest = RunManifest.for_workspace(Path.cwd())
     candidate_rescores = (
@@ -2560,8 +2724,16 @@ def _cmd_intervention_compare_index(args: argparse.Namespace) -> int:
             "raptor_intervention": candidate_rescores[2],
         }
     )
+    if rescore_roots is None:
+        comparison_output = args.output
+        final_output = args.output
+    else:
+        final_output, comparison_output = _new_write_once_derivation(
+            args.output,
+            label="candidate-rescore comparison",
+        )
     index = rebuild_intervention_comparison(
-        output_dir=args.output,
+        output_dir=comparison_output,
         shared_layer_selection=args.shared_layer_selection,
         j_root=args.j_output,
         iti_root=args.iti_output,
@@ -2570,16 +2742,22 @@ def _cmd_intervention_compare_index(args: argparse.Namespace) -> int:
         index_builder=_index_builder_provenance(builder_manifest),
         candidate_rescore_roots=rescore_roots,
     )
+    if rescore_roots is not None:
+        _publish_write_once_derivation(
+            comparison_output,
+            final_output,
+            label="candidate-rescore comparison",
+        )
     _finish_command(
         args,
         index,
-        message=f"three-method comparison complete -> {args.output / 'index.json'}",
+        message=f"three-method comparison complete -> {final_output / 'index.json'}",
     )
     return 0
 
 
 def _cmd_intervention_smoke_check(args: argparse.Namespace) -> int:
-    from jlens_workspace.concept_intervention.comparison import (
+    from jlens_workspace.concept_intervention.evaluation.comparison import (
         validate_three_method_smokes,
     )
 
@@ -2610,7 +2788,9 @@ def _iti_concepts(section: Any, requested: list[str] | None) -> tuple[str, ...]:
 
 
 def _cmd_iti_capture(args: argparse.Namespace) -> int:
-    from jlens_workspace.concept_intervention.iti import capture_iti_head_activations
+    from jlens_workspace.concept_intervention.steering.iti import (
+        capture_iti_head_activations,
+    )
     from jlens_workspace.data import dataset_fingerprint
 
     config = _load_config(args.config)
@@ -2673,11 +2853,11 @@ def _cmd_iti_capture(args: argparse.Namespace) -> int:
 
 
 def _cmd_iti_fit(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json
-    from jlens_workspace.concept_intervention.iti import (
+    from jlens_workspace.concept_intervention.steering.iti import (
         fit_iti_concept_directions,
         fit_shared_iti_concept_directions,
     )
+    from jlens_workspace.foundation.artifacts import atomic_write_json
 
     config = _load_config(args.config)
     iti = _require_section(config, "iti")
@@ -2742,14 +2922,14 @@ def _cmd_iti_fit(args: argparse.Namespace) -> int:
 
 
 def _cmd_iti_run(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import (
+    from jlens_workspace.concept_intervention.steering.iti import (
+        run_iti_intervention,
+        run_iti_intervention_experiment,
+    )
+    from jlens_workspace.foundation.artifacts import (
         atomic_write_json,
         resolve_repository_resource,
         sha256_file,
-    )
-    from jlens_workspace.concept_intervention.iti import (
-        run_iti_intervention,
-        run_iti_intervention_experiment,
     )
 
     config = _load_config(args.config)
@@ -2866,14 +3046,14 @@ def _cmd_iti_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_iti_index(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import (
+    from jlens_workspace.concept_intervention.steering.iti import (
+        rebuild_iti_experiment_index,
+        rebuild_iti_index,
+    )
+    from jlens_workspace.foundation.artifacts import (
         atomic_write_json,
         resolve_repository_resource,
         sha256_file,
-    )
-    from jlens_workspace.concept_intervention.iti import (
-        rebuild_iti_experiment_index,
-        rebuild_iti_index,
     )
 
     config = _load_config(args.config)
@@ -2965,19 +3145,22 @@ def _cmd_iti_index(args: argparse.Namespace) -> int:
 def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
     from transformers import AutoTokenizer
 
-    from jlens_workspace.artifacts import sha256_file
-    from jlens_workspace.jacobian import (
-        build_effective_unembedding,
-        restrict_effective_unembedding,
+    from jlens_workspace.concept_intervention.geometry.sparse_pursuit import (
+        UnitNormDictionary,
+        build_token_frame_dictionary,
     )
-    from jlens_workspace.pursuit import UnitNormDictionary, build_token_frame_dictionary
-    from jlens_workspace.workflows.occupancy import (
+    from jlens_workspace.concept_intervention.geometry.sparse_pursuit.workflow import (
         ConceptTarget,
         run_concept_occupancy,
         verify_lens_artifact_sha256,
     )
-    from jlens_workspace.workflows.probe_replicates import (
+    from jlens_workspace.concept_intervention.probing.replicates import (
         load_bootstrap_probe_vectors,
+    )
+    from jlens_workspace.foundation.artifacts import sha256_file
+    from jlens_workspace.foundation.jacobian import (
+        build_effective_unembedding,
+        restrict_effective_unembedding,
     )
 
     config = _load_config(args.config)
@@ -3028,7 +3211,7 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
         config.model.tokenizer_id or config.model.model_id,
         revision=config.model.tokenizer_revision or config.model.revision,
     )
-    from jlens_workspace.jacobian import OfficialJLensAdapter
+    from jlens_workspace.foundation.jacobian import OfficialJLensAdapter
 
     d_model_unembedding, cached_norm = _load_unembedding_tensors_lightweight(config)
     managed_lens = OfficialJLensAdapter.load(
@@ -3172,7 +3355,7 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
         + ".json"
     )
     atomic_write_json_path = destination / "manifests" / shard_name
-    from jlens_workspace.artifacts import atomic_write_json
+    from jlens_workspace.foundation.artifacts import atomic_write_json
 
     atomic_write_json(atomic_write_json_path, manifest)
     summary = run_concept_occupancy(
@@ -3220,8 +3403,10 @@ def _cmd_occupancy_concepts(args: argparse.Namespace) -> int:
 
 
 def _cmd_occupancy_index(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json
-    from jlens_workspace.workflows.occupancy import rebuild_occupancy_index
+    from jlens_workspace.concept_intervention.geometry.sparse_pursuit.workflow import (
+        rebuild_occupancy_index,
+    )
+    from jlens_workspace.foundation.artifacts import atomic_write_json
 
     config = _load_config(args.config)
     occupancy = _require_section(config, "occupancy")
@@ -3302,16 +3487,16 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
-    from jlens_workspace.artifacts import atomic_write_json, sha256_file
-    from jlens_workspace.concept_intervention.candidate_rescore import (
+    from jlens_workspace.concept_intervention.evaluation.candidate_rescore import (
         CANONICAL_SCORE_CONTRACT,
         rebuild_candidate_rescore_index,
     )
+    from jlens_workspace.foundation.artifacts import atomic_write_json, sha256_file
 
     config = _load_config(args.config)
     source_root = args.source_output.resolve()
-    destination = args.output.resolve()
-    if source_root == destination:
+    final_destination = args.output.resolve()
+    if source_root == final_destination:
         raise ValueError("candidate rescore output must differ from source output")
     source_index_path = source_root / "index.json"
     source_manifest_path = source_root / "manifest.json"
@@ -3322,7 +3507,7 @@ def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
         raise ValueError("candidate rescore source method index is incomplete")
 
     if args.method == "j_component_intervention":
-        from jlens_workspace.concept_intervention.j_component import (
+        from jlens_workspace.concept_intervention.steering.j_component import (
             run_multilayer_j_intervention,
         )
 
@@ -3344,7 +3529,7 @@ def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
             )
 
     elif args.method == "iti_intervention":
-        from jlens_workspace.concept_intervention.iti import (
+        from jlens_workspace.concept_intervention.steering.iti import (
             run_iti_intervention_experiment,
         )
 
@@ -3370,7 +3555,7 @@ def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
             )
 
     else:
-        from jlens_workspace.concept_intervention.raptor import (
+        from jlens_workspace.concept_intervention.steering.raptor import (
             run_raptor_intervention,
         )
 
@@ -3417,7 +3602,10 @@ def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
             },
         },
     )
-    destination.mkdir(parents=True, exist_ok=True)
+    final_destination, destination = _new_write_once_derivation(
+        final_destination,
+        label="candidate rescore",
+    )
     manifest_path = destination / "manifest.json"
     if manifest_path.is_file():
         if json.loads(manifest_path.read_text(encoding="utf-8")) != manifest.__dict__:
@@ -3434,11 +3622,16 @@ def _cmd_intervention_candidate_rescore(args: argparse.Namespace) -> int:
         concept_ids=concepts,
         index_builder=_index_builder_provenance(manifest),
     )
+    _publish_write_once_derivation(
+        destination,
+        final_destination,
+        label="candidate rescore",
+    )
     payload = {"index": index, "results": results}
     _finish_command(
         args,
         payload,
-        message=f"candidate rescore complete -> {destination / 'index.json'}",
+        message=f"candidate rescore complete -> {final_destination / 'index.json'}",
     )
     return 0
 
@@ -3450,7 +3643,7 @@ def _k_diagnostic_lightweight_components(
 
     from transformers import AutoTokenizer
 
-    from jlens_workspace.jacobian import (
+    from jlens_workspace.foundation.jacobian import (
         OfficialJLensAdapter,
         build_effective_unembedding,
         restrict_effective_unembedding,
@@ -3487,7 +3680,7 @@ def _k_diagnostic_lightweight_components(
 
 
 def _cmd_k_diagnostic_validate(args: argparse.Namespace) -> int:
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         validate_shared_artifacts,
     )
 
@@ -3514,13 +3707,13 @@ def _cmd_k_diagnostic_validate(args: argparse.Namespace) -> int:
 
 
 def _cmd_k_diagnostic_prepare_targets(args: argparse.Namespace) -> int:
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         artifact_root,
         initialize_artifacts,
         load_target_index,
         write_scientific_grid,
     )
-    from jlens_workspace.concept_intervention.k_diagnostic.targets import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.targets import (
         prepare_raw_activation_targets,
         prepare_seven_emotion_label_contrast_targets,
         prepare_shared_statistical_targets,
@@ -3631,12 +3824,12 @@ def _cmd_k_diagnostic_prepare_targets(args: argparse.Namespace) -> int:
 
 
 def _cmd_k_diagnostic_build_bases(args: argparse.Namespace) -> int:
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         build_metric_bases,
         load_target_index,
         write_scientific_grid,
     )
-    from jlens_workspace.matrix import TokenFrameOperator
+    from jlens_workspace.j_space import TokenFrameOperator
 
     config = _load_config(args.config)
     diagnostic = _require_section(config, "k_diagnostic")
@@ -3672,7 +3865,7 @@ def _cmd_k_diagnostic_build_bases(args: argparse.Namespace) -> int:
 def _k_diagnostic_rotation_spaces(
     config: Any,
 ) -> tuple[Any, list[Any], list[dict[str, object]]]:
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         artifact_root,
         load_target_index,
         rotation_metric_spaces_for_grid,
@@ -3687,7 +3880,7 @@ def _k_diagnostic_rotation_spaces(
 
 
 def _cmd_k_diagnostic_rotation_cache_preflight(args: argparse.Namespace) -> int:
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         rotation_cache_build_preflight,
     )
 
@@ -3707,7 +3900,7 @@ def _cmd_k_diagnostic_rotation_cache_preflight(args: argparse.Namespace) -> int:
 
 
 def _cmd_k_diagnostic_prepare_rotations(args: argparse.Namespace) -> int:
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         audit_rotation_cache_for_grid,
         prepare_rotation_cache,
     )
@@ -3734,7 +3927,7 @@ def _k_diagnostic_permutation_target(
 
     import numpy as np
 
-    from jlens_workspace.concept_intervention.k_diagnostic.nulls import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.nulls import (
         fit_fixed_c_permutation_probe,
         permuted_class_mean_difference,
     )
@@ -3849,7 +4042,7 @@ def _require_k_diagnostic_run_preflight(
 ) -> dict[str, object] | None:
     """Reject stale execution approval before loading model or dictionary state."""
 
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         NULL_EXECUTION_VERSION,
         KDiagnosticExperimentError,
         execution_hardware_sha256,
@@ -3887,7 +4080,7 @@ def _k_diagnostic_v2_benchmark_memory_plan(
 ) -> dict[str, object]:
     """Extract and audit the memory gate actually sealed by a v2 bundle."""
 
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         NULL_EXECUTION_VERSION,
         _approved_shared_direction_plan,
     )
@@ -3913,7 +4106,7 @@ def _require_k_diagnostic_live_hardware(
 ) -> dict[str, object]:
     """Require an ordinary bundle to match its approved benchmark exactly."""
 
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         execution_hardware_sha256,
         validate_k_diagnostic_execution_hardware,
     )
@@ -3934,8 +4127,7 @@ def _cmd_k_diagnostic_run(args: argparse.Namespace) -> int:
 
     import numpy as np
 
-    from jlens_workspace.artifacts import atomic_write_json
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         NULL_EXECUTION_VERSION,
         artifact_root,
         build_physical_bundles,
@@ -3949,10 +4141,13 @@ def _cmd_k_diagnostic_run(args: argparse.Namespace) -> int:
         stage_root,
         write_scientific_grid,
     )
-    from jlens_workspace.concept_intervention.k_diagnostic.transformed_dictionary import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.transformed_dictionary import (
         LinearTransformedDictionary,
     )
-    from jlens_workspace.pursuit import build_token_frame_dictionary
+    from jlens_workspace.concept_intervention.geometry.sparse_pursuit import (
+        build_token_frame_dictionary,
+    )
+    from jlens_workspace.foundation.artifacts import atomic_write_json
 
     config = _load_config(args.config)
     diagnostic = _require_section(config, "k_diagnostic")
@@ -4145,7 +4340,7 @@ def _cmd_k_diagnostic_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_k_diagnostic_resource_preflight(args: argparse.Namespace) -> int:
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         resource_preflight,
     )
 
@@ -4163,7 +4358,7 @@ def _cmd_k_diagnostic_resource_preflight(args: argparse.Namespace) -> int:
 
 
 def _cmd_k_diagnostic_index(args: argparse.Namespace) -> int:
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         index_stage,
         load_target_index,
         resource_preflight,
@@ -4196,11 +4391,11 @@ def _cmd_k_diagnostic_index(args: argparse.Namespace) -> int:
 
 
 def _cmd_k_diagnostic_report(args: argparse.Namespace) -> int:
-    from jlens_workspace.concept_intervention.k_diagnostic.experiment import (
+    from jlens_workspace.concept_intervention.geometry.k_diagnostic.experiment import (
         artifact_root,
         validate_shared_artifacts,
     )
-    from jlens_workspace.concept_intervention.k_diagnostic.reporting import (
+    from jlens_workspace.concept_intervention.reporting.k_diagnostic import (
         generate_report,
     )
 
@@ -4210,6 +4405,7 @@ def _cmd_k_diagnostic_report(args: argparse.Namespace) -> int:
     payload = generate_report(
         artifact_root=artifact_root(config, run_root=Path.cwd()),
         diagnostic=diagnostic,
+        output_dir=args.output,
     )
     _finish_command(
         args,

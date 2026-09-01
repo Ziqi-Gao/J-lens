@@ -3147,7 +3147,24 @@ def test_complete_synthetic_artifacts_generate_ten_figures_and_decisions(
             "hierarchical_bootstrap_samples": 1000,
         }
     )
-    result = generate_report(artifact_root=root, diagnostic=diagnostic)
+    with pytest.raises(KDiagnosticReportingError, match="explicit versioned derived"):
+        generate_report(artifact_root=root, diagnostic=diagnostic)
+    report_root = tmp_path / "derivations/revision-r1/report"
+    result = generate_report(
+        artifact_root=root,
+        diagnostic=diagnostic,
+        output_dir=report_root,
+    )
+    report_index = json.loads((report_root / "index.json").read_text(encoding="utf-8"))
+    assert report_index["complete"] is True
+    assert report_index["identity"] == diagnostic.identity
+    assert result["index"] == str(report_root / "index.json")
+    with pytest.raises(KDiagnosticReportingError, match="already exists"):
+        generate_report(
+            artifact_root=root,
+            diagnostic=diagnostic,
+            output_dir=report_root,
+        )
     decisions = json.loads(Path(result["decision_table"]).read_text(encoding="utf-8"))
     assert decisions["primary_estimand"] == "fixed_k4_real_minus_median_null"
     assert "Delta4" in decisions["primary_estimand_formula"]
@@ -3191,9 +3208,54 @@ def test_complete_synthetic_artifacts_generate_ten_figures_and_decisions(
         "pca_improves_j_specific_separation",
         "whitening_improves_j_specific_separation",
     }
-    assert (root / "report/terminal_summary.json").is_file()
-    assert (root / "report/target_pair_summary.parquet").is_file()
-    aggregate = json.loads((root / "report/aggregate_summary.json").read_text(encoding="utf-8"))
+    assert not (root / "report").exists()
+    assert (report_root / "terminal_summary.json").is_file()
+    assert (report_root / "target_pair_summary.parquet").is_file()
+    data_root = report_root / "data"
+    data_manifest_path = data_root / "figure_data_manifest.json"
+    assert result["figure_data_manifest"] == str(data_manifest_path)
+    data_manifest = json.loads(data_manifest_path.read_text(encoding="utf-8"))
+    assert data_manifest["schema_version"] == 1
+    assert data_manifest["identity"] == diagnostic.identity
+    assert (report_root / data_manifest["artifact_root"]).resolve() == root.resolve()
+    assert set(data_manifest["figure_sources"]) == set(FIGURE_NAMES)
+    assert set(data_manifest["data_files"]) == {
+        "target_level",
+        "target_pair",
+        "within_target_iid_gain_curves",
+        "cardinality_theory_reference",
+    }
+    for descriptor in data_manifest["data_files"].values():
+        path = report_root / descriptor["path"]
+        assert path.is_file()
+        assert descriptor["sha256"] == sha256_file(path)
+        assert descriptor["bytes"] == path.stat().st_size
+        assert descriptor["row_count"] > 0
+    for figure in FIGURE_NAMES:
+        assert data_manifest["figure_sources"][figure]["tables"]
+        for descriptor in data_manifest["figure_files"][figure].values():
+            path = report_root / descriptor["path"]
+            assert descriptor["sha256"] == sha256_file(path)
+    for descriptor in data_manifest["source_artifacts"]:
+        path = root / descriptor["path"]
+        assert path.is_file()
+        assert descriptor["sha256"] == sha256_file(path)
+        assert descriptor["bytes"] == path.stat().st_size
+    import pyarrow.parquet as pq
+
+    gain_rows = pq.read_table(data_root / "within_target_iid_gain_curves.parquet").to_pylist()
+    assert gain_rows
+    assert {
+        "target_id",
+        "layer",
+        "metric",
+        "k",
+        "real_marginal_gain",
+        "within_target_null_seed_median_marginal_gain",
+        "null_seed_count",
+    } <= set(gain_rows[0])
+    assert all(row["null_seed_count"] >= 1 for row in gain_rows)
+    aggregate = json.loads((report_root / "aggregate_summary.json").read_text(encoding="utf-8"))
     assert aggregate["family_summary"]["logistic_probe"]["target_count"] == 6
     pair_rows = aggregate["target_pair_summary"]
     assert len({row["pair_type"] for row in pair_rows}) == 13
@@ -3209,5 +3271,5 @@ def test_complete_synthetic_artifacts_generate_ten_figures_and_decisions(
         for row in pair_rows
     )
     for figure in FIGURE_NAMES:
-        assert (root / "report/figures" / f"{figure}.pdf").is_file()
-        assert (root / "report/figures" / f"{figure}.png").is_file()
+        assert (report_root / "figures" / f"{figure}.pdf").is_file()
+        assert (report_root / "figures" / f"{figure}.png").is_file()

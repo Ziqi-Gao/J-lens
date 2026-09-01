@@ -18,6 +18,17 @@ alignment, and intervention work to `Concept_intervention/`; route rank,
 singular-spectrum, PCA/energy-basis, and layerwise-subspace work to `J_space/`.
 Neither direction may depend on the other direction's scripts or artifacts.
 
+The root direction directories are scientific control surfaces, not Python
+source mirrors. They retain experiment identity, design YAML, small input
+manifests, protocols, launch transports, and reports. Reusable implementation
+belongs under `src/jlens_workspace/`: common model/Jacobian/artifact services in
+`foundation/`, shared dataset interfaces in top-level `data/`, Concept
+Intervention code in the explicit `data/`, `protocol/`, `probing/`, `geometry/`,
+`steering/`, `evaluation/`, and `reporting/` responsibilities, and J-space
+operator/spectrum/subspace code in `j_space/`. Historical import paths may
+remain only as tested compatibility wrappers; new logic uses the canonical
+paths. See `docs/architecture.md`.
+
 ## Server ownership and project isolation
 
 J-lens is an independent project with exactly three writable directory trees:
@@ -27,18 +38,48 @@ J-lens is an independent project with exactly three writable directory trees:
 3. `/scr/del6500/J-lens` for environments, caches, runtime state, temporary
    checkpoints, and logs.
 
-Everything outside those trees is read-only for a J-lens agent. This includes
-`/home/del6500/projects/FedFisher`, `/data/del6500/FedFisher`, and
-`/scr/del6500/FedFisher`. J-lens and FedFisher must not share environments,
-caches, locks, logs, data, artifacts, launchers, or maintenance policy.
+The main checkout exposes two server-local convenience links: `data` must
+resolve exactly to `/data/del6500/J-lens`, and `scratch` must resolve exactly
+to `/scr/del6500/J-lens`. They are ignored by Git and are entry points only;
+the absolute trees above remain the authoritative ownership boundary. Project
+Codex defaults belong in `.codex/config.toml`, while durable repository policy
+belongs in this file.
+
+Start every J-lens Codex task with the runtime workspace set exactly to
+`/home/del6500/projects/J-lens`. Do not resume or reuse a task rooted at
+`/home`, `/home/del6500/projects`, or another project. The project-local
+`jlens-isolated` permission profile gives the host a read-only baseline and
+reopens write access only for the three J-lens trees above. It redirects
+temporary files to `/scr/del6500/J-lens/tmp`, disables command network access,
+and keeps `.codex` and `.git` read-only.
+
+"Approve for me" is allowed with this profile: `sandbox_approval` and
+`request_permissions` are auto-rejected before review. Do not switch profiles,
+pass `--sandbox`, use a danger-full-access or sandbox-bypass option, or weaken
+those two gates. A protected configuration or Git-metadata change requires a
+separate, explicitly user-approved maintenance operation and must not broaden
+the three owned roots.
+
+Create linked Git worktrees only below `/scr/del6500/J-lens/worktrees/`. Do not
+create sibling checkout trees below `/home/del6500/projects`, and do not place
+worktree contents inside the main repository's `.git` directory. Before
+removing a worktree, require a clean checkout, a preserved branch ref, no live
+process or service path reference, and durable artifacts or an immutable
+runtime snapshot where applicable. Remove it with `git worktree remove`, never
+by recursively deleting the directory.
+
+Everything outside those trees is read-only and must never be written by a
+J-lens agent. This includes `/home/del6500/projects/FedFisher`,
+`/data/del6500/FedFisher`, and `/scr/del6500/FedFisher`. J-lens and FedFisher
+must not share environments, caches, locks, logs, data, artifacts, launchers,
+or maintenance policy.
 
 A single agent, task, or session that writes J-lens must not also modify
 FedFisher. If a request requires changes in both projects, stop and divide the
 work into separately owned agents/tasks before either side is edited. Read-only
-inspection of another project's public maintenance rules is allowed when it is
-necessary to preserve server policy; it does not authorize a write there.
-Before writing through a symlink, resolve its target and require that it remains
-inside one of the three J-lens trees.
+inspection of another project's maintenance rules is allowed when necessary;
+it does not authorize a write. Before writing through a symlink, resolve its
+target and require that it remains inside one of the three J-lens trees.
 
 Keep large or durable outputs out of the code checkout. Pretrained download
 caches and build/runtime files belong under `/scr/del6500/J-lens`; prepared
@@ -103,6 +144,38 @@ hot-edit a running checkout.
 10. A causal intervention claim requires signed strengths and matched full,
     J, non-J, and random controls. Probe AUC or nearest-token alignment alone
     is not causal evidence.
+
+## Experiment identity and versioning
+
+The canonical inventory is
+`Concept_intervention/experiments/registry.yaml`; its policy and layout are in
+`Concept_intervention/experiments/README.md`. Before creating or changing a
+versioned experiment, run `jlens-workspace experiments list` and inspect the
+registered family.
+
+Keep four identities separate:
+
+- `design-vN` is only for a scientific change to the hypothesis, method, data
+  or split, selection rule, estimand, primary metric, or judge design;
+- `protocol-vN` is for a compatible prompt, rubric, schema, or transport
+  revision;
+- `attempt-NNN` is for retrying or resuming the same frozen design after an
+  interruption, timeout, OOM, API failure, or parser repair; and
+- `revision-rN` is for a derived rescore or reanalysis over immutable source
+  artifacts.
+
+A retry must never become a new `design-vN`. Git SHAs, dates, snapshot hashes,
+and server names are provenance fields, not experiment versions. New designs
+belong under
+`Concept_intervention/experiments/<family>/<design-version>/`; do not add new
+versioned files to the legacy flat `configs/` and `scripts/` surfaces.
+Existing registered paths and artifacts remain immutable compatibility inputs.
+
+Every new design must add its `experiment.yaml` to the registry in the same
+commit and pass `jlens-workspace experiments validate`. The managed server
+audit additionally runs `jlens-workspace experiments validate
+--check-artifacts`; this is read-only and does not turn runtime state into a
+completion marker.
 
 ## Development workflow
 

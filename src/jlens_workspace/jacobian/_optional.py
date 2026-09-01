@@ -1,25 +1,12 @@
-"""Tiny lazy-module proxies for optional heavy runtime dependencies."""
+"""Compatibility import for the foundation lazy-dependency proxy."""
 
-from __future__ import annotations
-
-import importlib
-from types import ModuleType
+from jlens_workspace.foundation.jacobian import _optional as _implementation
+from jlens_workspace.foundation.jacobian._optional import *  # noqa: F403
 
 
-class LazyModule:
-    """Resolve a module only when one of its attributes is first requested."""
-
-    def __init__(self, name: str) -> None:
-        self._name = name
-        self._module: ModuleType | None = None
-
-    def _load(self) -> ModuleType:
-        if self._module is None:
-            self._module = importlib.import_module(self._name)
-        return self._module
-
-    def __getattr__(self, name: str):
-        return getattr(self._load(), name)
+def __getattr__(name: str):
+    return getattr(_implementation, name)
 
 
-torch = LazyModule("torch")
+def __dir__() -> list[str]:
+    return sorted(set(globals()).union(dir(_implementation)))

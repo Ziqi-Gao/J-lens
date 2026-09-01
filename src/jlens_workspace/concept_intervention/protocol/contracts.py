@@ -1,8 +1,8 @@
-"""Method-neutral input and artifact helpers for intervention evaluation.
+"""Method-neutral prompt, label, batching, and JSONL protocol contracts.
 
-This module defines only the shared evaluation contract: prompt formatting,
-candidate-token validation, deterministic batching, and atomic JSONL output.
-It must not contain J-component or ITI direction fitting or intervention hooks.
+This module is the single upstream owner of prompt formatting, candidate-token
+validation, deterministic batching, and atomic JSONL output.  It must not
+contain evaluation policy, method fitting, or intervention hooks.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
-from jlens_workspace.artifacts import resolve_repository_resource
+from jlens_workspace.foundation.artifacts import resolve_repository_resource
 
 ValueT = TypeVar("ValueT")
 

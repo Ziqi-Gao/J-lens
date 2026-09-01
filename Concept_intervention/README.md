@@ -15,6 +15,14 @@ injected concept vectors including abstract nouns. Here the goal is a rigorous
 open-Qwen replication/extension with paired data, group-safe logistic probes,
 held-out evaluation, matched controls, and abstract-concept generalization.
 
+This directory is the scientific control surface for that program: it owns
+registered designs, design-specific configuration, small data manifests,
+protocol documentation, launch transports, and reports. Reusable Python code
+lives under `src/jlens_workspace/concept_intervention/`, separated into
+data, protocol, probing, geometry, steering, evaluation, and reporting
+responsibilities. The root directory therefore remains authoritative even
+though it is not an importable implementation package.
+
 ## Research sequence
 
 For each concept and selected layer:
@@ -74,6 +82,27 @@ token directions use rows of the same model revision's output unembedding. If
 the model head has padded rows beyond `len(tokenizer)`, alignment takes a
 zero-copy view of exactly tokenizer IDs `[0, len(tokenizer))`; it fails if the
 tokenizer is larger than the head and records both row counts.
+
+## Experiment versions
+
+The canonical inventory is
+[`experiments/registry.yaml`](experiments/registry.yaml), with the naming and
+artifact policy in [`experiments/README.md`](experiments/README.md). Existing
+flat config and launcher paths remain intact for provenance compatibility, but
+new designs must be created under
+`experiments/<family>/<design-version>/`.
+
+List or validate registered designs from the repository root:
+
+```bash
+.venv/bin/jlens-workspace experiments list
+.venv/bin/jlens-workspace experiments validate
+```
+
+Scientific designs use `design-vN`; compatible protocol changes use
+`protocol-vN`; retries use `attempt-NNN`; derived rescoring and reanalysis
+use `revision-rN`. Historical judge directories named `v1` through `v16`
+are legacy attempts, not separate scientific designs.
 
 ## Run
 

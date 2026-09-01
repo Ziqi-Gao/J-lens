@@ -60,6 +60,22 @@ def test_candidate_rescore_decoding_covers_three_methods() -> None:
     assert _decode("candidate-rescore", 2)["task_index"] == "2"
 
 
+def test_scheduled_rescore_is_immutable_and_uses_a_derived_comparison_root() -> None:
+    task = (SCRIPTS / "server_scheduler_three_method_task.sh").read_text(
+        encoding="utf-8"
+    )
+    rescore_body = task.rsplit("  candidate-rescore)", 1)[1].split(
+        "  comparison-rescore-index)", 1
+    )[0]
+    comparison_body = task.rsplit("  comparison-rescore-index)", 1)[1].split("\nesac", 1)[0]
+
+    assert "--overwrite" not in rescore_body
+    assert 'RESCORE_ROOT="derivations/revision-r2/candidate_score_rescore_v1"' in task
+    assert 'RESCORE_COMPARISON_ROOT="derivations/revision-r2/intervention_comparison"' in task
+    assert '--output "${RESCORE_COMPARISON_ROOT}"' in comparison_body
+    assert '--output "${COMPARISON_ROOT}"' not in comparison_body
+
+
 def test_local_top_level_plan_has_the_registered_smoke_indices() -> None:
     result = subprocess.run(
         ["bash", str(SCRIPTS / "run_three_method_local.sh"), "plan"],
@@ -202,6 +218,42 @@ def test_k_diagnostic_local_components_reject_direct_execution() -> None:
         assert "top-level local DAG" in result.stderr
 
 
+def test_server_scheduler_task_wrappers_are_separate_and_reject_direct_execution() -> None:
+    three_method = (SCRIPTS / "server_scheduler_three_method_task.sh").read_text(
+        encoding="utf-8"
+    )
+    kdiag = (SCRIPTS / "server_scheduler_kdiag_task.sh").read_text(encoding="utf-8")
+    legacy_three_method = (SCRIPTS / "run_three_method_local_task.sh").read_text(
+        encoding="utf-8"
+    )
+    legacy_kdiag = (SCRIPTS / "run_qwen35_4b_k_diagnostic_v2_local_task.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "JLENS_SERVER_SCHEDULER_TASK_ACTIVE" in three_method
+    assert "JLENS_SERVER_SCHEDULER_TASK_ACTIVE" in kdiag
+    assert "JLENS_SERVER_SCHEDULER_TASK_ACTIVE" not in legacy_three_method
+    assert "JLENS_SERVER_SCHEDULER_TASK_ACTIVE" not in legacy_kdiag
+    assert 'RESCORE_ROOT="derivations/revision-r2/' in three_method
+    assert '--output "${RUN_ROOT}/derivations/revision-r1/report"' in kdiag
+    validate_body = kdiag.split("  validate)", 1)[1].split("    ;;", 1)[0]
+    assert "run_qwen35_4b_k_diagnostic_v2_local_task.sh" not in validate_body
+    assert "jlens_workspace.cli k-diagnostic validate" in validate_body
+
+    for script, arguments in (
+        ("server_scheduler_three_method_task.sh", ["candidate-rescore", "0"]),
+        ("server_scheduler_kdiag_task.sh", ["kdiag-control", "report", "transformed"]),
+    ):
+        result = subprocess.run(
+            ["bash", str(SCRIPTS / script), *arguments],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 2
+        assert "ServerScheduler adapter" in result.stderr
+
+
 def test_local_finalize_is_cpu_only_and_independent_of_grid_markers() -> None:
     controller = (SCRIPTS / "run_three_method_local.sh").read_text()
     finalize_body = controller.split("run_finalize() {", 1)[1].split("\n}", 1)[0]
@@ -221,3 +273,11 @@ def test_local_rescore_runs_three_gpu_methods_then_cpu_comparison() -> None:
     assert 'run_range gpu candidate-rescore 2 "${GPU_WORKERS}"' in rescore_body
     assert "run_one cpu comparison-rescore-index" in rescore_body
     assert "rescore) run_rescore ;;" in controller
+    assert "RESCORE_FINAL_INDEX" not in controller
+    legacy_task = (SCRIPTS / "run_three_method_local_task.sh").read_text()
+    assert (
+        'RESCORE_ROOT="artifacts/concept_intervention/'
+        'qwen35_4b_three_method_intervention_v1/candidate_score_rescore_v1"'
+        in legacy_task
+    )
+    assert "--overwrite" in legacy_task

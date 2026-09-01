@@ -1,0 +1,29 @@
+schema_version: 1
+id: replace-family/design-v1
+family: replace-family
+design_version: design-v1
+kind: scientific_experiment
+title: Replace with a precise design title
+direction: concept_intervention
+execution_status: registered
+interpretation_status: not_evaluated
+canonical: true
+supersedes: []
+depends_on: []
+repository:
+  branch: replace-with-branch
+  commit: null
+  paths_available: true
+  protocol_paths: []
+  config_paths: []
+  launcher_paths: []
+artifacts:
+  immutable: true
+  roots: []
+  completion_markers: []
+  runtime_roots: []
+attempts:
+  directory_pattern: attempt-NNN
+  legacy_labels: []
+notes:
+  - Replace every placeholder before registering this manifest.
